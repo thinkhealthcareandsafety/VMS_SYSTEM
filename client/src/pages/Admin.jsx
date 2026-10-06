@@ -4,11 +4,12 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
 import HostPicker from '../components/HostPicker.jsx';
+import ImageViewer from '../components/ImageViewer.jsx';
 import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
@@ -609,6 +610,21 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
   const [showId, setShowId] = useState(false);
   const [force, setForce] = useState(null);
   const [blocking, setBlocking] = useState(null);
+  const [zoomed, setZoomed] = useState(null); // { src, title } shown full size
+  const [idUrl, setIdUrl] = useState(null);
+
+  // The masked Aadhaar is fetched once per "Show" (each fetch is an audited view) and shared by
+  // the inline preview and the full-size viewer.
+  useEffect(() => {
+    if (!showId || !id) return undefined;
+    let url = null;
+    let alive = true;
+    fetch(`/api/visits/${id}/id-image`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('Not available'))))
+      .then((b) => { if (alive) { url = URL.createObjectURL(b); setIdUrl(url); } })
+      .catch(() => alive && setIdUrl('error'));
+    return () => { alive = false; if (url) URL.revokeObjectURL(url); setIdUrl(null); };
+  }, [showId, id]);
 
   useEffect(() => { setV(null); setTimeline(null); setShowId(false); }, [id]);
   useEffect(() => {
@@ -633,7 +649,9 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
         {!v ? <ListSkeleton /> : (
           <>
             <div className="profile">
-              <img className="photo" src={photoUrl(v.id)} alt={`Photo of ${name}`} />
+              <button type="button" className="photo-btn" onClick={() => setZoomed({ src: photoUrl(v.id), title: `${name} · photo at the gate` })} aria-label="Open the photo full size">
+                <img className="photo" src={photoUrl(v.id)} alt={`Photo of ${name}`} />
+              </button>
               <div style={{ display: 'grid', gap: 6 }}>
                 <h2>{name}</h2>
                 <span className="muted">{v.company}</span>
@@ -659,7 +677,14 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
               {!v.hasIdImage ? (
                 <p className="muted">Deleted automatically after the retention period.</p>
               ) : showId ? (
-                <div className="id-frame"><img src={`/api/visits/${v.id}/id-image`} alt="Masked Aadhaar card" /></div>
+                idUrl === 'error' ? <p className="muted">The image could not be loaded.</p>
+                  : !idUrl ? <div className="skeleton" style={{ height: 160, borderRadius: 12 }} />
+                    : (
+                      <button type="button" className="id-frame id-open" onClick={() => setZoomed({ src: idUrl, title: `${name} · masked Aadhaar`, status: v.idMaskMethod && { tone: v.idMaskMethod.startsWith('guide') ? 'warn' : 'ok', text: maskNote(v.idMaskMethod) } })} aria-label="Open the masked Aadhaar full size">
+                        <img src={idUrl} alt="Masked Aadhaar card" />
+                        <span className="shot-zoom"><Maximize2 />Open full size</span>
+                      </button>
+                    )
               ) : (
                 <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
                   <button className="btn btn-sm" onClick={() => setShowId(true)}><Eye />Show masked Aadhaar</button>
@@ -703,6 +728,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
       )}
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={onChanged} />
       <BlockDialog prefill={blocking} onClose={() => setBlocking(null)} onDone={onChanged} />
+      <ImageViewer open={Boolean(zoomed)} onClose={() => setZoomed(null)} src={zoomed?.src} alt={zoomed?.title} title={zoomed?.title} status={zoomed?.status} />
     </Modal>
   );
 }

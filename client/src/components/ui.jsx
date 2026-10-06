@@ -104,7 +104,8 @@ export function Modal({ open, onClose, children, className = 'dialog', label }) 
       ref={ref}
       tabIndex={-1}
       aria-label={label}
-      onCancel={(e) => { e.preventDefault(); onClose(); }}
+      // React passes cancel up through nested dialogs; Escape closes only the top one.
+      onCancel={(e) => { e.preventDefault(); if (e.target !== ref.current) return; e.stopPropagation(); onClose(); }}
       onClick={(e) => { if (e.target === ref.current) onClose(); }}
     >
       {open && <div className={className}>{children}</div>}

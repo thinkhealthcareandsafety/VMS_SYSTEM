@@ -504,7 +504,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           <div className="field">
             <span>Aadhaar card <span className="faint">· first 8 digits blacked out</span></span>
             {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: !how?.undo || i?.manual })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
+              ? <Camera mode="aadhaar" captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
               : <CamTile icon={CreditCard} label="Scan Aadhaar" onClick={() => setCam('aadhaar')} />}
           </div>
         </div>

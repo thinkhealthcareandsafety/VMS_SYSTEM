@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CameraOff, CheckCircle2, Eraser, RefreshCcw, SwitchCamera, Undo2 } from 'lucide-react';
+import { AlertTriangle, CameraOff, CheckCircle2, Maximize2, RefreshCcw, SwitchCamera } from 'lucide-react';
 import { CARD_ASPECT, GUIDE_WIDTH, grabCard, maskCard, paintBoxes } from '../lib/aadhaarMask.js';
 import { Spinner } from './ui.jsx';
+import ImageViewer from './ImageViewer.jsx';
 
 // mode="face": live photo. mode="aadhaar": the card is read on this device, the number is found and
 // painted out, and only the masked image is handed back (onCapture(dataUrl, info)).
@@ -71,13 +72,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
 
   if (captured) {
     if (mode === 'aadhaar') return <MaskedCard image={captured} info={info} onRetake={onRetake} onEdit={onEdit} />;
-    return (
-      <div className="shot">
-        <img src={captured} alt="Captured visitor photo" />
-        <span className="ok-tag"><CheckCircle2 />Photo captured</span>
-        <button type="button" className="btn btn-sm retake" onClick={onRetake}><RefreshCcw />Retake</button>
-      </div>
-    );
+    return <PhotoShot image={captured} onRetake={onRetake} />;
   }
 
   return (
@@ -118,75 +113,75 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
   );
 }
 
-// The masked card, with what the auto-mask did and a way to black out anything it missed.
+// The masked card. Tap it to open it full size and check the mask; "Black out more" opens the
+// big view straight in drawing mode, where small text is easy to cover.
 function MaskedCard({ image, info, onRetake, onEdit }) {
-  const imgRef = useRef(null);
-  const [drawing, setDrawing] = useState(false);
-  const [drag, setDrag] = useState(null); // { x0, y0, x1, y1 } in displayed pixels
+  const [viewer, setViewer] = useState(null); // null | { drawing }
   const [history, setHistory] = useState([]);
 
   const status = info?.method === 'auto' && info.check
     ? { tone: 'warn', text: 'Number hidden. Check that no digit is still showing.' }
     : info?.method === 'auto'
-    ? { tone: 'ok', text: `Aadhaar number found and hidden${info.numbers > 1 ? ` (${info.numbers} places)` : ''}${info.qr ? ', QR hidden' : ''}` }
-    : info?.method === 'already'
-      ? { tone: 'ok', text: 'Card was already masked' }
-      : info?.method === 'guide'
-        ? { tone: 'warn', text: 'Could not read the number. Check the first 8 digits are hidden, or black them out.' }
-        : { tone: 'ok', text: 'Masked on this device' };
+      ? { tone: 'ok', text: `Aadhaar number found and hidden${info.numbers > 1 ? ` (${info.numbers} places)` : ''}${info.qr ? ', QR hidden' : ''}` }
+      : info?.method === 'already'
+        ? { tone: 'ok', text: 'Card was already masked' }
+        : info?.method === 'guide'
+          ? { tone: 'warn', text: 'Could not read the number. Check the first 8 digits are hidden, or black them out.' }
+          : { tone: 'ok', text: 'Masked on this device' };
 
-  const point = (e) => {
-    const r = imgRef.current.getBoundingClientRect();
-    return { x: Math.min(Math.max(e.clientX - r.left, 0), r.width), y: Math.min(Math.max(e.clientY - r.top, 0), r.height) };
-  };
-  const down = (e) => { if (!drawing) return; e.currentTarget.setPointerCapture(e.pointerId); const p = point(e); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }); };
-  const move = (e) => { if (!drag) return; const p = point(e); setDrag((d) => ({ ...d, x1: p.x, y1: p.y })); };
-  const up = async () => {
-    if (!drag) return;
-    const d = drag;
-    setDrag(null);
-    const img = imgRef.current;
-    const k = img.naturalWidth / img.clientWidth;
-    const rect = { x: Math.min(d.x0, d.x1) * k, y: Math.min(d.y0, d.y1) * k, w: Math.abs(d.x1 - d.x0) * k, h: Math.abs(d.y1 - d.y0) * k };
-    if (rect.w < 8 || rect.h < 8) return; // a tap, not a box
+  const paint = async (rect) => {
     const next = await paintBoxes(image, [rect]);
     setHistory((h) => [...h, image]);
-    onEdit(next);
+    onEdit(next, { manual: true });
   };
   const undo = () => {
     const prev = history[history.length - 1];
     if (!prev) return;
     setHistory((h) => h.slice(0, -1));
-    onEdit(prev, { undo: true });
+    onEdit(prev, { manual: history.length > 1 }); // back to the auto-mask once every box is undone
   };
 
   return (
-    <div className={`shot card-shot ${drawing ? 'drawing' : ''}`}>
-      <div className="paint-area" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setDrag(null)}>
-        <img ref={imgRef} src={image} alt="Captured Aadhaar card, number masked" draggable={false} />
-        {drag && (
-          <span className="paint-box" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
-        )}
-      </div>
-      {!drawing && (
-        <span className={`ok-tag ${status.tone === 'warn' ? 'warn-tag' : ''}`}>
-          {status.tone === 'warn' ? <AlertTriangle /> : <CheckCircle2 />}{status.text}
-        </span>
-      )}
-      {drawing && <span className="ok-tag draw-tip"><Eraser />Drag over anything to black it out</span>}
+    <div className="shot card-shot">
+      <button type="button" className="shot-open" onClick={() => setViewer({ drawing: false })} aria-label="Open the masked Aadhaar full size to check it">
+        <img src={image} alt="Captured Aadhaar card, number masked" draggable={false} />
+      </button>
+      <span className={`ok-tag ${status.tone === 'warn' ? 'warn-tag' : ''}`}>
+        {status.tone === 'warn' ? <AlertTriangle /> : <CheckCircle2 />}{status.text}
+      </span>
       <div className="shot-actions">
-        {drawing ? (
-          <>
-            {history.length > 0 && <button type="button" className="btn btn-sm" onClick={undo}><Undo2 />Undo</button>}
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => setDrawing(false)}>Done</button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="btn btn-sm" onClick={() => setDrawing(true)}><Eraser />Black out more</button>
-            <button type="button" className="btn btn-sm" onClick={onRetake}><RefreshCcw />Retake</button>
-          </>
-        )}
+        <button type="button" className={`btn btn-sm ${status.tone === 'warn' ? 'btn-primary' : ''}`} onClick={() => setViewer({ drawing: false })}><Maximize2 />Check full size</button>
+        <button type="button" className="btn btn-sm" onClick={onRetake}><RefreshCcw />Retake</button>
       </div>
+      <ImageViewer
+        open={Boolean(viewer)}
+        onClose={() => setViewer(null)}
+        src={image}
+        alt="Masked Aadhaar card"
+        title="Masked Aadhaar"
+        status={status}
+        editable
+        drawing={Boolean(viewer?.drawing)}
+        onDrawingChange={(d) => setViewer({ drawing: d })}
+        onPaint={paint}
+        canUndo={history.length > 0}
+        onUndo={undo}
+      />
+    </div>
+  );
+}
+
+// The visitor photo, tappable to see it full size.
+function PhotoShot({ image, onRetake }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="shot">
+      <button type="button" className="shot-open" onClick={() => setOpen(true)} aria-label="Open the photo full size">
+        <img src={image} alt="Captured visitor photo" draggable={false} />
+      </button>
+      <span className="ok-tag"><CheckCircle2 />Photo captured</span>
+      <button type="button" className="btn btn-sm retake" onClick={onRetake}><RefreshCcw />Retake</button>
+      <ImageViewer open={open} onClose={() => setOpen(false)} src={image} alt="Visitor photo" title="Visitor photo" />
     </div>
   );
 }

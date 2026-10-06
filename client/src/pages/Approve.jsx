@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Building2, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
 import { Logo, Spinner, useTitle } from '../components/ui.jsx';
+import ImageViewer from '../components/ImageViewer.jsx';
 import { useTick } from '../lib/live.js';
 
 // Public page from the SMS link. The single-use token is the only credential.
@@ -24,6 +25,7 @@ export default function Approve() {
   const [result, setResult] = useState(null);
   const [actionError, setActionError] = useState('');
   const [photoOk, setPhotoOk] = useState(true);
+  const [zoom, setZoom] = useState(false);
   useTitle('Visitor at the gate');
   useTick(1000);
 
@@ -72,7 +74,9 @@ export default function Approve() {
       <div className="approve-brand"><Logo />{info.siteName && <span className="approve-site">{info.siteName}</span>}</div>
       <article className="approve-card">
         {photoOk && !['cancelled', 'expired', 'superseded'].includes(state) && (
-          <img className="photo" src={info.photoUrl} alt={`Photo of ${name} taken at the gate`} onError={() => setPhotoOk(false)} />
+          <button type="button" className="photo-btn wide" onClick={() => setZoom(true)} aria-label="See the photo full size">
+            <img className="photo" src={info.photoUrl} alt={`Photo of ${name} taken at the gate`} onError={() => setPhotoOk(false)} />
+          </button>
         )}
         <div className="body">
           <div>
@@ -108,6 +112,7 @@ export default function Approve() {
           )}
         </div>
       </article>
+      <ImageViewer open={zoom} onClose={() => setZoom(false)} src={info.photoUrl} alt={`Photo of ${name}`} title={`${name} at the gate`} />
       {!closed && <p className="approve-foot">Didn’t expect anyone? Decline, and security will not let them in. Your decision is recorded.</p>}
     </div>
   );
