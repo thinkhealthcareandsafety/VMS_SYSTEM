@@ -83,7 +83,6 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number' });
   if (!company) return res.status(400).json({ error: 'Company / source is required' });
   if (!isId(b.hostId)) return res.status(400).json({ error: 'Select whom to meet' });
-  if (b.idMaskConfirmed !== true) return res.status(400).json({ error: 'Confirm the Aadhaar number is fully masked' });
 
   const host = await Host.findOne({ _id: b.hostId, active: true }).lean();
   if (!host) return res.status(400).json({ error: 'Selected host is not active' });

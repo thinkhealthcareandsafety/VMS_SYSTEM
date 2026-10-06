@@ -249,7 +249,6 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [idImage, setIdImage] = useState(null);
-  const [idConfirmed, setIdConfirmed] = useState(false);
   const [cam, setCam] = useState('face'); // which camera is live; only one at a time (phones cannot run two)
   const [returning, setReturning] = useState(null);
   const [active, setActive] = useState(null); // this person is already inside or waiting
@@ -312,7 +311,6 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     ['host', Boolean(host), 'whom to meet'],
     ['capture', Boolean(photo), 'photo'],
     ['capture', Boolean(idImage), 'Aadhaar'],
-    ['capture', !idImage || idConfirmed, 'Aadhaar check'],
   ];
   const missing = checks.filter(([, ok]) => !ok);
   const done = (s) => checks.every(([k, ok]) => k !== s || ok);
@@ -320,7 +318,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const reset = () => {
     store.clear();
     autofill.current = null;
-    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdConfirmed(false);
+    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null);
     setCam('face'); setTried(false); setError(''); setActive(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -336,7 +334,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     try {
       const res = await api('/api/visits', {
         method: 'POST',
-        body: { ...form, mobile: digits, hostId: host.id, photo, idImage, idMaskConfirmed: idConfirmed },
+        body: { ...form, mobile: digits, hostId: host.id, photo, idImage },
       });
       store.clear();
       onSubmitted({
@@ -423,16 +421,10 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           <div className="field">
             <span>Aadhaar card <span className="faint">· first 8 digits blacked out</span></span>
             {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" captured={idImage} onCapture={(p) => { setIdImage(p); setCam(null); }} onRetake={() => { setIdImage(null); setIdConfirmed(false); setCam('aadhaar'); }} />
+              ? <Camera mode="aadhaar" captured={idImage} onCapture={(p) => { setIdImage(p); setCam(null); }} onRetake={() => { setIdImage(null); setCam('aadhaar'); }} />
               : <CamTile icon={CreditCard} label="Scan Aadhaar" onClick={() => setCam('aadhaar')} />}
           </div>
         </div>
-        {idImage && (
-          <label className={`checkbox attest ${idConfirmed ? 'checked' : ''}`}>
-            <input type="checkbox" checked={idConfirmed} onChange={(e) => setIdConfirmed(e.target.checked)} />
-            <span><strong>The first 8 digits are fully hidden.</strong><br /><span className="muted">If any digit shows, retake with the card inside the frame.</span></span>
-          </label>
-        )}
       </section>
 
       {error && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{error}</span></div>}
