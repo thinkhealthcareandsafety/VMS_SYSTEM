@@ -10,3 +10,6 @@ data/
 
 .impeccable/config.local.json
 .vercel/
+
+# On-device OCR engine, copied from node_modules at build time
+client/public/ocr/

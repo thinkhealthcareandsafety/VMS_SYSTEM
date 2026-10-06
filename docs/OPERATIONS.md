@@ -24,10 +24,12 @@ Phones block the camera on plain HTTP. Put the app behind HTTPS (Nginx + Let's E
 The pass counter is keyed by the site-local date (`SITE_TIMEZONE`). A new day starts at 1 automatically. No cron job is needed.
 
 ## Aadhaar masking
-- The first eight digits are blacked out on the device before upload. The server only stores the masked image.
-- Calibrate `MASK_RECT` in `client/src/lib/aadhaarMask.js` once per camera and card layout: frame a real card, confirm the number is hidden, then adjust.
-- Masked images are deleted after `ID_IMAGE_RETENTION_HOURS` (default 24). Admin views are audited.
-- Confirm the retention period with your legal team under the DPDP Act 2023 before go-live.
+- Everything happens on the guard's device before upload; the server only ever receives and stores the masked image.
+- **Automatic:** after the shutter, on-device OCR (Tesseract, served from `/ocr` on our own site, about 7 MB downloaded once and cached) finds every Aadhaar number (4-4-4) and VID (4-4-4-4) on the card, wherever it is, and paints the first 8 digits (first 12 of a VID) solid black. It joins digits by position, so tilted cards work. A card that is already masked by UIDAI (XXXX XXXX 1234) is recognised. QR codes are painted black where the browser can detect them (Android Chrome); older letters carry the full number in the QR.
+- **When unsure:** if the read is partial, the box is widened and the guard is asked to check. If nothing can be read, the fixed `MASK_RECT` area is painted and the guard is told. Calibrate `MASK_RECT` in `client/src/lib/aadhaarMask.js` once for your camera and card layout.
+- **By hand:** the guard can drag to black out anything else ("Black out more", with Undo).
+- The visit records how it was masked (`auto`, `already`, `guide`, plus `+manual`), shown in the admin's visit details.
+- Retention is set in Admin → Settings (1 day to 1 year); older masked images are deleted automatically. Admin views are audited. Confirm the period with your legal team under the DPDP Act 2023.
 
 ## Audit and roles
 - Every check-in, approval, rejection, checkout, force checkout, print, and ID image view is written to the `audits` collection.

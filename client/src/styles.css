@@ -651,3 +651,16 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
   .pp-row strong { text-align: right; font-weight: 600; }
   .pp-foot { font-size: 8.5pt; }
 }
+
+/* ---------- Aadhaar auto-mask ---------- */
+.cam-busy { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px; padding: 24px; text-align: center; color: #fff; background: rgba(11, 13, 16, 0.72); backdrop-filter: blur(3px); }
+.cam-busy span { color: #c9ced6; font-size: 13px; max-width: 30ch; }
+.shot .warn-tag { color: var(--warn); max-width: calc(100% - 24px); white-space: normal; line-height: 1.3; }
+.shot.card-shot .ok-tag { max-width: calc(100% - 24px); }
+.paint-area { position: relative; touch-action: none; user-select: none; }
+.shot.drawing .paint-area { cursor: crosshair; outline: 2px dashed var(--accent); outline-offset: -2px; }
+.paint-box { position: absolute; background: rgba(0, 0, 0, 0.85); border: 2px solid #ff5c5c; pointer-events: none; }
+.shot .draw-tip { color: var(--text); }
+.shot-actions { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 6px; }
+.shot.card-shot .retake { display: none; }
+.shot .ok-tag { pointer-events: none; } /* labels never block taps or drags on the image */

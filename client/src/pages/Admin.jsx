@@ -595,6 +595,12 @@ const ACTIONS = {
 };
 const actionLabel = (a) => ACTIONS[a]?.[0] || a;
 const TL_ICON = { ok: CheckCircle2, bad: XCircle, warn: AlertTriangle };
+// How the guard's phone masked the Aadhaar number before upload.
+const maskNote = (m) => {
+  const [how, manual] = m.split('+');
+  const base = { auto: 'Number found and hidden automatically on the guard’s phone', already: 'Card was already masked (UIDAI masked Aadhaar)', guide: 'Number could not be read; the standard area was hidden' }[how] || 'Masked on the guard’s phone';
+  return manual ? `${base}. The guard blacked out more by hand.` : `${base}.`;
+};
 
 function VisitDrawer({ id, tick, onClose, onChanged }) {
   const toast = useToast();
@@ -660,6 +666,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
                   <span className="faint" style={{ fontSize: 12.5 }}>Each view is recorded in the audit log.</span>
                 </div>
               )}
+              {v.idMaskMethod && <p className="faint" style={{ fontSize: 12.5, marginTop: 8 }}>{maskNote(v.idMaskMethod)}</p>}
             </div>
 
             <div>

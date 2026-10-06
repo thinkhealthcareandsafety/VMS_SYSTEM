@@ -42,6 +42,7 @@ const visitSchema = new Schema({
   dailyNumber: { type: Number },                             // 1,2,3... resets each day
   photoPath: { type: String },
   idImagePath: { type: String },                             // MASKED Aadhaar image only
+  idMaskMethod: { type: String },                            // auto | already | guide, + "+manual" if the guard blacked out more
   idImagePurgedAt: { type: Date },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   decidedAt: { type: Date },

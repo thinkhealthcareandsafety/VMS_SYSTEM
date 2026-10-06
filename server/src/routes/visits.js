@@ -27,7 +27,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   dailyNumber: v.dailyNumber ?? null,
   dailyDay: v.dailyDay ?? null,
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
-  ...(withMobile ? { mobile: v.mobile, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath) } : {}),
+  ...(withMobile ? { mobile: v.mobile, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod } : {}),
   decidedAt: v.decidedAt,
   checkedOutAt: v.checkedOutAt,
 });
@@ -123,6 +123,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   if (!photo) return res.status(400).json({ error: 'A live photo is required' });
   const idImage = decodeJpeg(b.idImage, MAX_ID);
   if (!idImage) return res.status(400).json({ error: 'Aadhaar image is required' });
+  const idMaskMethod = ['auto', 'already', 'guide'].some((m) => b.idMask === m || b.idMask === `${m}+manual`) ? b.idMask : undefined;
 
   let photoPath, idPath;
   try {
@@ -135,7 +136,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       host: host._id,
       status: 'pending',
       visitDay: siteDay(),
-      photoPath, idImagePath: idPath,
+      photoPath, idImagePath: idPath, idMaskMethod,
       createdBy: req.user.id,
     });
     audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });

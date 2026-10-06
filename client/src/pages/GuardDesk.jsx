@@ -11,6 +11,7 @@ import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials } from '../c
 import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
+import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 
 const DRAFT_KEY = 'vms-guard-draft';
 const DISMISS_KEY = 'vms-guard-dismissed';
@@ -287,6 +288,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [idImage, setIdImage] = useState(null);
+  const [idInfo, setIdInfo] = useState(null); // how the Aadhaar was masked: auto, already, guide (+ manual touch-ups)
   const [cam, setCam] = useState('face'); // which camera is live; only one at a time (phones cannot run two)
   const [returning, setReturning] = useState(null);
   const [active, setActive] = useState(null); // this person is already inside or waiting
@@ -296,6 +298,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [error, setError] = useState('');
   const [tried, setTried] = useState(false);
   const autofill = useRef(null); // what the returning-visitor lookup filled in, and for which number
+
+  // Load the on-device Aadhaar reader while the guard is still typing, so the scan is quick.
+  useEffect(() => { const t = setTimeout(warmUpMasking, 1200); return () => clearTimeout(t); }, []);
   const formRef = useRef(form);
   formRef.current = form;
   const sec = { visitor: useRef(null), host: useRef(null), capture: useRef(null) };
@@ -376,7 +381,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const reset = () => {
     store.clear();
     autofill.current = null;
-    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null);
+    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null);
     setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -392,7 +397,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     try {
       const res = await api('/api/visits', {
         method: 'POST',
-        body: { ...form, mobile: digits, hostId: host.id, photo, idImage, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
+        body: { ...form, mobile: digits, hostId: host.id, photo, idImage, idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
       });
       store.clear();
       onSubmitted({
@@ -499,7 +504,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           <div className="field">
             <span>Aadhaar card <span className="faint">· first 8 digits blacked out</span></span>
             {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" captured={idImage} onCapture={(p) => { setIdImage(p); setCam(null); }} onRetake={() => { setIdImage(null); setCam('aadhaar'); }} />
+              ? <Camera mode="aadhaar" captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: !how?.undo || i?.manual })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
               : <CamTile icon={CreditCard} label="Scan Aadhaar" onClick={() => setCam('aadhaar')} />}
           </div>
         </div>
