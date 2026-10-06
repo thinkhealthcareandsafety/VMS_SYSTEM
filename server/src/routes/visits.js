@@ -124,7 +124,7 @@ router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
   res.json({
     ...publicVisit(v, v.host, req.user.role === 'admin'),
     createdAt: v.createdAt,
-    printStatus: print ? print.status : null,
+    printStatus: config.printer.mode === 'off' ? 'off' : print ? print.status : null,
     printError: print?.status === 'failed' ? print.lastError : undefined,
   });
 });

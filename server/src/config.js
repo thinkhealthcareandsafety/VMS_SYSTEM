@@ -9,6 +9,8 @@ module.exports = {
   defaultCountryCode: env.DEFAULT_COUNTRY_CODE || '+91',
   uploadDir: env.UPLOAD_DIR || 'uploads',
   cookieSecure: env.COOKIE_SECURE === 'true',
+  // Proxies in front of the app, so req.ip is the visitor's address. Vercel -> Render = 2.
+  trustProxy: Number(env.TRUST_PROXY || 1),
   sessionHours: Number(env.SESSION_HOURS || 12),
   approvalTtlMinutes: Number(env.APPROVAL_TTL_MINUTES || 10),
   maxInsideHours: Number(env.MAX_INSIDE_HOURS || 10),

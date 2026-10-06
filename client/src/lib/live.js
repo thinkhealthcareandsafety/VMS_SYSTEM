@@ -11,7 +11,14 @@ export function useLive(onChange) {
     const open = () => {
       if (es) return;
       es = new EventSource('/api/events');
-      es.onopen = () => setConnected(true);
+      let opened = false;
+      // The server ends each stream every 90 s and the browser reconnects; refetch on every
+      // reconnect so nothing that happened in the gap is missed.
+      es.onopen = () => {
+        setConnected(true);
+        if (opened) cb.current({ type: 'resync' });
+        opened = true;
+      };
       es.onerror = () => setConnected(false);
       es.onmessage = (e) => {
         try { cb.current(JSON.parse(e.data)); } catch { /* malformed event */ }

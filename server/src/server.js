@@ -12,7 +12,7 @@ const { stream } = require('./services/events');
 
 function createApp() {
   const app = express();
-  app.set('trust proxy', 1);
+  app.set('trust proxy', config.trustProxy);
   app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], imgSrc: ["'self'", 'data:', 'blob:'], connectSrc: ["'self'"] } } }));
   app.use(express.json({ limit: '6mb' }));
   app.use(cookieParser());

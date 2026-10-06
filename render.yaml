@@ -1,0 +1,41 @@
+# Backend API on Render. The frontend runs on Vercel and forwards /api here (see client/vercel.json),
+# so the browser only ever talks to the Vercel address and login cookies stay first-party.
+services:
+  - type: web
+    name: vms-system-api
+    runtime: node
+    rootDir: server
+    region: singapore
+    plan: starter            # always on; the free plan sleeps and has no disk, so photos would be lost
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /api/health
+    disk:
+      name: visitor-files    # visitor photos and masked Aadhaar images survive restarts and deploys
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGODB_URI     # MongoDB Atlas connection string (Mumbai region)
+        sync: false
+      - key: APP_BASE_URL    # the Vercel address, e.g. https://vms-system.vercel.app (used in SMS links)
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY     # Vercel -> Render load balancer -> app
+        value: "2"
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: SITE_NAME
+        value: Visitor Desk
+      - key: SITE_TIMEZONE
+        value: Asia/Kolkata
+      - key: DEFAULT_COUNTRY_CODE
+        value: "+91"
+      - key: PRINTER_MODE    # the sticker printer is on the gate's local network; a cloud server cannot reach it
+        value: "off"
+      - key: SMS_DRIVER      # switch to http once an SMS provider is set up
+        value: console

@@ -8,7 +8,11 @@ const { audit } = require('../services/core');
 
 const router = express.Router();
 
-const loginLimiter = rateLimit({ windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false });
+// Keyed on address + username: if a proxy ever hides real addresses, one person's typos still cannot lock out everyone.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}|${String(req.body?.username || '').toLowerCase().slice(0, 50)}`,
+});
 
 router.post('/login', loginLimiter, async (req, res) => {
   const parsed = z.object({ username: z.string().min(1).max(50), password: z.string().min(1).max(200) }).safeParse(req.body);

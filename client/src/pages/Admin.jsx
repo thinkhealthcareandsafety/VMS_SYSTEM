@@ -603,7 +603,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
               {admitted && <><dt>Let in</dt><dd className="num">{fmtDateTime(v.decidedAt)}</dd></>}
               {v.checkedOutAt && <><dt>Left</dt><dd className="num">{fmtDateTime(v.checkedOutAt)} · {fmtDuration(Math.round((new Date(v.checkedOutAt) - new Date(v.decidedAt)) / 60000))} inside</dd></>}
               {v.forceReason && <><dt>Checkout reason</dt><dd>{v.forceReason}</dd></>}
-              {v.printStatus && <><dt>Sticker</dt><dd>{v.printStatus === 'sent' ? 'Printed' : v.printStatus === 'failed' ? `Failed${v.printError ? `: ${v.printError}` : ''}` : 'In the print queue'}</dd></>}
+              {v.printStatus && <><dt>Sticker</dt><dd>{v.printStatus === 'off' ? 'No printer connected' : v.printStatus === 'sent' ? 'Printed' : v.printStatus === 'failed' ? `Failed${v.printError ? `: ${v.printError}` : ''}` : 'In the print queue'}</dd></>}
             </dl>
 
             <div>

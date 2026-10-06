@@ -358,7 +358,7 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
             <div className="pass-perf" />
             <div className="pass-foot">
               <PrintStatus status={visit.printStatus} />
-              <button className="btn btn-sm" onClick={onReprint}><Printer />Reprint</button>
+              {visit.printStatus !== 'off' && <button className="btn btn-sm" onClick={onReprint}><Printer />Reprint</button>}
             </div>
           </div>
           <p className="lead">Approved by {visit.host.name}. Hand over the sticker and let the visitor in.</p>
@@ -389,6 +389,7 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
 }
 
 function PrintStatus({ status }) {
+  if (status === 'off') return <span className="badge">No printer connected</span>;
   if (status === 'sent') return <span className="badge badge-ok">Sticker printed</span>;
   if (status === 'failed') return <span className="badge badge-bad">Printer failed</span>;
   return <span className="badge badge-warn">Printing…</span>;
