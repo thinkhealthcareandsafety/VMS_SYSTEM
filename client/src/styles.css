@@ -432,6 +432,11 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .tray-state.bad { color: var(--bad); }
 .tray-state.warn { color: var(--warn); }
 .tray-state .pass-chip { background: var(--ok); }
+.row-actions { display: flex; gap: 6px; align-items: center; }
+.pass-foot-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.menu-pop .menu-state { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--text-3); }
+.menu-pop .menu-state.on { color: var(--ok); }
+#print-pass { display: none; }
 .tray-actions { display: flex; gap: 6px; justify-content: flex-end; padding: 0 14px 12px; }
 .outcome-actions { display: grid; gap: 10px; justify-items: center; width: 100%; max-width: 360px; }
 .outcome-actions > .btn { width: 100%; }
@@ -598,4 +603,24 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 @media (max-width: 480px) {
   .grid-2 { gap: 10px; }
   .dl { grid-template-columns: 100px 1fr; }
+}
+
+/* ---------- Printing the pass (80 mm receipt paper, black on white, no colour) ---------- */
+@media print {
+  @page { size: 80mm auto; margin: 0; }
+  html, body { background: #fff !important; }
+  body > *:not(#print-pass) { display: none !important; }
+  #print-pass { display: block; width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font-family: var(--font); text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #print-pass * { color: #000 !important; background: none !important; box-shadow: none !important; }
+  .pp-site { font-size: 11pt; font-weight: 600; letter-spacing: 0.04em; }
+  .pp-title { font-size: 9pt; letter-spacing: 0.22em; margin-top: 1mm; }
+  .pp-no { font-size: 64pt; font-weight: 700; line-height: 1; margin: 3mm 0 1mm; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .pp-date { font-size: 10pt; margin-bottom: 3mm; }
+  .pp-photo { display: block; width: 30mm; height: 30mm; object-fit: cover; margin: 0 auto 3mm; filter: grayscale(1) contrast(1.15); border: 0.4mm solid #000; }
+  .pp-name { font-size: 15pt; font-weight: 700; line-height: 1.15; }
+  .pp-company { font-size: 10pt; margin-top: 0.5mm; }
+  .pp-rule { border-top: 0.35mm dashed #000; margin: 3mm 0; }
+  .pp-row { display: flex; justify-content: space-between; gap: 4mm; font-size: 10pt; text-align: left; padding: 0.6mm 0; }
+  .pp-row strong { text-align: right; font-weight: 600; }
+  .pp-foot { font-size: 8.5pt; }
 }

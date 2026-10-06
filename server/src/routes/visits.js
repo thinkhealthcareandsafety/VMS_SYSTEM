@@ -213,6 +213,15 @@ router.post('/:id/resend', requireRole('guard', 'admin'), async (req, res) => {
   res.json({ ok: true, status: v.status });
 });
 
+// The guard printed the pass (browser print, any printer). Recorded for the audit trail; it is also the handover.
+router.post('/:id/printed', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const v = await Visit.findOne({ _id: req.params.id, status: { $in: ['approved', 'checked_out', 'force_checked_out'] } }, 'ref').lean();
+  if (!v) return res.status(409).json({ error: 'No pass has been issued for this visit' });
+  audit(req.user, 'pass.printed', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
+  res.json({ ok: true });
+});
+
 // Visitor gave up before the host answered. Closes the approval link too.
 router.post('/:id/cancel', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });

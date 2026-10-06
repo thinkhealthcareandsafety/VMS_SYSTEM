@@ -301,6 +301,20 @@ test('sign-in tolerates a space or line break copied along with the password', a
   assert.equal(wrong.status, 401);
 });
 
+test('printing a pass is recorded; only issued passes can be printed; the site name reaches the print layout', async () => {
+  const { Audit } = require('../src/models');
+  const v = await checkIn('Pooja', hostIds.asha, '9855555555');
+  assert.equal((await call('POST', `/api/visits/${v.body.id}/printed`, {}, guard)).status, 409, 'no pass before the host approves');
+  const dec = await call('POST', `/api/approvals/${await tokenFor(v.body.id)}/decision`, { decision: 'approve' });
+  assert.equal(dec.status, 200);
+  assert.equal((await call('POST', `/api/visits/${v.body.id}/printed`, {}, guard)).status, 200);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(await Audit.exists({ action: 'pass.printed', entityId: v.body.id }));
+  assert.equal((await call('POST', `/api/visits/${v.body.id}/printed`)).status, 401, 'sign-in required');
+  const me = await call('GET', '/api/auth/me', null, guard);
+  assert.ok(me.body.siteName, 'the printed pass carries the site name');
+});
+
 // Runs last: it changes guard1's password, which ends the `guard` session used above.
 test('anyone can change their own password; other devices are signed out, this one continues', async () => {
   const otherDevice = await login('guard1', 'guard-pass-123');

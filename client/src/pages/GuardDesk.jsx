@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle, Bell, Building2, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Printer, RotateCcw, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
@@ -13,6 +14,7 @@ import Camera from '../components/Camera.jsx';
 
 const DRAFT_KEY = 'vms-guard-draft';
 const DISMISS_KEY = 'vms-guard-dismissed';
+const AUTOPRINT_KEY = 'vms-guard-autoprint';
 const EMPTY = { mobile: '', firstName: '', lastName: '', company: '', purpose: '' };
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
 const MOBILE_RE = /^[6-9]\d{9}$/;
@@ -46,6 +48,12 @@ export default function GuardDesk({ user, onLogout }) {
   const [liveTick, setLiveTick] = useState(0); // bumps on every server event
   const openRef = useRef(null);
   openRef.current = open;
+  const [printing, setPrinting] = useState(null); // visit whose pass is being printed
+  const [autoPrint, setAutoPrint] = useState(() => { try { return localStorage.getItem(AUTOPRINT_KEY) === '1'; } catch { return false; } });
+  const printingRef = useRef(null);
+  printingRef.current = printing;
+  const autoPrintRef = useRef(autoPrint);
+  autoPrintRef.current = autoPrint;
 
   const refreshInside = useCallback(() => api('/api/visits/inside').then(setInside).catch(() => {}), []);
   const refreshQueue = useCallback(() => api('/api/visits/queue').then((d) => setQueue(d.rows)).catch(() => {}), []);
@@ -90,7 +98,11 @@ export default function GuardDesk({ user, onLogout }) {
       if (!was || was === r.status) continue;
       const who = `${r.firstName} ${r.lastName}`;
       const host = r.host?.name || 'The host';
-      if (r.status === 'approved') { cue.approved(); toast(`${host} let ${who} in · Pass ${r.dailyNumber}`, 'ok'); }
+      if (r.status === 'approved') {
+        cue.approved();
+        toast(`${host} let ${who} in · Pass ${r.dailyNumber}`, 'ok');
+        if (autoPrintRef.current && !printingRef.current) setPrinting(r);
+      }
       else if (r.status === 'rejected') { cue.rejected(); toast(`${host} declined ${who}. Do not let them in.`, 'bad'); }
       else if (r.status === 'expired') { cue.expired(); toast(`No reply from ${host} for ${who}. Resend or cancel.`, 'info'); }
     }
@@ -102,6 +114,21 @@ export default function GuardDesk({ user, onLogout }) {
     dismissedStore.save(n);
     return n;
   }), []);
+
+  // Printing the pass IS the handover: once it goes to the printer, the visitor leaves the waiting list by itself.
+  const donePrinting = useCallback(() => {
+    const v = printingRef.current;
+    setPrinting(null);
+    if (!v) return;
+    dismiss(v.id);
+    api(`/api/visits/${v.id}/printed`, { method: 'POST' }).catch(() => {});
+    toast(`Pass ${v.dailyNumber} sent to the printer.`);
+  }, [dismiss, toast]);
+  const toggleAutoPrint = () => setAutoPrint((on) => {
+    const next = !on;
+    try { localStorage.setItem(AUTOPRINT_KEY, next ? '1' : '0'); } catch { /* storage blocked */ }
+    return next;
+  });
 
   const act = {
     resend: async (v) => {
@@ -159,7 +186,7 @@ export default function GuardDesk({ user, onLogout }) {
             </small>
           </div>
         </div>
-        <UserMenu user={user} onLogout={onLogout} />
+        <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
       </header>
 
       <main className="guard-main">
@@ -173,6 +200,7 @@ export default function GuardDesk({ user, onLogout }) {
                 onResend={() => act.resend(open)}
                 onCancel={() => act.cancel(open)}
                 onReprint={() => act.reprint(open)}
+                onPrint={() => setPrinting(open)}
               />
             ) : (
               <CheckInForm
@@ -189,10 +217,10 @@ export default function GuardDesk({ user, onLogout }) {
           </section>
           <aside className={`guard-side ${tab === 'checkin' ? 'hide-mobile' : ''}`} aria-label="Waiting and on premises">
             <div className={tab === 'waiting' ? '' : 'hide-mobile'}>
-              <WaitingTray rows={tray} loaded={Boolean(queue)} sentAt={sentAt} openId={open?.id} onOpen={openVisit} act={act} onDismiss={dismiss} />
+              <WaitingTray rows={tray} loaded={Boolean(queue)} sentAt={sentAt} openId={open?.id} onOpen={openVisit} act={act} onDismiss={dismiss} onPrint={setPrinting} />
             </div>
             <div className={tab === 'inside' ? '' : 'hide-mobile'}>
-              <InsideList data={inside} onChanged={refreshInside} />
+              <InsideList data={inside} onChanged={refreshInside} onPrint={setPrinting} />
             </div>
           </aside>
         </div>
@@ -209,11 +237,13 @@ export default function GuardDesk({ user, onLogout }) {
           {insideCount > 0 && <span className="count">{insideCount}</span>}
         </button>
       </nav>
+
+      <PrintSheet visit={printing} siteName={user.siteName} onDone={donePrinting} />
     </div>
   );
 }
 
-function UserMenu({ user, onLogout }) {
+function UserMenu({ user, onLogout, autoPrint, onToggleAutoPrint }) {
   const [open, setOpen] = useState(false);
   const [pw, setPw] = useState(false);
   const ref = useRef(null);
@@ -234,6 +264,9 @@ function UserMenu({ user, onLogout }) {
       {open && (
         <div className="menu-pop" role="menu">
           <div className="who"><strong>{user.fullName}</strong><small>{user.role === 'admin' ? 'Administrator' : 'Security guard'} · {user.username}</small></div>
+          <button role="menuitemcheckbox" aria-checked={autoPrint} onClick={onToggleAutoPrint}>
+            <Printer />Print pass when approved<span className={`menu-state ${autoPrint ? 'on' : ''}`}>{autoPrint ? 'On' : 'Off'}</span>
+          </button>
           <button role="menuitem" onClick={() => { setOpen(false); setPw(true); }}><KeyRound />Change password</button>
           <button role="menuitem" onClick={onLogout}><LogOut />Sign out</button>
         </div>
@@ -461,7 +494,7 @@ function CamTile({ icon: Icon, label, onClick }) {
 }
 
 // ---------------------------------------------------------------- One visit, after sending
-function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint }) {
+function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint }) {
   useTick(1000);
   const name = `${visit.firstName} ${visit.lastName}`;
   const hostFirst = visit.host?.name?.split(' ')[0] || 'the host';
@@ -519,12 +552,15 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint }) {
             <div className="pass-perf" />
             <div className="pass-foot">
               <PrintStatus status={visit.printStatus} />
-              {visit.printStatus && visit.printStatus !== 'off' && <button className="btn btn-sm" onClick={onReprint}><Printer />Reprint</button>}
+              <span className="pass-foot-actions">
+                {visit.printStatus && visit.printStatus !== 'off' && <button className="btn btn-sm" onClick={onReprint}><Printer />Label</button>}
+                <button className="btn btn-sm btn-primary" onClick={onPrint}><Printer />Print pass</button>
+              </span>
             </div>
           </div>
           <p className="lead">
             Approved by {visit.host?.name}.{' '}
-            {visit.printStatus === 'off' ? `Write pass ${visit.dailyNumber} on the visitor slip and let them in.` : 'Hand over the sticker and let the visitor in.'}
+            {visit.printStatus === 'off' ? 'Print the pass, hand it over and let the visitor in.' : 'Hand over the sticker and let the visitor in.'}
           </p>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}><UserPlus />Next visitor</button>
         </>
@@ -571,14 +607,59 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint }) {
 
 function PrintStatus({ status }) {
   if (!status) return null;
-  if (status === 'off') return <span className="badge plain">No printer connected</span>;
+  if (status === 'off') return null;
   if (status === 'sent') return <span className="badge badge-ok">Sticker printed</span>;
   if (status === 'failed') return <span className="badge badge-bad">Printer failed</span>;
   return <span className="badge badge-warn">Printing…</span>;
 }
 
+// ---------------------------------------------------------------- Printable pass
+// Rendered only while printing. Sized for 80 mm receipt paper (Epson TM series and similar); on A4 it prints as a small slip.
+// Works with any printer installed on this computer. Hidden on screen, shown by @media print in styles.css.
+function PrintSheet({ visit, siteName, onDone }) {
+  const [ready, setReady] = useState(false);
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
+
+  useEffect(() => {
+    setReady(false);
+    if (!visit) return undefined;
+    const t = setTimeout(() => setReady(true), 1800); // never wait forever for the photo
+    return () => clearTimeout(t);
+  }, [visit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!visit || !ready) return undefined;
+    const after = () => doneRef.current();
+    window.addEventListener('afterprint', after, { once: true });
+    const t = setTimeout(() => window.print(), 60);
+    return () => { clearTimeout(t); window.removeEventListener('afterprint', after); };
+  }, [visit?.id, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!visit) return null;
+  const name = `${visit.firstName} ${visit.lastName}`;
+  return createPortal(
+    <div id="print-pass" aria-hidden="true">
+      <div className="pp-site">{siteName || 'Visitor Desk'}</div>
+      <div className="pp-title">VISITOR PASS</div>
+      <div className="pp-no">{visit.dailyNumber}</div>
+      <div className="pp-date">{fmtDate(visit.decidedAt)} · {fmtTime(visit.decidedAt)}</div>
+      <img className="pp-photo" src={`/api/visits/${visit.id}/photo`} alt="" onLoad={() => setReady(true)} onError={() => setReady(true)} />
+      <div className="pp-name">{name}</div>
+      <div className="pp-company">{visit.company}</div>
+      <div className="pp-rule" />
+      <div className="pp-row"><span>Meeting</span><strong>{visit.host?.name}</strong></div>
+      <div className="pp-row"><span>Flat / dept</span><strong>{visit.host?.unit}</strong></div>
+      <div className="pp-row"><span>Visitor ID</span><strong>{visit.ref}</strong></div>
+      <div className="pp-rule" />
+      <div className="pp-foot">Wear this pass. Return it when you leave.</div>
+    </div>,
+    document.body,
+  );
+}
+
 // ---------------------------------------------------------------- Waiting for host
-function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss }) {
+function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss, onPrint }) {
   useTick(1000);
   return (
     <div className={`tray ${rows.length ? '' : 'tray-empty'}`}>
@@ -614,7 +695,12 @@ function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss }) {
                     <button className="btn btn-sm btn-ghost" onClick={() => act.cancel(v)}><X />Cancel</button>
                   </>
                 )}
-                {v.status === 'approved' && <button className="btn btn-sm btn-success" onClick={() => onDismiss(v.id)}><Check />Pass handed over</button>}
+                {v.status === 'approved' && (
+                  <>
+                    <button className="btn btn-sm btn-primary" onClick={() => onPrint(v)}><Printer />Print pass</button>
+                    <button className="btn btn-sm btn-ghost btn-icon" onClick={() => onDismiss(v.id)} aria-label="Dismiss without printing" title="Dismiss without printing"><X /></button>
+                  </>
+                )}
                 {v.status === 'rejected' && <button className="btn btn-sm" onClick={() => onDismiss(v.id)}><Check />Got it</button>}
               </div>
             </div>
@@ -634,7 +720,7 @@ function TrayState({ v }) {
 }
 
 // ---------------------------------------------------------------- On premises
-function InsideList({ data, onChanged }) {
+function InsideList({ data, onChanged, onPrint }) {
   const toast = useToast();
   useTick(30000);
   const [q, setQ] = useState('');
@@ -695,6 +781,8 @@ function InsideList({ data, onChanged }) {
                 <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
                 <div className="time">In {fmtTime(v.decidedAt)} · {fmtDuration(mins)}{long && <span className="badge badge-warn">Long stay</span>}</div>
               </div>
+              <div className="row-actions">
+              <button type="button" className="btn btn-sm btn-icon" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber}`} title="Print pass"><Printer /></button>
               <button
                 type="button"
                 className={`btn btn-sm ${confirming ? 'btn-danger' : ''}`}
@@ -704,6 +792,7 @@ function InsideList({ data, onChanged }) {
               >
                 {busyId === v.id ? <Spinner /> : confirming ? <><CheckCircle2 />Confirm</> : <><LogOut />Check out</>}
               </button>
+              </div>
             </div>
           );
         })}

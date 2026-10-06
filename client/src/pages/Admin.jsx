@@ -555,6 +555,7 @@ const ACTIONS = {
   'visit.checked_out': ['Checked out at the gate', ''],
   'visit.force_checked_out': ['Checked out by admin', 'warn'],
   'sticker.reprint_requested': ['Sticker reprint requested', ''],
+  'pass.printed': ['Pass printed at the gate', ''],
   'sms.failed': ['SMS could not be sent', 'bad'],
   'print.failed': ['Sticker failed to print', 'bad'],
   'id_image.viewed': ['Aadhaar image viewed', 'warn'],
@@ -707,7 +708,7 @@ function MessagesPage({ tick, stats }) {
       {kind === 'print' && stats && !stats.printerOn && (
         <div className="notice">
           <Info />
-          <span className="grow"><strong>No sticker printer is connected.</strong> Guards see the pass number on screen and write it on the visitor slip.</span>
+          <span className="grow"><strong>No label printer is connected to the server.</strong> Guards print passes from the guard desk through the browser, on any printer installed on that computer.</span>
         </div>
       )}
       {!rows ? <ListSkeleton /> : rows.length === 0 ? (

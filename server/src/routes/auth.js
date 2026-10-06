@@ -4,13 +4,15 @@ const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { User } = require('../models');
 const { signSession, setSessionCookie, COOKIE, loadUser, requireRole } = require('../middleware/auth');
+const config = require('../config');
 const { audit, passwordProblem } = require('../services/core');
 
 const router = express.Router();
 
 // Keyed on address + username: if a proxy ever hides real addresses, one person's typos still cannot lock out everyone.
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false,
+  // Only failed attempts count: shift changes on a shared gate PC must never lock a guard out.
+  windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false, skipSuccessfulRequests: true,
   keyGenerator: (req) => `${req.ip}|${String(req.body?.username || '').toLowerCase().slice(0, 50)}`,
   message: { error: 'Too many attempts. Wait 15 minutes, or ask your admin to reset your password.' },
 });
@@ -31,7 +33,7 @@ router.post('/login', loginLimiter, async (req, res) => {
   await User.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
   setSessionCookie(res, signSession(user));
   audit({ username: user.username, role: user.role }, 'auth.login', { ip: req.ip });
-  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role });
+  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName: config.siteName });
 });
 
 router.post('/logout', (req, res) => {
@@ -42,7 +44,7 @@ router.post('/logout', (req, res) => {
 router.get('/me', async (req, res) => {
   const user = await loadUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });
-  res.json(user);
+  res.json({ ...user, siteName: config.siteName });
 });
 
 // Change your own password. Signs out every other device; this one gets a fresh session.
