@@ -8,8 +8,9 @@ const mongoose = require('mongoose');
 const archiver = require('archiver');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
+const telegram = require('../services/telegram');
 const { Visit, Host, Outbox, Audit, User } = require('../models');
-const { siteDay, audit, normalizeMobile, cleanText, passwordProblem } = require('../services/core');
+const { siteDay, audit, normalizeMobile, cleanText, passwordProblem, sha256 } = require('../services/core');
 
 const router = express.Router();
 const dayStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
@@ -126,7 +127,7 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
     Visit.countDocuments({ visitDay: today, status: 'checked_out' }),
     Visit.countDocuments({ visitDay: today, status: 'force_checked_out' }),
     Outbox.countDocuments({ kind: 'print', status: 'failed' }),
-    Outbox.countDocuments({ kind: 'sms', status: 'failed' }),
+    Outbox.countDocuments({ kind: { $in: ['sms', 'telegram'] }, status: 'failed' }),
     Visit.countDocuments({ status: 'approved', decidedAt: { $lt: new Date(Date.now() - config.maxInsideHours * 3600e3) } }),
   ]);
   const arrivals = await Visit.find({ visitDay: today }, 'createdAt').lean();
@@ -138,7 +139,7 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
   res.json({
     today, inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleInside: staleCut, arrivalsToday: arrivals.length, byHour,
     // So the console can say plainly when SMS are only logged, or no sticker printer is connected.
-    smsLive: config.sms.driver !== 'console', printerOn: config.printer.mode !== 'off',
+    smsLive: config.sms.driver !== 'console', telegramOn: telegram.enabled(), printerOn: config.printer.mode !== 'off',
   });
 });
 
@@ -151,8 +152,14 @@ router.get('/stale', requireRole('admin'), async (req, res) => {
 
 router.get('/outbox', requireRole('admin'), async (req, res) => {
   const kind = req.query.kind === 'print' ? 'print' : 'sms';
-  const rows = await Outbox.find({ kind }).sort({ _id: -1 }).limit(100).populate('visit', 'ref').lean();
-  res.json({ rows: rows.map((o) => ({ id: String(o._id), ref: o.visit?.ref, status: o.status, attempts: o.attempts, lastError: o.lastError, to: o.kind === 'sms' ? o.to : undefined, body: o.kind === 'sms' ? o.body : undefined, createdAt: o.createdAt, sentAt: o.sentAt })) });
+  const rows = await Outbox.find({ kind: kind === 'print' ? 'print' : { $in: ['sms', 'telegram'] } }).sort({ _id: -1 }).limit(100).populate('visit', 'ref').lean();
+  res.json({
+    rows: rows.map((o) => ({
+      id: String(o._id), ref: o.visit?.ref, status: o.status, attempts: o.attempts, lastError: o.lastError,
+      channel: o.kind, to: o.kind === 'sms' ? o.to : o.kind === 'telegram' ? 'Telegram' : undefined,
+      body: o.kind === 'print' ? undefined : o.body, createdAt: o.createdAt, sentAt: o.sentAt,
+    })),
+  });
 });
 
 router.get('/audit', requireRole('admin'), async (req, res) => {
@@ -171,7 +178,7 @@ const hostSchema = z.object({
 
 router.get('/hosts', requireRole('admin'), async (req, res) => {
   const hosts = await Host.find().sort({ fullName: 1 }).lean();
-  res.json({ rows: hosts.map((h) => ({ id: String(h._id), fullName: h.fullName, unit: h.unit, mobile: h.mobile, email: h.email, active: h.active })) });
+  res.json({ rows: hosts.map((h) => ({ id: String(h._id), fullName: h.fullName, unit: h.unit, mobile: h.mobile, email: h.email, active: h.active, telegram: Boolean(h.telegramChatId) })) });
 });
 
 router.post('/hosts', requireRole('admin'), async (req, res) => {
@@ -205,6 +212,7 @@ router.patch('/hosts/:id', requireRole('admin'), async (req, res) => {
     allowed.mobile = m;
   }
   const unset = {};
+  if (b.disconnectTelegram === true) Object.assign(unset, { telegramChatId: 1, telegramLinkHash: 1, telegramLinkExpires: 1 });
   if (b.email !== undefined) {
     const email = String(b.email || '').trim().toLowerCase();
     if (email && !z.string().email().safeParse(email).success) return res.status(400).json({ error: 'Enter a valid email, or leave it empty' });
@@ -214,6 +222,20 @@ router.patch('/hosts/:id', requireRole('admin'), async (req, res) => {
   if (!host) return res.status(404).json({ error: 'Not found' });
   audit(req.user, 'host.updated', { entity: 'Host', entityId: host._id, details: allowed, ip: req.ip });
   res.json({ ok: true });
+});
+
+// One-time link and QR for a host to connect Telegram. Valid 24 hours, works once.
+router.post('/hosts/:id/telegram-link', requireRole('admin'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  if (!telegram.enabled()) return res.status(503).json({ error: 'Telegram is not set up yet. Add the bot token in the server settings.' });
+  let bot;
+  try { bot = await telegram.botUsername(); } catch { return res.status(502).json({ error: 'Could not reach Telegram. Check the bot token.' }); }
+  const code = crypto.randomBytes(18).toString('base64url');
+  const expires = new Date(Date.now() + 24 * 3600e3);
+  const host = await Host.findByIdAndUpdate(req.params.id, { telegramLinkHash: sha256(code), telegramLinkExpires: expires }, { new: true });
+  if (!host) return res.status(404).json({ error: 'Not found' });
+  audit(req.user, 'host.telegram_link', { entity: 'Host', entityId: host._id, details: { unit: host.unit }, ip: req.ip });
+  res.json({ url: `https://t.me/${bot}?start=${code}`, bot, expiresAt: expires });
 });
 
 // Bulk import: CSV lines "full name,unit,mobile[,email]". Returns per-line errors.

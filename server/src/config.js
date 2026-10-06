@@ -22,6 +22,11 @@ module.exports = {
     port: Number(env.PRINTER_PORT || 9100),
     timeoutMs: 5000,
   },
+  telegram: {
+    token: env.TELEGRAM_BOT_TOKEN || '',            // from @BotFather; empty = Telegram off
+    botUsername: env.TELEGRAM_BOT_USERNAME || '',   // optional; learned from Telegram when empty
+    apiBase: env.TELEGRAM_API_BASE || 'https://api.telegram.org',
+  },
   sms: {
     driver: env.SMS_DRIVER || 'console',   // console | http
     httpUrl: env.SMS_HTTP_URL || '',

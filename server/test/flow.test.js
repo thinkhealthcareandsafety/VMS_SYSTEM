@@ -17,7 +17,24 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-let mongod, server, base;
+let mongod, server, base, fakeTelegram;
+const telegramCalls = [];
+const startFakeTelegram = () => new Promise((resolve) => {
+  const http = require('node:http');
+  const srv = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const method = req.url.split('/').pop();
+      const payload = raw ? JSON.parse(raw) : {};
+      telegramCalls.push({ method, payload });
+      const result = method === 'getMe' ? { username: 'test_gate_bot' } : method === 'sendMessage' ? { message_id: 700 + telegramCalls.length } : true;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true, result }));
+    });
+  });
+  srv.listen(0, '127.0.0.1', () => resolve(srv));
+});
 const jpeg = () => 'data:image/jpeg;base64,' + Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(300, 7)]).toString('base64');
 
 async function call(method, url, body, cookie) {
@@ -44,6 +61,9 @@ let guard, admin, hostIds = {};
 
 before(async () => {
   mongod = await MongoMemoryServer.create();
+  fakeTelegram = await startFakeTelegram();
+  process.env.TELEGRAM_BOT_TOKEN = '123:test-token';
+  process.env.TELEGRAM_API_BASE = `http://127.0.0.1:${fakeTelegram.address().port}`;
   process.env.MONGODB_URI = mongod.getUri();
   const { createApp } = require('../src/server');
   const config = require('../src/config');
@@ -65,6 +85,7 @@ before(async () => {
 
 after(async () => {
   server?.close();
+  fakeTelegram?.close();
   await mongoose.disconnect();
   await mongod?.stop();
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -313,6 +334,83 @@ test('printing a pass is recorded; only issued passes can be printed; the site n
   assert.equal((await call('POST', `/api/visits/${v.body.id}/printed`)).status, 401, 'sign-in required');
   const me = await call('GET', '/api/auth/me', null, guard);
   assert.ok(me.body.siteName, 'the printed pass carries the site name');
+});
+
+test('Telegram: host connects once, gets the request with buttons, taps to decide; other chats cannot', async () => {
+  const { Host, Outbox, Audit } = require('../src/models');
+  const { processOutbox } = require('../src/services/worker');
+  const telegram = require('../src/services/telegram');
+  const hook = (body, secret = telegram.webhookSecret()) => fetch(base + '/api/telegram/webhook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-telegram-bot-api-secret-token': secret }, body: JSON.stringify(body),
+  });
+  const sent = (method, since = 0) => telegramCalls.slice(since).filter((c) => c.method === method);
+
+  // Only Telegram (holding the secret) can call the webhook.
+  assert.equal((await hook({ message: { chat: { id: 1, type: 'private' }, text: '/start' } }, 'wrong-secret')).status, 401);
+
+  // 1. Admin makes a connect link; the host taps it in Telegram (/start <code>).
+  const link = await call('POST', `/api/admin/hosts/${hostIds.asha}/telegram-link`, {}, admin);
+  assert.equal(link.status, 200);
+  assert.match(link.body.url, /^https:\/\/t\.me\/test_gate_bot\?start=[\w-]+$/);
+  assert.equal((await call('POST', `/api/admin/hosts/${hostIds.asha}/telegram-link`, {}, guard)).status, 403);
+  const code = link.body.url.split('start=')[1];
+  let mark = telegramCalls.length;
+  assert.equal((await hook({ message: { chat: { id: 5551, type: 'private' }, text: `/start ${code}` } })).status, 200);
+  assert.match(sent('sendMessage', mark)[0].payload.text, /Connected/);
+  assert.equal((await Host.findById(hostIds.asha).lean()).telegramChatId, '5551');
+  assert.equal((await call('GET', '/api/admin/hosts', null, admin)).body.rows.find((h) => h.id === hostIds.asha).telegram, true);
+  // The code works once.
+  await hook({ message: { chat: { id: 6662, type: 'private' }, text: `/start ${code}` } });
+  assert.equal((await Host.findById(hostIds.asha).lean()).telegramChatId, '5551', 'a used code cannot take over the connection');
+
+  // 2. Check-in for this host goes to Telegram, with two buttons, not to SMS.
+  const v = await checkIn('Zoya', hostIds.asha, '9866666666');
+  assert.equal(v.status, 201);
+  const job = await Outbox.findOne({ visit: v.body.id, kind: { $in: ['sms', 'telegram'] } }).lean();
+  assert.equal(job.kind, 'telegram');
+  assert.equal(job.to, '5551');
+  mark = telegramCalls.length;
+  await processOutbox();
+  const req = sent('sendMessage', mark)[0].payload;
+  assert.equal(req.chat_id, '5551');
+  assert.match(req.text, /Zoya Sharma/);
+  const [approveBtn, declineBtn] = req.reply_markup.inline_keyboard[0];
+  assert.match(approveBtn.callback_data, /^a:[\w-]{20,}$/);
+  assert.match(declineBtn.callback_data, /^r:/);
+  assert.ok(telegramCalls.every((c) => c.method !== 'sendPhoto' && !('photo' in c.payload) && !('document' in c.payload)), 'no image is ever sent to Telegram');
+
+  // 3. A tap from some other chat is refused and decides nothing.
+  const tap = (data, chatId) => hook({ callback_query: { id: 'cb' + Math.random(), data, message: { message_id: 801, text: req.text, chat: { id: chatId, type: 'private' } } } });
+  mark = telegramCalls.length;
+  await tap(approveBtn.callback_data, 9999);
+  assert.match(sent('answerCallbackQuery', mark)[0].payload.text, /not sent to you/);
+  assert.equal((await call('GET', `/api/visits/${v.body.id}`, null, guard)).body.status, 'pending');
+
+  // 4. The host's own tap approves: pass number issued, buttons retired, audited as via telegram.
+  mark = telegramCalls.length;
+  await tap(approveBtn.callback_data, 5551);
+  const after = (await call('GET', `/api/visits/${v.body.id}`, null, guard)).body;
+  assert.equal(after.status, 'approved');
+  assert.ok(after.dailyNumber >= 1);
+  assert.match(sent('editMessageText', mark)[0].payload.text, /You let Zoya Sharma in/);
+  assert.deepEqual(sent('editMessageText', mark)[0].payload.reply_markup.inline_keyboard, []);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(await Audit.exists({ action: 'visit.approved', entityId: v.body.id, 'details.via': 'telegram' }));
+
+  // 5. A second tap (or the decline button) is told it is already decided.
+  mark = telegramCalls.length;
+  await tap(declineBtn.callback_data, 5551);
+  assert.match(sent('answerCallbackQuery', mark)[0].payload.text, /already approved/);
+
+  // 6. A host who has not connected still gets the SMS.
+  const w = await checkIn('Yash', hostIds.rahul, '9877777777');
+  assert.equal((await Outbox.findOne({ visit: w.body.id, kind: { $in: ['sms', 'telegram'] } }).lean()).kind, 'sms');
+
+  // 7. Admin can disconnect.
+  assert.equal((await call('PATCH', `/api/admin/hosts/${hostIds.asha}`, { disconnectTelegram: true }, admin)).status, 200);
+  assert.equal((await Host.findById(hostIds.asha).lean()).telegramChatId, undefined);
+  const stats = await call('GET', '/api/admin/stats', null, admin);
+  assert.equal(stats.body.telegramOn, true);
 });
 
 // Runs last: it changes guard1's password, which ends the `guard` session used above.

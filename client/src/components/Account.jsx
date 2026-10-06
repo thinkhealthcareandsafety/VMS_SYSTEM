@@ -65,7 +65,7 @@ export function PasswordDialog({ open, onClose }) {
 }
 
 // Shows a one-time secret (a new staff password) with a copy button. Never stored anywhere in the app.
-export function SecretBox({ value, label = 'Password' }) {
+export function SecretBox({ value, label = 'Password', compact = false }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try { await navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* clipboard blocked: the value is on screen */ }
@@ -73,7 +73,7 @@ export function SecretBox({ value, label = 'Password' }) {
   return (
     <div className="secret">
       <span className="secret-label">{label}</span>
-      <code className="secret-value">{value}</code>
+      <code className={`secret-value ${compact ? 'sm' : ''}`}>{value}</code>
       <button type="button" className="btn btn-sm" onClick={copy}>{copied ? <><Check />Copied</> : <><Copy />Copy</>}</button>
     </div>
   );

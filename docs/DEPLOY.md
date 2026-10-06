@@ -44,3 +44,11 @@ Every push to `main` now redeploys both automatically.
 - **Vercel's free (Hobby) plan is for non-commercial use.** A business should use Vercel Pro.
 - **Data location:** the database is in Mumbai, but photos and masked Aadhaar images sit on Render's Singapore disk.
   If everything must stay in India, use a VPS in Mumbai or Bangalore for the backend instead (OPERATIONS.md).
+
+## Approval requests on Telegram (free, instant)
+Hosts get the request in Telegram with **Let them in / Decline** buttons. No registration or fees.
+1. In Telegram, message **@BotFather** → `/newbot` → pick a name and a username ending in `bot` → copy the **token**.
+2. Render → `vms-system-api` → Environment → set `TELEGRAM_BOT_TOKEN` to that token. The server registers the webhook by itself on restart.
+3. Admin → **Hosts** → **Connect** next to a host → the host scans the QR with their phone and taps **Start**.
+4. From then on, that host's visitors arrive in Telegram. Hosts who have not connected still get the SMS (logged until an SMS provider is added).
+The visitor's photo and ID are never sent to Telegram: the message carries a link, and the photo is shown on the approval page.

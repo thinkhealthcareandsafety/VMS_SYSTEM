@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
-  RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info,
+  RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, minutesSince, passLabel } from '../api.js';
+import QRCode from 'qrcode';
 import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
@@ -18,7 +19,7 @@ const NAV = [
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
-    { id: 'messages', label: 'SMS and prints', icon: MessageSquare },
+    { id: 'messages', label: 'Messages and prints', icon: MessageSquare },
     { id: 'audit', label: 'Audit log', icon: ScrollText },
   ] },
   { group: 'Setup', items: [
@@ -30,7 +31,7 @@ const TITLES = {
   overview: ['Overview', 'Today at this gate'],
   inside: ['On premises', 'Everyone let in and not yet checked out'],
   history: ['Visit history', 'Every visit, searchable'],
-  messages: ['SMS and prints', 'Approval messages and sticker jobs'],
+  messages: ['Messages and prints', 'Approval requests sent to hosts, and sticker jobs'],
   audit: ['Audit log', 'Who did what, and when'],
   hosts: ['Hosts', 'Residents and staff who can approve visitors'],
   staff: ['Staff accounts', 'Who can sign in to the guard desk and this console'],
@@ -694,7 +695,7 @@ function MessagesPage({ tick, stats }) {
     <section className="panel">
       <div className="toolbar">
         <div className="seg" role="group" aria-label="Message type">
-          <button aria-pressed={kind === 'sms'} onClick={() => setKind('sms')}><MessageSquare size={14} />Approval SMS{failed.sms > 0 && <span className="n bad-n">{failed.sms} failed</span>}</button>
+          <button aria-pressed={kind === 'sms'} onClick={() => setKind('sms')}><MessageSquare size={14} />Approval messages{failed.sms > 0 && <span className="n bad-n">{failed.sms} failed</span>}</button>
           <button aria-pressed={kind === 'print'} onClick={() => setKind('print')}><Printer size={14} />Sticker prints{failed.print > 0 && <span className="n bad-n">{failed.print} failed</span>}</button>
         </div>
         <span className="muted" style={{ alignSelf: 'center', fontSize: 13 }}>Failed items retry automatically, up to five times.</span>
@@ -702,7 +703,11 @@ function MessagesPage({ tick, stats }) {
       {kind === 'sms' && stats && !stats.smsLive && (
         <div className="notice">
           <Info />
-          <span className="grow"><strong>SMS are logged here, not delivered yet.</strong> No SMS provider is connected. To approve a visitor, open the approval link below, or share it with the host.</span>
+          <span className="grow">
+            {stats.telegramOn
+              ? <><strong>Hosts who connected Telegram get requests there.</strong> For everyone else, SMS are only logged here (no SMS provider is connected): open the approval link below, or connect them on the Hosts page.</>
+              : <><strong>SMS are logged here, not delivered yet.</strong> No SMS provider is connected. To approve a visitor, open the approval link below, or share it with the host.</>}
+          </span>
         </div>
       )}
       {kind === 'print' && stats && !stats.printerOn && (
@@ -719,7 +724,7 @@ function MessagesPage({ tick, stats }) {
             <thead>
               <tr>
                 <th>Status</th><th>Visitor ID</th>
-                {kind === 'sms' && <><th>To</th><th>Message</th></>}
+                {kind === 'sms' && <><th>Sent to</th><th>Message</th></>}
                 <th className="r">Tries</th><th>Queued</th>
               </tr>
             </thead>
@@ -729,13 +734,13 @@ function MessagesPage({ tick, stats }) {
                 return (
                   <tr key={o.id}>
                     <td>
-                      <OutboxBadge status={o.status} logged={kind === 'sms' && stats && !stats.smsLive} />
+                      <OutboxBadge status={o.status} logged={kind === 'sms' && o.channel === 'sms' && stats && !stats.smsLive} />
                       {o.lastError && o.status !== 'sent' && <div className="meta-line err">{o.lastError}</div>}
                     </td>
                     <td className="mono">{o.ref || '—'}</td>
                     {kind === 'sms' && (
                       <>
-                        <td className="num" style={{ whiteSpace: 'nowrap' }}>{fmtMobile(o.to)}</td>
+                        <td className="num" style={{ whiteSpace: 'nowrap' }}>{o.channel === 'telegram' ? <span className="badge badge-live"><Send size={11} />Telegram</span> : fmtMobile(o.to)}</td>
                         <td className="msg-cell">
                           <span>{o.body?.replace(LINK_RE, '').replace(/\s+/g, ' ').trim()}</span>
                           {link && <a className="btn btn-sm" href={link} target="_blank" rel="noopener noreferrer"><ExternalLink />Open approval link</a>}
@@ -808,8 +813,9 @@ function AuditPage({ tick, openVisit }) {
 }
 
 // ================================================================= Hosts
-function HostsPage({ toast }) {
+function HostsPage({ toast, stats }) {
   const [rows, setRows] = useState(null);
+  const [connecting, setConnecting] = useState(null); // host being connected to Telegram
   const [editingHost, setEditingHost] = useState(null);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
@@ -842,13 +848,20 @@ function HostsPage({ toast }) {
       ) : (
         <div className="table-scroll">
           <table className="table">
-            <thead><tr><th>Host</th><th>Flat / dept</th><th>Mobile</th><th className="r">Receives visitors</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th>Host</th><th>Flat / dept</th><th>Mobile</th>{stats?.telegramOn && <th>Telegram</th>}<th className="r">Receives visitors</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {shown.map((h) => (
                 <tr key={h.id} className={h.active ? '' : 'row-off'}>
                   <td><div className="person"><Avatar name={h.fullName} size={34} /><div><div className="name">{h.fullName}</div>{h.email && <div className="meta">{h.email}</div>}</div></div></td>
                   <td>{h.unit}</td>
                   <td className="num">{fmtMobile(h.mobile)}</td>
+                  {stats?.telegramOn && (
+                    <td>
+                      {h.telegram
+                        ? <span className="badge badge-live">Connected</span>
+                        : <button className="btn btn-sm" onClick={() => setConnecting(h)}><Send />Connect</button>}
+                    </td>
+                  )}
                   <td className="r"><button className="switch" role="switch" aria-checked={h.active} aria-label={`${h.fullName} receives visitors`} onClick={() => toggle(h)} /></td>
                   <td className="r"><button className="btn btn-sm" onClick={() => setEditingHost(h)}>Edit</button></td>
                 </tr>
@@ -857,6 +870,7 @@ function HostsPage({ toast }) {
           </table>
         </div>
       )}
+      <ConnectTelegramDialog host={connecting} live={rows?.find((r) => r.id === connecting?.id)} onClose={() => setConnecting(null)} onRefresh={load} />
       <AddHostDialog open={adding} onClose={() => setAdding(false)} onDone={load} />
       <AddHostDialog open={Boolean(editingHost)} host={editingHost} onClose={() => setEditingHost(null)} onDone={load} />
       <ImportDialog open={importing} onClose={() => setImporting(false)} onDone={load} />
@@ -871,6 +885,9 @@ function AddHostDialog({ open, host, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const editing = Boolean(host);
+  const disconnect = async () => {
+    try { await api(`/api/admin/hosts/${host.id}`, { method: 'PATCH', body: { disconnectTelegram: true } }); toast(`${host.fullName} disconnected from Telegram.`); onDone(); onClose(); } catch (x) { setErr(x.message); }
+  };
   useEffect(() => {
     if (!open) return;
     setErr('');
@@ -901,6 +918,12 @@ function AddHostDialog({ open, host, onClose, onDone }) {
             <label className="field"><span>Mobile</span><input className="input num" required inputMode="tel" value={f.mobile} onChange={set('mobile')} placeholder="98765 43210" /></label>
           </div>
           <label className="field"><span>Email <span className="faint">· optional</span></span><input className="input" type="email" value={f.email} onChange={set('email')} /></label>
+          {editing && host.telegram && (
+            <div className="field"><span>Telegram</span>
+              <div className="notice-inline"><span className="badge badge-live">Connected</span><button type="button" className="btn btn-sm btn-danger-outline" onClick={disconnect}>Disconnect</button></div>
+              <span className="hint">Approval requests go to Telegram. After disconnecting they fall back to SMS.</span>
+            </div>
+          )}
           {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
         </div>
         <div className="dialog-foot">
@@ -1278,6 +1301,67 @@ function EditStaffDialog({ member, self, onClose, onDone }) {
             <button className="btn btn-primary" disabled={busy || !changed || f.fullName.trim().length < 2}>{busy && <Spinner />}Save changes</button>
           </div>
         </form>
+      )}
+    </Modal>
+  );
+}
+
+// ================================================================= Connect a host to Telegram
+// The host scans the QR (or opens the link) once, taps Start in Telegram, and from then on
+// approval requests arrive there with Let them in / Decline buttons.
+function ConnectTelegramDialog({ host, live, onClose, onRefresh }) {
+  const [link, setLink] = useState(null);
+  const [qr, setQr] = useState('');
+  const [err, setErr] = useState('');
+  const connected = Boolean(live?.telegram);
+
+  useEffect(() => {
+    setLink(null); setQr(''); setErr('');
+    if (!host) return undefined;
+    let alive = true;
+    api(`/api/admin/hosts/${host.id}/telegram-link`, { method: 'POST' })
+      .then(async (r) => { if (alive) { setLink(r); setQr(await QRCode.toString(r.url, { type: 'svg', margin: 1, width: 220, color: { dark: '#0b0d10', light: '#ffffff' } })); } })
+      .catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+  }, [host?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Watch for the moment the host taps Start.
+  useEffect(() => {
+    if (!host || connected) return undefined;
+    const t = setInterval(onRefresh, 2500);
+    return () => clearInterval(t);
+  }, [host?.id, connected, onRefresh]);
+
+  const first = host?.fullName.split(' ')[0];
+  return (
+    <Modal open={Boolean(host)} onClose={onClose} label="Connect Telegram">
+      {host && (
+        <>
+          <div className="dialog-head">
+            <h2>{connected ? `${first} is connected` : `Connect ${host.fullName} to Telegram`}</h2>
+            <p>{connected ? 'Approval requests for this host now arrive in Telegram.' : 'Ask them to scan this with their phone camera, then tap Start in Telegram.'}</p>
+          </div>
+          <div className="dialog-body">
+            {connected ? (
+              <div className="tg-done"><CheckCircle2 /><span>Connected. Next visitor for {first} goes to their Telegram.</span></div>
+            ) : err ? (
+              <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>
+            ) : !link ? (
+              <div style={{ display: 'grid', placeItems: 'center', padding: 24 }}><Spinner size={22} /></div>
+            ) : (
+              <>
+                <div className="tg-qr" dangerouslySetInnerHTML={{ __html: qr }} aria-label="QR code to connect Telegram" role="img" />
+                <p className="faint" style={{ fontSize: 13, textAlign: 'center' }}><Spinner size={12} /> Waiting for {first} to tap Start…</p>
+                <SecretBox label="Link" value={link.url} compact />
+                <p className="faint" style={{ fontSize: 12.5 }}>Works once and expires in 24 hours. You can send the link on WhatsApp instead of showing the QR.</p>
+              </>
+            )}
+          </div>
+          <div className="dialog-foot">
+            {!connected && link && <a className="btn" href={link.url} target="_blank" rel="noopener noreferrer"><ExternalLink />Open in Telegram</a>}
+            <button className="btn btn-primary" onClick={onClose}>{connected ? 'Done' : 'Close'}</button>
+          </div>
+        </>
       )}
     </Modal>
   );

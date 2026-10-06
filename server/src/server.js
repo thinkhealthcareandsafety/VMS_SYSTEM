@@ -9,6 +9,7 @@ const config = require('./config');
 const worker = require('./services/worker');
 const { requireRole } = require('./middleware/auth');
 const { stream } = require('./services/events');
+const telegram = require('./services/telegram');
 
 function createApp() {
   const app = express();
@@ -25,6 +26,7 @@ function createApp() {
   app.use('/api/hosts', require('./routes/hosts'));
   app.use('/api/approvals', require('./routes/approvals'));
   app.use('/api/admin', require('./routes/admin'));
+  app.use('/api/telegram', require('./routes/telegram'));
 
   // Production: serve the built React app. Development: Vite serves it on :5173.
   const dist = path.resolve(__dirname, '../../client/dist');
@@ -45,6 +47,7 @@ async function main() {
   await mongoose.connect(config.mongoUri);
   console.log('MongoDB connected');
   worker.start();
+  telegram.init(); // registers the webhook when a bot token is set
   createApp().listen(config.port, () => console.log(`${config.siteName} API on :${config.port}`));
 }
 

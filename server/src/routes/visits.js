@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
 const { Visit, Host, ApprovalToken, Outbox } = require('../models');
+const telegram = require('../services/telegram');
 const { siteDay, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
@@ -39,7 +40,12 @@ async function issueApprovalLink(visit, host, visitorName, company) {
   const link = `${config.appBaseUrl}/approve/${raw}`;
   const from = /^(personal|self|none|na|n\/a|-)$/i.test(company) ? '' : ` from ${company}`;
   const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${link} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
-  await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body });
+  if (telegram.enabled() && host.telegramChatId) {
+    const text = `🚪 ${visitorName}${from} is at the gate to meet you.\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.`;
+    await Outbox.create({ kind: 'telegram', visit: visit._id, to: String(host.telegramChatId), body: text });
+  } else {
+    await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body });
+  }
 }
 
 async function saveFile(folder, buf) {

@@ -37,5 +37,7 @@ services:
         value: "+91"
       - key: PRINTER_MODE    # the sticker printer is on the gate's local network; a cloud server cannot reach it
         value: "off"
+      - key: TELEGRAM_BOT_TOKEN   # free approval requests with Let them in / Decline buttons: create a bot with @BotFather
+        sync: false
       - key: SMS_DRIVER      # switch to http once an SMS provider is set up
         value: console

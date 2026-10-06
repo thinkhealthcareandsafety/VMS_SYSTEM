@@ -19,6 +19,9 @@ const hostSchema = new Schema({
   mobile: { type: String, required: true, trim: true },    // E.164, e.g. +919876543210
   email: { type: String, trim: true, lowercase: true },
   active: { type: Boolean, default: true },
+  telegramChatId: { type: String },          // set when the host taps their connect link; approvals then arrive in Telegram
+  telegramLinkHash: { type: String },        // one-time connect code (hashed) and its expiry
+  telegramLinkExpires: { type: Date },
 }, opts);
 hostSchema.index({ fullName: 'text', unit: 'text' });
 
@@ -66,11 +69,11 @@ const counterSchema = new Schema({
 }, { versionKey: false });
 
 const outboxSchema = new Schema({
-  kind: { type: String, enum: ['sms', 'print'], required: true, index: true },
+  kind: { type: String, enum: ['sms', 'telegram', 'print'], required: true, index: true },
   visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true },
   status: { type: String, enum: ['queued', 'sent', 'failed'], default: 'queued', index: true },
-  to: { type: String },              // sms only
-  body: { type: String },            // sms text
+  to: { type: String },              // sms: mobile number; telegram: chat id
+  body: { type: String },            // message text
   attempts: { type: Number, default: 0 },
   lastError: { type: String },
   nextAttemptAt: { type: Date, default: () => new Date() },
