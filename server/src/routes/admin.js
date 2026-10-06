@@ -9,6 +9,7 @@ const archiver = require('archiver');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
 const telegram = require('../services/telegram');
+const exporter = require('../services/export');
 const { Visit, Host, Outbox, Audit, User } = require('../models');
 const { siteDay, audit, normalizeMobile, cleanText, passwordProblem, sha256 } = require('../services/core');
 
@@ -67,7 +68,7 @@ const localStamp = (d) => (d ? new Intl.DateTimeFormat('en-GB', {
   timeZone: config.timezone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(new Date(d)).replace(',', '') : '');
 const safeName = (s) => String(s).replace(/[^\p{L}\p{N} ._-]/gu, '').trim().slice(0, 60);
-const photoFile = (v) => `photos/${v.ref} ${safeName(`${v.firstName} ${v.lastName}`)}.jpg`;
+const photoFile = (v) => `${v.visitDay}/${v.ref} ${safeName(`${v.firstName} ${v.lastName}`)}/photo.jpg`;
 const exportName = (q, ext) => `visitors ${q.from || 'start'} to ${q.to || siteDay()}.${ext}`;
 // Excel turns "+9180..." into 9.18E+11, so Indian numbers go out as "80104 77969" under a "(+91)" header.
 const sheetMobile = (m = '') => (m.startsWith(config.defaultCountryCode) ? m.slice(config.defaultCountryCode.length).replace(/^(\d{5})(\d{5})$/, '$1 $2') : m.replace(/^\+/, ''));
@@ -95,19 +96,54 @@ router.get('/visits.csv', requireRole('admin'), async (req, res) => {
   res.type('text/csv; charset=utf-8').attachment(exportName(req.query, 'csv')).send(visitsSheet(docs));
 });
 
-// Full backup: the same sheet plus every visitor photo, streamed as a ZIP (never held in memory).
-// Aadhaar images are deliberately left out: they are purged on a schedule and every view is audited.
-router.get('/visits.zip', requireRole('admin'), async (req, res) => {
+// What the download covers, in words, for the About sheet and the report header.
+function exportMeta(req) {
+  const q = req.query;
+  const range = q.from || q.to ? `${q.from || 'start'} to ${q.to || siteDay()}` : `All dates to ${siteDay()}`;
+  const filters = [
+    q.name && `visitor "${cleanText(q.name, 60)}"`, q.host && `host "${cleanText(q.host, 60)}"`,
+    q.company && `company "${cleanText(q.company, 60)}"`, q.status && `status: ${exporter.STATUS_LABEL[q.status] || q.status}`,
+  ].filter(Boolean).join(', ');
+  return { by: req.user.fullName || req.user.username, range, filters };
+}
+const exists = (p) => Boolean(p) && fs.existsSync(path.resolve(p));
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+// Excel sheet on its own: formatted columns, real dates, filters, and an "About this download" tab.
+router.get('/visits.xlsx', requireRole('admin'), async (req, res) => {
   const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
-  audit(req.user, 'export.visits_zip', { details: { rows: docs.length, from: req.query.from, to: req.query.to }, ip: req.ip });
-  res.type('application/zip').attachment(exportName(req.query, 'zip'));
+  const buf = await exporter.workbook(exporter.records(docs), { meta: exportMeta(req) });
+  audit(req.user, 'export.visits_xlsx', { details: { rows: docs.length, from: req.query.from, to: req.query.to }, ip: req.ip });
+  res.type(XLSX).attachment(exportName(req.query, 'xlsx')).send(Buffer.from(buf));
+});
+
+// Full record: the Excel sheet, a printable report, and one folder per visit with the photo and,
+// when asked for, the masked Aadhaar image. Streamed, never held in memory as a whole.
+//   Visitor records <dates>/Visitors.xlsx
+//   Visitor records <dates>/Report.html
+//   Visitor records <dates>/2026-10-06/V-000012 Ravi Kumar/photo.jpg
+//   Visitor records <dates>/2026-10-06/V-000012 Ravi Kumar/aadhaar-masked.jpg
+router.get('/visits.zip', requireRole('admin'), async (req, res) => {
+  const aadhaar = req.query.aadhaar === '1';
+  const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
+  const recs = exporter.records(docs).map((r) => ({ ...r, hasPhoto: exists(r.photoPath), hasIdImage: aadhaar && exists(r.idImagePath) }));
+  const meta = exportMeta(req);
+  const sheet = await exporter.workbook(recs, { files: { aadhaar }, meta });
+  audit(req.user, 'export.visits_zip', {
+    details: { rows: docs.length, from: req.query.from, to: req.query.to, aadhaar, aadhaarImages: recs.filter((r) => r.hasIdImage).length }, ip: req.ip,
+  });
+
+  const q = req.query;
+  const root = `Visitor records ${q.from ? `${q.from} to ${q.to || siteDay()}` : `up to ${q.to || siteDay()}`}`;
+  res.type('application/zip').attachment(`${root}.zip`);
   const zip = archiver('zip', { zlib: { level: 1 } }); // JPEGs barely compress; favour speed
   zip.on('error', (err) => { console.error('export zip:', err.message); res.destroy(err); });
   zip.pipe(res);
-  zip.append(visitsSheet(docs), { name: 'visitors.csv' });
-  for (const v of docs) {
-    const file = v.photoPath && path.resolve(v.photoPath);
-    if (file && fs.existsSync(file)) zip.file(file, { name: photoFile(v) });
+  zip.append(Buffer.from(sheet), { name: `${root}/Visitors.xlsx` });
+  zip.append(exporter.report(recs, { meta, aadhaar }), { name: `${root}/Report.html` });
+  for (const r of recs) {
+    if (r.hasPhoto) zip.file(path.resolve(r.photoPath), { name: `${root}/${r.folder}/photo.jpg` });
+    if (r.hasIdImage) zip.file(path.resolve(r.idImagePath), { name: `${root}/${r.folder}/aadhaar-masked.jpg` });
   }
   await zip.finalize();
 });

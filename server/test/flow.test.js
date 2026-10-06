@@ -187,9 +187,34 @@ test('admin can download visits as an Excel-safe sheet and as a ZIP with photos'
   const bytes = Buffer.from(await zip.arrayBuffer());
   assert.equal(bytes.subarray(0, 2).toString(), 'PK');
   const names = bytes.toString('latin1');
-  assert.match(names, /visitors\.csv/);
-  assert.match(names, /photos\/V-\d{6} Kiran Sharma\.jpg/);
-  assert.doesNotMatch(names, /Ravi Sharma\.jpg/, 'filters apply to the ZIP too');
+  assert.match(names, /Visitor records up to \d{4}-\d{2}-\d{2}\/Visitors\.xlsx/);
+  assert.match(names, /\/Report\.html/);
+  assert.match(names, /\/\d{4}-\d{2}-\d{2}\/V-\d{6} Kiran Sharma\/photo\.jpg/, 'one folder per visit');
+  assert.doesNotMatch(names, /Ravi Sharma/, 'filters apply to the ZIP too');
+  assert.doesNotMatch(names, /aadhaar-masked/, 'Aadhaar only when asked for');
+
+  // With Aadhaar: the masked image goes in the visitor's folder, and the download is audited as such.
+  const withId = Buffer.from(await (await fetch(`${base}/api/admin/visits.zip?name=Kiran&aadhaar=1`, { headers: { Cookie: admin } })).arrayBuffer());
+  assert.match(withId.toString('latin1'), /V-\d{6} Kiran Sharma\/aadhaar-masked\.jpg/);
+  const { Audit } = require('../src/models');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(await Audit.exists({ action: 'export.visits_zip', 'details.aadhaar': true }));
+
+  // The Excel file reads back with clean columns: real dates, the mobile kept as text, people's names whole.
+  const ExcelJS = require('exceljs');
+  const xr = await fetch(`${base}/api/admin/visits.xlsx`, { headers: { Cookie: admin } });
+  assert.equal(xr.status, 200);
+  assert.match(xr.headers.get('content-type'), /spreadsheetml/);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(Buffer.from(await xr.arrayBuffer()));
+  const ws = wb.getWorksheet('Visits');
+  const header = ws.getRow(1).values.slice(1);
+  assert.deepEqual(header.slice(0, 5), ['Visitor ID', 'Date', 'Pass no', 'Name', 'Mobile (+91)']);
+  const ravi = ws.getSheetValues().find((r) => r && r[4] === 'Ravi Sharma');
+  assert.ok(ravi, 'a row per visit');
+  assert.equal(ravi[5], '98765 43210');
+  assert.ok(ravi[2] instanceof Date, 'Date is a real date, sortable in Excel');
+  assert.ok(wb.getWorksheet('About this download'), 'says what the file contains');
 });
 
 test('worker delivers SMS and writes sticker files; print jobs are marked sent', async () => {

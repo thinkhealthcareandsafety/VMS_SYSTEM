@@ -561,7 +561,8 @@ const ACTIONS = {
   'print.failed': ['Sticker failed to print', 'bad'],
   'id_image.viewed': ['Aadhaar image viewed', 'warn'],
   'export.visits_csv': ['Downloaded the visit sheet', ''],
-  'export.visits_zip': ['Downloaded a full backup', ''],
+  'export.visits_zip': ['Downloaded the full record', ''],
+  'export.visits_xlsx': ['Downloaded the Excel sheet', ''],
   'host.created': ['Host added', ''],
   'host.updated': ['Host updated', ''],
   'host.imported': ['Hosts imported', ''],
@@ -995,6 +996,7 @@ function ExportDialog({ opts, onClose }) {
   const [range, setRange] = useState('today');
   const [custom, setCustom] = useState({ from: daysAgo(6), to: daysAgo(0) });
   const [format, setFormat] = useState('zip');
+  const [withAadhaar, setWithAadhaar] = useState(true);
   const [count, setCount] = useState(null);
 
   useEffect(() => {
@@ -1014,7 +1016,7 @@ function ExportDialog({ opts, onClose }) {
     return () => { live = false; clearTimeout(t); };
   }, [open, query]);
 
-  const href = `/api/admin/visits.${format}?${query}`;
+  const href = `/api/admin/visits.${format}?${query}${format === 'zip' && withAadhaar ? '&aadhaar=1' : ''}`;
   const filterNote = Object.entries(filters).map(([k, v]) => `${k === 'name' ? 'visitor' : k}: ${k === 'status' ? STATUS[v]?.[0] || v : v}`).join(', ');
 
   return (
@@ -1041,14 +1043,20 @@ function ExportDialog({ opts, onClose }) {
           <span>Format</span>
           <div className="export-opts" role="radiogroup" aria-label="Format">
             <button type="button" role="radio" aria-checked={format === 'zip'} className="export-opt" onClick={() => setFormat('zip')}>
-              <FolderArchive /><span><strong>Full backup (.zip)</strong><small>Excel sheet plus every visitor photo</small></span>
+              <FolderArchive /><span><strong>Full record (.zip)</strong><small>Excel sheet, a printable report, and a folder per visitor with their photo</small></span>
             </button>
-            <button type="button" role="radio" aria-checked={format === 'csv'} className="export-opt" onClick={() => setFormat('csv')}>
-              <FileSpreadsheet /><span><strong>Excel sheet only (.csv)</strong><small>All details, opens in Excel or Google Sheets</small></span>
+            <button type="button" role="radio" aria-checked={format === 'xlsx'} className="export-opt" onClick={() => setFormat('xlsx')}>
+              <FileSpreadsheet /><span><strong>Excel sheet only (.xlsx)</strong><small>All details in clean columns, ready to sort and filter</small></span>
             </button>
           </div>
         </div>
-        <p className="faint" style={{ fontSize: 12.5 }}>Aadhaar images are never included. Every download is recorded in the audit log.</p>
+        {format === 'zip' && (
+          <label className={`checkbox attest-lite ${withAadhaar ? 'on' : ''}`}>
+            <input type="checkbox" checked={withAadhaar} onChange={(e) => setWithAadhaar(e.target.checked)} />
+            <span><strong>Include masked Aadhaar images</strong><br /><span className="faint">First 8 digits are blacked out on the guard’s device. Images deleted under the retention rule are not available.</span></span>
+          </label>
+        )}
+        <p className="faint" style={{ fontSize: 12.5 }}>Every download is recorded in the audit log{format === 'zip' && withAadhaar ? ', including that Aadhaar images were taken' : ''}.</p>
       </div>
       <div className="dialog-foot">
         <span className="muted num" style={{ marginRight: 'auto', alignSelf: 'center' }}>{count === null ? <Spinner /> : `${count} ${count === 1 ? 'visit' : 'visits'}`}</span>
