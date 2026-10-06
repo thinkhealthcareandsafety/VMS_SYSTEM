@@ -292,6 +292,15 @@ test('admin can edit a host; bad mobiles and emails are refused with a clear rea
   assert.equal((await edit({ email: 'not-an-email' })).status, 400);
 });
 
+test('sign-in tolerates a space or line break copied along with the password', async () => {
+  for (const pw of ['guard-pass-123 ', ' guard-pass-123', 'guard-pass-123\n']) {
+    const r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: ' Guard1 ', password: pw }) });
+    assert.equal(r.status, 200, JSON.stringify(pw));
+  }
+  const wrong = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'guard1', password: 'guard-pass-124 ' }) });
+  assert.equal(wrong.status, 401);
+});
+
 // Runs last: it changes guard1's password, which ends the `guard` session used above.
 test('anyone can change their own password; other devices are signed out, this one continues', async () => {
   const otherDevice = await login('guard1', 'guard-pass-123');

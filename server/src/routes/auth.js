@@ -19,7 +19,11 @@ router.post('/login', loginLimiter, async (req, res) => {
   const parsed = z.object({ username: z.string().min(1).max(50), password: z.string().min(1).max(200) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Username and password required' });
   const user = await User.findOne({ username: parsed.data.username.trim().toLowerCase(), active: true }).select('+passwordHash');
-  const ok = user && (await bcrypt.compare(parsed.data.password, user.passwordHash));
+  // Copy-pasting a password often drags a space or line break along. Accept it exactly as typed first,
+  // then with the edges trimmed. (Generated passwords never contain spaces, and a trimmed match is still a full match.)
+  const typed = parsed.data.password;
+  let ok = Boolean(user) && (await bcrypt.compare(typed, user.passwordHash));
+  if (!ok && user && typed !== typed.trim() && typed.trim()) ok = await bcrypt.compare(typed.trim(), user.passwordHash);
   if (!ok) {
     audit({ label: parsed.data.username }, 'auth.login_failed', { ip: req.ip });
     return res.status(401).json({ error: 'Invalid credentials' });
