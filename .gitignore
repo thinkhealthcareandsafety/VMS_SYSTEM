@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Visitor data never leaves the server: photos, masked Aadhaar images, stickers, database files
+uploads/
+print-out/
+data/
+
+.impeccable/config.local.json
