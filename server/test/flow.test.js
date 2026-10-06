@@ -438,6 +438,118 @@ test('Telegram: host connects once, gets the request with buttons, taps to decid
   assert.equal(stats.body.telegramOn, true);
 });
 
+test('expected visitor: admin registers them, the guard sees them on lookup, and they get a pass without waiting', async () => {
+  const { Outbox, Invite } = require('../src/models');
+  const { siteDay } = require('../src/services/core');
+  const today = siteDay();
+  const add = (body) => call('POST', '/api/admin/invites', { firstName: 'Neel', lastName: 'Joshi', mobile: '9811122233', company: 'Joshi & Co', purpose: 'Meeting', hostId: hostIds.rahul, day: today, ...body }, admin);
+
+  assert.equal((await add({ day: '2001-01-01' })).status, 400, 'no dates in the past');
+  assert.equal((await call('POST', '/api/admin/invites', {}, guard)).status, 403, 'admins only');
+  const inv = await add({});
+  assert.equal(inv.status, 201);
+  assert.equal((await add({})).status, 409, 'not twice for the same day');
+
+  const look = await call('GET', '/api/visits/lookup?mobile=9811122233', null, guard);
+  assert.equal(look.body.found, false, 'first-time visitor');
+  assert.equal(look.body.invite.id, inv.body.id, 'still shows as expected');
+  assert.equal(look.body.invite.host.id, hostIds.rahul);
+
+  // Expected for Rahul, but sent to Asha: the shortcut is refused rather than silently ignored.
+  const wrongHost = await call('POST', '/api/visits', { firstName: 'Neel', lastName: 'Joshi', mobile: '9811122233', company: 'Joshi & Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
+  assert.equal(wrongHost.status, 409);
+
+  const v = await call('POST', '/api/visits', { firstName: 'Neel', lastName: 'Joshi', mobile: '9811122233', company: 'Joshi & Co', hostId: hostIds.rahul, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
+  assert.equal(v.status, 201);
+  assert.equal(v.body.status, 'approved', 'let in on arrival');
+  assert.ok(v.body.dailyNumber >= 1, 'pass number issued');
+  assert.equal(await Outbox.countDocuments({ visit: v.body.id, kind: { $in: ['sms', 'telegram'] } }), 0, 'no message to the host');
+  assert.equal((await Invite.findById(inv.body.id).lean()).status, 'arrived');
+  assert.equal((await call('GET', '/api/visits/lookup?mobile=9811122233', null, guard)).body.invite, null, 'used once');
+
+  const list = await call('GET', '/api/admin/invites', null, admin);
+  assert.equal(list.body.rows.find((r) => r.id === inv.body.id).status, 'arrived');
+  const later = await add({ mobile: '9811122244', day: siteDay(new Date(Date.now() + 86400e3)) });
+  assert.equal((await call('PATCH', `/api/admin/invites/${later.body.id}`, { status: 'cancelled' }, admin)).status, 200);
+});
+
+test('blocked visitor: the guard is warned on lookup, check-in is refused and audited, removing the block lets them in', async () => {
+  const { Audit, Invite } = require('../src/models');
+  const { siteDay } = require('../src/services/core');
+  const expected = await call('POST', '/api/admin/invites', { firstName: 'Bad', lastName: 'Actor', mobile: '9844455566', hostId: hostIds.rahul, day: siteDay() }, admin);
+  assert.equal((await call('POST', '/api/admin/blocks', { mobile: '9844455566', name: 'Bad Actor', reason: 'x' }, admin)).status, 400, 'a reason is required');
+  const blk = await call('POST', '/api/admin/blocks', { mobile: '98444 55566', name: 'Bad Actor', reason: 'Abusive to staff on 2 Oct' }, admin);
+  assert.equal(blk.status, 201);
+  assert.equal((await Invite.findById(expected.body.id).lean()).status, 'cancelled', 'blocking cancels their expected visits');
+
+  const look = await call('GET', '/api/visits/lookup?mobile=9844455566', null, guard);
+  assert.match(look.body.blocked.message, /Do not admit Bad Actor.*Abusive to staff/);
+  const tryIn = await checkIn('Bad', hostIds.rahul, '9844455566');
+  assert.equal(tryIn.status, 403);
+  assert.equal(tryIn.body.code, 'blocked');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(await Audit.exists({ action: 'visit.blocked_attempt' }));
+
+  assert.equal((await call('PATCH', `/api/admin/blocks/${blk.body.id}`, { active: false }, admin)).status, 200);
+  assert.equal((await checkIn('Bad', hostIds.rahul, '9844455566')).status, 201, 'unblocked');
+});
+
+test('settings: site and gate names reach sign-in and the approval page; Aadhaar retention drives the purge', async () => {
+  const { Visit } = require('../src/models');
+  const { purgeIdImages } = require('../src/services/worker');
+  assert.equal((await call('PATCH', '/api/admin/settings', { siteName: 'Green Park Residency', gateName: 'North gate' }, guard)).status, 403);
+  assert.equal((await call('PATCH', '/api/admin/settings', { idRetentionDays: 3 }, admin)).status, 400, 'only listed periods');
+  const set = await call('PATCH', '/api/admin/settings', { siteName: 'Green Park Residency', gateName: 'North gate', idRetentionDays: 90 }, admin);
+  assert.equal(set.status, 200);
+  const me = await call('GET', '/api/auth/me', null, guard);
+  assert.equal(me.body.siteName, 'Green Park Residency');
+  assert.equal(me.body.gateName, 'North gate');
+
+  const v = await checkIn('Ira', hostIds.asha, '9833344455');
+  const page = await call('GET', `/api/approvals/${await tokenFor(v.body.id)}`);
+  assert.equal(page.body.siteName, 'Green Park Residency');
+
+  // 10 days old: kept under 90-day retention, deleted under 7-day retention.
+  await Visit.collection.updateOne({ _id: new mongoose.Types.ObjectId(v.body.id) }, { $set: { createdAt: new Date(Date.now() - 10 * 86400e3) } });
+  await purgeIdImages();
+  assert.ok((await Visit.findById(v.body.id).lean()).idImagePath, 'kept for 90 days');
+  await call('PATCH', '/api/admin/settings', { idRetentionDays: 7 }, admin);
+  await purgeIdImages();
+  const after = await Visit.findById(v.body.id).lean();
+  assert.equal(after.idImagePath, undefined);
+  assert.ok(after.idImagePurgedAt, 'deleted after 7 days');
+});
+
+test('Telegram buttons are retired when the guard cancels, and expiry is recorded in the timeline', async () => {
+  const { Visit, ApprovalToken } = require('../src/models');
+  const { processOutbox, expireStaleApprovals } = require('../src/services/worker');
+  const telegram = require('../src/services/telegram');
+  const hook = (body) => fetch(base + '/api/telegram/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-telegram-bot-api-secret-token': telegram.webhookSecret() }, body: JSON.stringify(body) });
+  const link = await call('POST', `/api/admin/hosts/${hostIds.rahul}/telegram-link`, {}, admin);
+  await hook({ message: { chat: { id: 7771, type: 'private' }, text: `/start ${link.body.url.split('start=')[1]}` } });
+
+  const v = await checkIn('Omar', hostIds.rahul, '9822233344');
+  await processOutbox();
+  let mark = telegramCalls.length;
+  await call('POST', `/api/visits/${v.body.id}/cancel`, {}, guard);
+  const edit = telegramCalls.slice(mark).find((c) => c.method === 'editMessageText');
+  assert.ok(edit, 'the host message was updated');
+  assert.match(edit.payload.text, /Omar Sharma: cancelled by the security desk/);
+  assert.deepEqual(edit.payload.reply_markup.inline_keyboard, [], 'buttons removed');
+
+  const w = await checkIn('Lina', hostIds.rahul, '9822233355');
+  await processOutbox();
+  await ApprovalToken.updateMany({ visit: w.body.id }, { expiresAt: new Date(Date.now() - 1000) });
+  mark = telegramCalls.length;
+  await expireStaleApprovals();
+  assert.equal((await Visit.findById(w.body.id).lean()).status, 'expired');
+  assert.match(telegramCalls.slice(mark).find((c) => c.method === 'editMessageText').payload.text, /no reply in time/);
+  await new Promise((r) => setTimeout(r, 100));
+  const tl = await call('GET', `/api/admin/visits/${w.body.id}/timeline`, null, admin);
+  assert.ok(tl.body.rows.some((r) => r.action === 'visit.expired'), 'expiry shows in the visit timeline');
+  await call('PATCH', `/api/admin/hosts/${hostIds.rahul}`, { disconnectTelegram: true }, admin);
+});
+
 // Runs last: it changes guard1's password, which ends the `guard` session used above.
 test('anyone can change their own password; other devices are signed out, this one continues', async () => {
   const otherDevice = await login('guard1', 'guard-pass-123');

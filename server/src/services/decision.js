@@ -1,6 +1,7 @@
 const config = require('../config');
 const { Visit, ApprovalToken, Outbox } = require('../models');
 const { nextDailyNumber, audit, sha256 } = require('./core');
+const { retireTelegram } = require('./notify');
 
 // One place decides what a host's tap does, whether it came from the web link or a Telegram button.
 // The single-use token is the only credential.
@@ -53,6 +54,10 @@ async function decide(raw, decision, { ip, via = 'link' } = {}) {
   audit({ label: `host:${visit.host._id}`, role: 'host' }, decision === 'approve' ? 'visit.approved' : 'visit.rejected', {
     entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, dailyNumber: claimed.dailyNumber, ...(via !== 'link' ? { via } : {}) }, ip,
   });
+  if (via !== 'telegram') {
+    const name = `${visit.firstName} ${visit.lastName}`;
+    await retireTelegram(visit._id, decision === 'approve' ? `✅ You let ${name} in (on the web page).` : `❌ You declined ${name} (on the web page).`);
+  }
   return { status: 200, visit, body: { ok: true, status: claimed.status, dailyNumber: claimed.dailyNumber ?? null } };
 }
 

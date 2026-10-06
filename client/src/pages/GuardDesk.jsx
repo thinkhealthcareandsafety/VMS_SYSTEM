@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  AlertTriangle, Bell, Building2, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
+  AlertTriangle, Bell, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Printer, RotateCcw, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, minutesSince, passLabel, secondsSince } from '../api.js';
@@ -44,7 +44,7 @@ export default function GuardDesk({ user, onLogout }) {
   const [queue, setQueue] = useState(null);
   const [dismissed, setDismissed] = useState(dismissedStore.load);
   const [open, setOpen] = useState(null); // visit shown in the main column; null = check-in form
-  const [sentAt, setSentAt] = useState({}); // visit id -> when this device last sent its SMS
+  const [sentAt, setSentAt] = useState({}); // visit id -> when this device last sent its request
   const [liveTick, setLiveTick] = useState(0); // bumps on every server event
   const openRef = useRef(null);
   openRef.current = open;
@@ -135,7 +135,7 @@ export default function GuardDesk({ user, onLogout }) {
       try {
         await api(`/api/visits/${v.id}/resend`, { method: 'POST' });
         setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
-        toast(`New approval SMS sent to ${v.host?.name}.`);
+        toast(`New request sent to ${v.host?.name}.`);
         refreshQueue();
         if (openRef.current?.id === v.id) refreshOpen(v.id);
       } catch (e) { toast(e.message, 'bad'); }
@@ -178,7 +178,7 @@ export default function GuardDesk({ user, onLogout }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Logo name="" />
           <div className="where">
-            <strong>Main gate</strong>
+            <strong>{user.gateName || 'Main gate'}</strong>
             <small>
               <span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}
               <span className="sep">·</span>{insideCount} inside
@@ -208,6 +208,11 @@ export default function GuardDesk({ user, onLogout }) {
                 onOpenActive={openVisit}
                 onSubmitted={(v) => {
                   setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
+                  if (v.status === 'approved') {
+                    cue.approved();
+                    toast(`Expected visitor: ${v.firstName} ${v.lastName} let in · Pass ${v.dailyNumber}`, 'ok');
+                    if (autoPrintRef.current && !printingRef.current) setPrinting(v);
+                  }
                   setOpen(v);
                   refreshQueue();
                   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -285,6 +290,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [cam, setCam] = useState('face'); // which camera is live; only one at a time (phones cannot run two)
   const [returning, setReturning] = useState(null);
   const [active, setActive] = useState(null); // this person is already inside or waiting
+  const [blocked, setBlocked] = useState(null); // on the admin's blocked list: do not admit
+  const [invite, setInvite] = useState(null); // expected today: let in without waiting for the host
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tried, setTried] = useState(false);
@@ -300,6 +307,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   useEffect(() => {
     setReturning(null);
     setActive(null);
+    setBlocked(null);
+    setInvite(null);
     // Number corrected after an autofill: the filled-in name belonged to someone else, so take it back out.
     const a = autofill.current;
     if (a && a.mobile !== digits) {
@@ -314,8 +323,23 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     if (!MOBILE_RE.test(digits)) return undefined;
     let live = true;
     api(`/api/visits/lookup?mobile=${digits}`).then((r) => {
-      if (!live || !r.found) return;
+      if (!live) return;
       setActive(r.active || null);
+      setBlocked(r.blocked || null);
+      if (r.invite && !r.blocked) {
+        // Expected visitor: fill in what the admin entered and pick the host, ready to let in.
+        setInvite(r.invite);
+        const f = formRef.current;
+        const filled = {
+          firstName: f.firstName.trim() || r.invite.firstName, lastName: f.lastName.trim() || r.invite.lastName,
+          company: f.company.trim() || r.invite.company, purpose: f.purpose || r.invite.purpose,
+        };
+        autofill.current = { mobile: digits, firstName: filled.firstName, lastName: filled.lastName, company: filled.company };
+        update(filled);
+        setHost((h) => h || r.invite.host);
+        return;
+      }
+      if (!r.found) return;
       const f = formRef.current;
       if (f.firstName.trim() || f.lastName.trim()) { setReturning({ ...r, filled: false }); return; }
       const filled = { firstName: r.firstName, lastName: r.lastName, company: f.company || r.company };
@@ -331,13 +355,14 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     const d = formRef.current.mobile.replace(/\D/g, '');
     if (!liveTick || !MOBILE_RE.test(d)) return undefined;
     let live = true;
-    api(`/api/visits/lookup?mobile=${d}`).then((r) => { if (live) setActive(r.found ? r.active || null : null); }).catch(() => {});
+    api(`/api/visits/lookup?mobile=${d}`).then((r) => { if (live) { setActive(r.active || null); setBlocked(r.blocked || null); } }).catch(() => {});
     return () => { live = false; };
   }, [liveTick]);
 
   const checks = [
     ['visitor', mobileOk, 'mobile number'],
     ['visitor', !active, ''], // explained by the warning above the fields, not in the list
+    ['visitor', !blocked, ''],
     ['visitor', NAME_RE.test(form.firstName.trim()), 'first name'],
     ['visitor', NAME_RE.test(form.lastName.trim()), 'last name'],
     ['visitor', form.company.trim().length > 0, 'company'],
@@ -352,7 +377,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     store.clear();
     autofill.current = null;
     setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null);
-    setCam('face'); setTried(false); setError(''); setActive(null);
+    setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -367,15 +392,19 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     try {
       const res = await api('/api/visits', {
         method: 'POST',
-        body: { ...form, mobile: digits, hostId: host.id, photo, idImage },
+        body: { ...form, mobile: digits, hostId: host.id, photo, idImage, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
       });
       store.clear();
       onSubmitted({
         id: res.id, ref: res.ref, status: res.status, firstName: form.firstName.trim(), lastName: form.lastName.trim(),
         company: form.company.trim(), host: { name: host.name, unit: host.unit }, photo, createdAt: new Date().toISOString(),
+        ...(res.status === 'approved' ? { dailyNumber: res.dailyNumber, decidedAt: new Date().toISOString(), expected: true } : {}),
       });
     } catch (e) {
-      if (e.status === 409 && e.data?.code === 'already_active') {
+      if (e.status === 403 && e.data?.code === 'blocked') {
+        setBlocked({ message: e.message });
+        sec.visitor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (e.status === 409 && e.data?.code === 'already_active') {
         setActive({ ...e.data.visit, message: e.message });
         sec.visitor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else setError(e.message);
@@ -390,7 +419,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     <div className="checkin">
       <div className="step-title">
         <h1>New visitor</h1>
-        <p>Fill in everything below, then send. The host gets an SMS to approve.</p>
+        <p>Fill in everything below, then send. The host gets a message to approve.</p>
       </div>
 
       <section className={flag('visitor')} ref={sec.visitor} aria-labelledby="sec-visitor">
@@ -413,7 +442,23 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
             <button type="button" className="btn btn-sm" onClick={() => onOpenActive({ ...active, firstName: active.name.split(' ')[0], lastName: active.name.split(' ').slice(1).join(' ') })}>View</button>
           </div>
         )}
-        {returning && !active && (
+        {blocked && (
+          <div className="alert alert-bad alert-strong" role="alert">
+            <ShieldAlert />
+            <span className="grow">{blocked.message}</span>
+          </div>
+        )}
+        {invite && !blocked && !active && (
+          <div className="expected">
+            <CalendarCheck />
+            <span className="grow">
+              <strong>Expected today</strong>, pre-approved to meet {invite.host.name} ({invite.host.unit}).
+              {host && host.id !== invite.host.id ? ' You picked a different host, so this will go to them for approval.' : ' They get their pass straight away.'}
+              {invite.note && <span className="expected-note">Note from admin: {invite.note}</span>}
+            </span>
+          </div>
+        )}
+        {returning && !active && !invite && !blocked && (
           <div className="returning">
             <History />
             <span className="grow">
@@ -467,7 +512,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           {tried && missing.some(([, , l]) => l) && <p className="need">Still needed: {missing.map(([, , l]) => l).filter(Boolean).join(', ')}</p>}
           <button type="button" className="btn btn-xl" onClick={reset} disabled={busy}>Clear</button>
           <button type="button" className="btn btn-primary btn-xl" disabled={busy} onClick={submit}>
-            {busy ? <><Spinner />Sending</> : <><Send />Send for approval</>}
+            {busy ? <><Spinner />Sending</> : invite && host && invite.host.id === host.id && !blocked ? <><CheckCircle2 />Let in: expected visitor</> : <><Send />Send for approval</>}
           </button>
         </div>
       </div>
@@ -517,13 +562,13 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
           <span className="timer"><Clock size={15} />Waiting {clock(secs)}</span>
           {visit.smsStatus === 'failed' && (
             <div className="alert alert-bad" role="alert" style={{ textAlign: 'left' }}>
-              <AlertTriangle /><span className="grow">The SMS to {hostFirst} could not be sent. Call them, or try sending it again.</span>
+              <AlertTriangle /><span className="grow">The request to {hostFirst} could not be delivered. Call them, or try sending it again.</span>
             </div>
           )}
           <div className="outcome-actions">
             <button className="btn btn-primary btn-lg" onClick={onNext}><UserPlus />Check in next visitor</button>
             <div className="row">
-              <button className="btn" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend SMS'}</button>
+              <button className="btn" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>
               <button className="btn btn-ghost" onClick={onCancel}><X />Cancel visit</button>
             </div>
           </div>
@@ -559,7 +604,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
             </div>
           </div>
           <p className="lead">
-            Approved by {visit.host?.name}.{' '}
+            {visit.expected ? `Expected visitor for ${visit.host?.name}.` : `Approved by ${visit.host?.name}.`}{' '}
             {visit.printStatus === 'off' ? 'Print the pass, hand it over and let the visitor in.' : 'Hand over the sticker and let the visitor in.'}
           </p>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}><UserPlus />Next visitor</button>
@@ -579,7 +624,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
           <div className="state-icon warn"><Clock /></div>
           <div><h1>No reply from {hostFirst}</h1><p className="lead" style={{ margin: '6px auto 0' }}>The approval link expired. Send a fresh one, or ask {visit.firstName} to call {hostFirst}.</p></div>
           <div style={{ display: 'grid', gap: 8, width: '100%', maxWidth: 340 }}>
-            <button className="btn btn-primary btn-xl" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend approval SMS'}</button>
+            <button className="btn btn-primary btn-xl" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>
             <button className="btn" onClick={onCancel}><X />Visitor left: cancel visit</button>
             <button className="btn btn-ghost" onClick={onNext}>Back to check-in</button>
           </div>
@@ -715,7 +760,7 @@ function TrayState({ v }) {
   if (v.status === 'approved') return <span className="tray-state ok"><span className="pass-chip">{passLabel(v)}</span>Let in</span>;
   if (v.status === 'rejected') return <span className="tray-state bad"><XCircle />Declined</span>;
   if (v.status === 'expired') return <span className="tray-state warn"><Clock />No reply</span>;
-  if (v.smsStatus === 'failed') return <span className="tray-state bad"><AlertTriangle />SMS failed</span>;
+  if (v.smsStatus === 'failed') return <span className="tray-state bad"><AlertTriangle />Not delivered</span>;
   return <span className="tray-state wait"><span className="live-dot" />{clock(secondsSince(v.createdAt))}</span>;
 }
 

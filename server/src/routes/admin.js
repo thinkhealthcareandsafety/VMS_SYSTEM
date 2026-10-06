@@ -10,7 +10,8 @@ const config = require('../config');
 const { requireRole } = require('../middleware/auth');
 const telegram = require('../services/telegram');
 const exporter = require('../services/export');
-const { Visit, Host, Outbox, Audit, User } = require('../models');
+const { Visit, Host, Outbox, Audit, User, Invite, Block } = require('../models');
+const settings = require('../services/settings');
 const { siteDay, audit, normalizeMobile, cleanText, passwordProblem, sha256 } = require('../services/core');
 
 const router = express.Router();
@@ -97,14 +98,14 @@ router.get('/visits.csv', requireRole('admin'), async (req, res) => {
 });
 
 // What the download covers, in words, for the About sheet and the report header.
-function exportMeta(req) {
+async function exportMeta(req) {
   const q = req.query;
   const range = q.from || q.to ? `${q.from || 'start'} to ${q.to || siteDay()}` : `All dates to ${siteDay()}`;
   const filters = [
     q.name && `visitor "${cleanText(q.name, 60)}"`, q.host && `host "${cleanText(q.host, 60)}"`,
     q.company && `company "${cleanText(q.company, 60)}"`, q.status && `status: ${exporter.STATUS_LABEL[q.status] || q.status}`,
   ].filter(Boolean).join(', ');
-  return { by: req.user.fullName || req.user.username, range, filters };
+  return { by: req.user.fullName || req.user.username, range, filters, site: (await settings.get()).siteName };
 }
 const exists = (p) => Boolean(p) && fs.existsSync(path.resolve(p));
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -112,7 +113,7 @@ const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 // Excel sheet on its own: formatted columns, real dates, filters, and an "About this download" tab.
 router.get('/visits.xlsx', requireRole('admin'), async (req, res) => {
   const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
-  const buf = await exporter.workbook(exporter.records(docs), { meta: exportMeta(req) });
+  const buf = await exporter.workbook(exporter.records(docs), { meta: await exportMeta(req) });
   audit(req.user, 'export.visits_xlsx', { details: { rows: docs.length, from: req.query.from, to: req.query.to }, ip: req.ip });
   res.type(XLSX).attachment(exportName(req.query, 'xlsx')).send(Buffer.from(buf));
 });
@@ -127,7 +128,7 @@ router.get('/visits.zip', requireRole('admin'), async (req, res) => {
   const aadhaar = req.query.aadhaar === '1';
   const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
   const recs = exporter.records(docs).map((r) => ({ ...r, hasPhoto: exists(r.photoPath), hasIdImage: aadhaar && exists(r.idImagePath) }));
-  const meta = exportMeta(req);
+  const meta = await exportMeta(req);
   const sheet = await exporter.workbook(recs, { files: { aadhaar }, meta });
   audit(req.user, 'export.visits_zip', {
     details: { rows: docs.length, from: req.query.from, to: req.query.to, aadhaar, aadhaarImages: recs.filter((r) => r.hasIdImage).length }, ip: req.ip,
@@ -176,6 +177,7 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
     today, inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleInside: staleCut, arrivalsToday: arrivals.length, byHour,
     // So the console can say plainly when SMS are only logged, or no sticker printer is connected.
     smsLive: config.sms.driver !== 'console', telegramOn: telegram.enabled(), printerOn: config.printer.mode !== 'off',
+    expectedToday: await Invite.countDocuments({ day: today, status: 'expected' }),
   });
 });
 
@@ -364,6 +366,122 @@ router.patch('/users/:id', requireRole('admin'), async (req, res) => {
   const logged = Object.keys(changes).filter((k) => k !== 'passwordHash' && k !== 'sessionVersion');
   audit(req.user, password ? 'user.password_reset' : 'user.updated', { entity: 'User', entityId: user._id, details: { username: user.username, ...(logged.length ? { changed: logged.join(', ') } : {}) }, ip: req.ip });
   res.json({ ...staffRow(user.toObject()), password });
+});
+
+// ----- Site settings -----
+const RETENTION_DAYS = [1, 7, 30, 90, 180, 365];
+router.get('/settings', requireRole('admin'), async (req, res) => {
+  const s = await settings.get();
+  res.json({
+    ...s,
+    retentionChoices: RETENTION_DAYS,
+    channels: {
+      telegram: telegram.enabled() ? await telegram.botUsername().catch(() => null) || 'connected' : null,
+      sms: config.sms.driver !== 'console',
+      printer: config.printer.mode,
+    },
+  });
+});
+
+router.patch('/settings', requireRole('admin'), async (req, res) => {
+  const b = req.body || {};
+  const patch = {};
+  if (b.siteName !== undefined) {
+    const v = cleanText(b.siteName, 60);
+    if (v.length < 2) return res.status(400).json({ error: 'Enter the site name (at least 2 characters)' });
+    patch.siteName = v;
+  }
+  if (b.gateName !== undefined) {
+    const v = cleanText(b.gateName, 40);
+    if (v.length < 2) return res.status(400).json({ error: 'Enter the gate name (at least 2 characters)' });
+    patch.gateName = v;
+  }
+  if (b.idRetentionDays !== undefined) {
+    if (!RETENTION_DAYS.includes(Number(b.idRetentionDays))) return res.status(400).json({ error: 'Pick one of the listed retention periods' });
+    patch.idRetentionDays = Number(b.idRetentionDays);
+  }
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
+  const before = await settings.get();
+  const after = await settings.update(patch);
+  audit(req.user, 'settings.updated', { details: Object.fromEntries(Object.keys(patch).map((k) => [k, `${before[k]} → ${after[k]}`])), ip: req.ip });
+  res.json(after);
+});
+
+// ----- Expected visitors (let in on arrival without waiting for the host) -----
+const inviteRow = (i) => ({
+  id: String(i._id), firstName: i.firstName, lastName: i.lastName, mobile: i.mobile, company: i.company, purpose: i.purpose, note: i.note,
+  day: i.day, status: i.status, visitId: i.visit ? String(i.visit) : null,
+  host: i.host ? { id: String(i.host._id), name: i.host.fullName, unit: i.host.unit } : null, createdAt: i.createdAt,
+});
+
+router.get('/invites', requireRole('admin'), async (req, res) => {
+  const today = siteDay();
+  const rows = await Invite.find({ $or: [{ day: { $gte: today } }, { status: 'arrived', day: today }] })
+    .sort({ day: 1, createdAt: 1 }).limit(500).populate('host').lean();
+  res.json({ today, rows: rows.map(inviteRow) });
+});
+
+router.post('/invites', requireRole('admin'), async (req, res) => {
+  const b = req.body || {};
+  const firstName = cleanText(b.firstName, 60);
+  const lastName = cleanText(b.lastName, 60);
+  const mobile = normalizeMobile(b.mobile);
+  const today = siteDay();
+  const last = siteDay(new Date(Date.now() + 90 * 86400e3));
+  if (firstName.length < 1 || lastName.length < 1) return res.status(400).json({ error: 'Enter the visitor\'s first and last name' });
+  if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number (Indian mobiles start with 6 to 9)' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.day || '')) || b.day < today || b.day > last) return res.status(400).json({ error: 'Pick a date from today up to 90 days ahead' });
+  if (!mongoose.isValidObjectId(b.hostId)) return res.status(400).json({ error: 'Choose whom they are meeting' });
+  const host = await Host.findOne({ _id: b.hostId, active: true }).lean();
+  if (!host) return res.status(400).json({ error: 'That host is not active' });
+  if (await Block.exists({ mobile, active: true })) return res.status(409).json({ error: 'This number is on the blocked list' });
+  if (await Invite.exists({ mobile, day: b.day, status: 'expected' })) return res.status(409).json({ error: 'This visitor is already expected that day' });
+  const invite = await Invite.create({
+    firstName, lastName, mobile, company: cleanText(b.company, 100), purpose: cleanText(b.purpose, 100), note: cleanText(b.note, 200),
+    host: host._id, day: b.day, createdBy: req.user.id,
+  });
+  audit(req.user, 'invite.created', { entity: 'Invite', entityId: invite._id, details: { name: `${firstName} ${lastName}`, day: b.day, host: host.fullName }, ip: req.ip });
+  res.status(201).json(inviteRow({ ...invite.toObject(), host }));
+});
+
+router.patch('/invites/:id', requireRole('admin'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  if (req.body?.status !== 'cancelled') return res.status(400).json({ error: 'Only cancelling is supported' });
+  const inv = await Invite.findOneAndUpdate({ _id: req.params.id, status: 'expected' }, { status: 'cancelled' }, { new: true });
+  if (!inv) return res.status(409).json({ error: 'Only an expected visitor who has not arrived can be cancelled' });
+  audit(req.user, 'invite.cancelled', { entity: 'Invite', entityId: inv._id, details: { name: `${inv.firstName} ${inv.lastName}`, day: inv.day }, ip: req.ip });
+  res.json({ ok: true });
+});
+
+// ----- Blocked visitors -----
+const blockRow = (b) => ({ id: String(b._id), mobile: b.mobile, name: b.name, reason: b.reason, createdAt: b.createdAt, by: b.createdBy?.fullName || null });
+
+router.get('/blocks', requireRole('admin'), async (req, res) => {
+  const rows = await Block.find({ active: true }).sort({ createdAt: -1 }).limit(1000).populate('createdBy', 'fullName').lean();
+  res.json({ rows: rows.map(blockRow) });
+});
+
+router.post('/blocks', requireRole('admin'), async (req, res) => {
+  const mobile = normalizeMobile(req.body?.mobile);
+  const name = cleanText(req.body?.name, 80);
+  const reason = cleanText(req.body?.reason, 200);
+  if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number' });
+  if (reason.length < 5) return res.status(400).json({ error: 'Give a reason (at least 5 characters). Guards see it at the gate.' });
+  if (await Block.exists({ mobile, active: true })) return res.status(409).json({ error: 'This number is already blocked' });
+  const block = await Block.create({ mobile, name, reason, createdBy: req.user.id });
+  // Anyone with this number expected later must not be let in on arrival either.
+  await Invite.updateMany({ mobile, status: 'expected' }, { status: 'cancelled' });
+  audit(req.user, 'block.added', { entity: 'Block', entityId: block._id, details: { mobile, name, reason }, ip: req.ip });
+  res.status(201).json(blockRow(block.toObject()));
+});
+
+router.patch('/blocks/:id', requireRole('admin'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  if (req.body?.active !== false) return res.status(400).json({ error: 'Only removing a block is supported' });
+  const b = await Block.findOneAndUpdate({ _id: req.params.id, active: true }, { active: false, removedAt: new Date() }, { new: true });
+  if (!b) return res.status(404).json({ error: 'Not found' });
+  audit(req.user, 'block.removed', { entity: 'Block', entityId: b._id, details: { mobile: b.mobile, name: b.name }, ip: req.ip });
+  res.json({ ok: true });
 });
 
 module.exports = router;

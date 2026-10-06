@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { User } = require('../models');
 const { signSession, setSessionCookie, COOKIE, loadUser, requireRole } = require('../middleware/auth');
-const config = require('../config');
+const settings = require('../services/settings');
 const { audit, passwordProblem } = require('../services/core');
 
 const router = express.Router();
@@ -33,7 +33,8 @@ router.post('/login', loginLimiter, async (req, res) => {
   await User.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
   setSessionCookie(res, signSession(user));
   audit({ username: user.username, role: user.role }, 'auth.login', { ip: req.ip });
-  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName: config.siteName });
+  const { siteName, gateName } = await settings.get();
+  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName, gateName });
 });
 
 router.post('/logout', (req, res) => {
@@ -44,7 +45,8 @@ router.post('/logout', (req, res) => {
 router.get('/me', async (req, res) => {
   const user = await loadUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });
-  res.json({ ...user, siteName: config.siteName });
+  const { siteName, gateName } = await settings.get();
+  res.json({ ...user, siteName, gateName });
 });
 
 // Change your own password. Signs out every other device; this one gets a fresh session.

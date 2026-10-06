@@ -10,7 +10,7 @@ const CLOSED = {
   approved: { icon: CheckCircle2, tone: 'ok', title: 'Visitor approved', text: 'Security has been told to let them in.' },
   rejected: { icon: XCircle, tone: 'bad', title: 'Visit declined', text: 'Security has been told not to let them in.' },
   expired: { icon: Clock, tone: 'warn', title: 'This request expired', text: 'Ask the security desk to send a new link.' },
-  superseded: { icon: LinkIcon, tone: 'warn', title: 'A newer link was sent', text: 'Open the latest SMS from the security desk.' },
+  superseded: { icon: LinkIcon, tone: 'warn', title: 'A newer request was sent', text: 'Open the latest message from the security desk.' },
   cancelled: { icon: X, tone: 'warn', title: 'Request cancelled', text: 'The visitor left before you replied. Nothing more to do.' },
   checked_out: { icon: CheckCircle2, tone: 'ok', title: 'This visit is over', text: 'The visitor has already left.' },
   force_checked_out: { icon: CheckCircle2, tone: 'ok', title: 'This visit is over', text: 'The visitor has already left.' },
@@ -69,7 +69,7 @@ export default function Approve() {
 
   return (
     <div className="approve-wrap">
-      <Logo />
+      <div className="approve-brand"><Logo />{info.siteName && <span className="approve-site">{info.siteName}</span>}</div>
       <article className="approve-card">
         {photoOk && !['cancelled', 'expired', 'superseded'].includes(state) && (
           <img className="photo" src={info.photoUrl} alt={`Photo of ${name} taken at the gate`} onError={() => setPhotoOk(false)} />

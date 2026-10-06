@@ -4,9 +4,11 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
+import HostPicker from '../components/HostPicker.jsx';
 import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
@@ -16,6 +18,7 @@ const NAV = [
   { group: 'Today', items: [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'inside', label: 'On premises', icon: Users },
+    { id: 'expected', label: 'Expected visitors', icon: CalendarCheck },
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
@@ -25,6 +28,8 @@ const NAV = [
   { group: 'Setup', items: [
     { id: 'hosts', label: 'Hosts', icon: Building2 },
     { id: 'staff', label: 'Staff accounts', icon: UserCog },
+    { id: 'blocked', label: 'Blocked visitors', icon: Ban },
+    { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ] },
 ];
 const TITLES = {
@@ -35,6 +40,9 @@ const TITLES = {
   audit: ['Audit log', 'Who did what, and when'],
   hosts: ['Hosts', 'Residents and staff who can approve visitors'],
   staff: ['Staff accounts', 'Who can sign in to the guard desk and this console'],
+  expected: ['Expected visitors', 'Let in on arrival, without waiting for the host'],
+  blocked: ['Blocked visitors', 'People the guard must not let in'],
+  settings: ['Settings', 'Site details, privacy and notifications'],
 };
 
 // ---------- date helpers (site timezone) ----------
@@ -86,6 +94,7 @@ export default function Admin({ user, onLogout }) {
               <button key={id} className="nav-item" aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}>
                 <Icon /><span className="grow">{label}</span>
                 {id === 'inside' && stats ? <span className="n">{stats.inside}</span> : null}
+                {id === 'expected' && stats?.expectedToday ? <span className="n">{stats.expectedToday}</span> : null}
                 {id === 'messages' && failures > 0 ? <span className="n alert-n" aria-label={`${failures} failed`}>{failures}</span> : null}
               </button>
             ))}
@@ -118,6 +127,9 @@ export default function Admin({ user, onLogout }) {
           {section === 'audit' && <AuditPage {...page} />}
           {section === 'hosts' && <HostsPage {...page} />}
           {section === 'staff' && <StaffPage {...page} user={user} />}
+          {section === 'expected' && <ExpectedPage {...page} />}
+          {section === 'blocked' && <BlockedPage {...page} />}
+          {section === 'settings' && <SettingsPage {...page} />}
         </div>
       </main>
 
@@ -139,7 +151,7 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
   }, [tick]);
 
   const resend = async (v) => {
-    try { await api(`/api/visits/${v.id}/resend`, { method: 'POST' }); toast(`New approval SMS sent to ${v.host}.`); refresh(); } catch (e) { toast(e.message, 'bad'); }
+    try { await api(`/api/visits/${v.id}/resend`, { method: 'POST' }); toast(`New request sent to ${v.host}.`); refresh(); } catch (e) { toast(e.message, 'bad'); }
   };
   const cancel = async (v) => {
     try { await api(`/api/visits/${v.id}/cancel`, { method: 'POST' }); toast(`${v.name}’s visit was cancelled.`); refresh(); } catch (e) { toast(e.message, 'bad'); }
@@ -172,7 +184,7 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
       <section className="panel kpis" aria-label="Today in numbers">
         <Kpi icon={Users} label="On premises" value={stats.inside} note={stats.staleInside ? `${stats.staleInside} long stay` : 'Right now'} />
         <Kpi icon={LogIn} label="Arrivals today" value={stats.arrivalsToday} note={stats.arrivalsToday ? `Busiest ${fmtHour(peak)}–${fmtHour((peak + 1) % 24)}` : 'None yet'} />
-        <Kpi icon={Clock} label="Awaiting host" value={stats.pending} note={stats.pending ? 'SMS sent, no reply yet' : 'Nobody waiting'} />
+        <Kpi icon={Clock} label="Awaiting host" value={stats.pending} note={stats.pending ? 'Request sent, no reply yet' : stats.expectedToday ? `${stats.expectedToday} expected later today` : 'Nobody waiting'} />
         <Kpi icon={LogOut} label="Left today" value={left} note={stats.forceToday ? `${stats.forceToday} checked out by admin` : 'Checked out at the gate'} />
       </section>
 
@@ -568,6 +580,14 @@ const ACTIONS = {
   'host.imported': ['Hosts imported', ''],
   'auth.login': ['Signed in', ''],
   'auth.password_changed': ['Changed their password', ''],
+  'visit.blocked_attempt': ['Blocked visitor tried to check in', 'bad'],
+  'invite.created': ['Expected visitor added', ''],
+  'invite.cancelled': ['Expected visitor cancelled', ''],
+  'block.added': ['Visitor blocked', 'warn'],
+  'block.removed': ['Block removed', ''],
+  'settings.updated': ['Settings changed', ''],
+  'host.telegram_connected': ['Host connected Telegram', 'ok'],
+  'host.telegram_link': ['Telegram connect link made', ''],
   'user.created': ['Staff account added', ''],
   'user.updated': ['Staff account changed', ''],
   'user.password_reset': ['Staff password reset', 'warn'],
@@ -582,6 +602,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
   const [timeline, setTimeline] = useState(null);
   const [showId, setShowId] = useState(false);
   const [force, setForce] = useState(null);
+  const [blocking, setBlocking] = useState(null);
 
   useEffect(() => { setV(null); setTimeline(null); setShowId(false); }, [id]);
   useEffect(() => {
@@ -653,7 +674,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
                         <span className={`tdot ${tone}`}><I /></span>
                         <div>
                           <div className="what">{actionLabel(t.action)}</div>
-                          <div className="when">{fmtDateTime(t.at)} · {t.role === 'host' ? 'Host' : t.actor}{t.details?.reason ? ` · “${t.details.reason}”` : ''}</div>
+                          <div className="when">{fmtDateTime(t.at)} · {t.role === 'host' ? 'Host' : t.actor}{t.details?.via ? ` · ${VIA[t.details.via] || t.details.via}` : ''}{t.details?.reason ? ` · “${t.details.reason}”` : ''}</div>
                         </div>
                       </li>
                     );
@@ -667,12 +688,14 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
       {v && (
         <div className="drawer-foot">
           {['pending', 'expired'].includes(v.status) && <button className="btn btn-ghost" onClick={() => act('cancel', 'Visit cancelled. The host’s link no longer works.')}><X />Cancel visit</button>}
-          {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New approval SMS sent.')}><RotateCcw />Resend SMS</button>}
+          {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New request sent to the host.')}><RotateCcw />Resend request</button>}
           {admitted && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
+          <button className="btn btn-ghost" onClick={() => setBlocking({ mobile: v.mobile, name: `${v.firstName} ${v.lastName}` })}><Ban />Block</button>
           {v.status === 'approved' && <button className="btn btn-danger-outline" onClick={() => setForce(v)}><LogOut />Check out</button>}
         </div>
       )}
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={onChanged} />
+      <BlockDialog prefill={blocking} onClose={() => setBlocking(null)} onDone={onChanged} />
     </Modal>
   );
 }
@@ -764,7 +787,7 @@ function MessagesPage({ tick, stats }) {
 // ================================================================= Audit log
 const AUDIT_FILTERS = [
   { id: '', label: 'All' }, { id: 'visit.', label: 'Visits' }, { id: 'force', label: 'Force checkouts' },
-  { id: 'id_image', label: 'Aadhaar views' }, { id: 'export', label: 'Downloads' }, { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' },
+  { id: 'id_image', label: 'Aadhaar views' }, { id: 'export', label: 'Downloads' }, { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' }, { id: 'block', label: 'Blocked' }, { id: 'invite.', label: 'Expected' }, { id: 'settings', label: 'Settings' },
 ];
 const ROLE_LABEL = { admin: 'Administrator', guard: 'Guard' };
 const DETAIL_KEYS = { dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', errors: 'errors', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors' };
@@ -1372,5 +1395,330 @@ function ConnectTelegramDialog({ host, live, onClose, onRefresh }) {
         </>
       )}
     </Modal>
+  );
+}
+
+// How a decision arrived, shown in the visit timeline.
+const VIA = { telegram: 'via Telegram', expected: 'expected visitor, let in on arrival' };
+
+// ================================================================= Expected visitors
+const dayLabel = (day, today) => {
+  if (day === today) return 'Today';
+  const t = new Date(`${today}T12:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + 1);
+  if (day === t.toISOString().slice(0, 10)) return 'Tomorrow';
+  return fmtDate(`${day}T12:00:00+05:30`);
+};
+
+function ExpectedPage({ toast, tick, openVisit, refresh }) {
+  const [data, setData] = useState(null);
+  const [view, setView] = useState('upcoming');
+  const [q, setQ] = useState('');
+  const [adding, setAdding] = useState(false);
+  const load = useCallback(() => api('/api/admin/invites').then(setData).catch(() => setData({ today: daysAgo(0), rows: [] })), []);
+  useEffect(() => { load(); }, [load, tick]);
+
+  const cancel = async (r) => {
+    try { await api(`/api/admin/invites/${r.id}`, { method: 'PATCH', body: { status: 'cancelled' } }); toast(`${r.firstName} ${r.lastName} is no longer expected.`); load(); refresh(); } catch (e) { toast(e.message, 'bad'); }
+  };
+
+  const today = data?.today;
+  const term = q.trim().toLowerCase();
+  const rows = (data?.rows || [])
+    .filter((r) => (view === 'today' ? r.day === today : r.status !== 'cancelled' || r.day === today))
+    .filter((r) => !term || `${r.firstName} ${r.lastName} ${r.mobile} ${r.company} ${r.host?.name} ${r.host?.unit}`.toLowerCase().includes(term));
+  const todayCount = (data?.rows || []).filter((r) => r.day === today && r.status === 'expected').length;
+
+  return (
+    <section className="panel">
+      <div className="toolbar">
+        <div className="seg" role="group" aria-label="Which days">
+          <button aria-pressed={view === 'today'} onClick={() => setView('today')}>Today{todayCount > 0 && <span className="n">{todayCount}</span>}</button>
+          <button aria-pressed={view === 'upcoming'} onClick={() => setView('upcoming')}>Today and later</button>
+        </div>
+        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, mobile, host" aria-label="Search expected visitors" /></div>
+        <span className="spacer-x" />
+        <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add expected visitor</button>
+      </div>
+      <div className="notice">
+        <Info />
+        <span className="grow">At the gate the guard types their mobile number; the form fills in and they get a pass <strong>without waiting for the host</strong>. Their photo and Aadhaar are still taken.</span>
+      </div>
+      {!data ? <ListSkeleton /> : rows.length === 0 ? (
+        <Empty icon={CalendarCheck} title="No expected visitors" action={<button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add expected visitor</button>}>
+          Add a guest, a delivery or a contractor you know is coming.
+        </Empty>
+      ) : (
+        <div className="table-scroll">
+          <table className="table">
+            <thead><tr><th>Day</th><th>Visitor</th><th>Meeting</th><th>Note</th><th>Status</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className={r.status === 'cancelled' ? 'row-off' : ''}>
+                  <td className={r.day === today ? 'day-today' : ''}>{dayLabel(r.day, today)}</td>
+                  <td>
+                    <div className="name">{r.firstName} {r.lastName}</div>
+                    <div className="meta-line">{fmtMobile(r.mobile)}{r.company ? ` · ${r.company}` : ''}{r.purpose ? ` · ${r.purpose}` : ''}</div>
+                  </td>
+                  <td>{r.host?.name}<div className="meta-line">{r.host?.unit}</div></td>
+                  <td className="meta-line wrap">{r.note || '—'}</td>
+                  <td>
+                    {r.status === 'arrived' ? <span className="badge badge-live">Arrived</span>
+                      : r.status === 'cancelled' ? <span className="badge">Cancelled</span>
+                        : <span className="badge badge-warn">Expected</span>}
+                  </td>
+                  <td className="r">
+                    {r.status === 'expected' && <button className="btn btn-sm btn-ghost" onClick={() => cancel(r)}><X />Cancel</button>}
+                    {r.status === 'arrived' && r.visitId && <button className="btn btn-sm" onClick={() => openVisit(r.visitId)}>View visit</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <ExpectedDialog open={adding} onClose={() => setAdding(false)} onDone={() => { load(); refresh(); }} />
+    </section>
+  );
+}
+
+function ExpectedDialog({ open, onClose, onDone }) {
+  const toast = useToast();
+  const blank = () => ({ day: daysAgo(0), firstName: '', lastName: '', mobile: '', company: '', purpose: '', note: '' });
+  const [f, setF] = useState(blank);
+  const [host, setHost] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { if (open) { setF(blank()); setHost(null); setErr(''); } }, [open]);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const digits = f.mobile.replace(/\D/g, '');
+  const maxDay = daysAgo(-90);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!host) return setErr('Choose whom they are meeting');
+    setBusy(true); setErr('');
+    try {
+      await api('/api/admin/invites', { method: 'POST', body: { ...f, mobile: digits, hostId: host.id } });
+      toast(`${f.firstName} ${f.lastName} added for ${f.day === daysAgo(0) ? 'today' : fmtDate(`${f.day}T12:00:00+05:30`)}.`);
+      onDone();
+      onClose();
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} label="Add expected visitor">
+      <form onSubmit={submit}>
+        <div className="dialog-head"><h2>Add an expected visitor</h2><p>They are let in on arrival, without waiting for the host to reply.</p></div>
+        <div className="dialog-body">
+          <div className="grid-2">
+            <label className="field"><span>Day</span><input className="input" type="date" required min={daysAgo(0)} max={maxDay} value={f.day} onChange={set('day')} /></label>
+            <label className="field"><span>Mobile</span>
+              <div className="input-group"><span className="prefix">+91</span><input className="input num" inputMode="numeric" required value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value.replace(/[^\d ]/g, '').slice(0, 11) })} placeholder="98765 43210" /></div>
+            </label>
+          </div>
+          <div className="grid-2">
+            <label className="field"><span>First name</span><input className="input" required value={f.firstName} onChange={set('firstName')} /></label>
+            <label className="field"><span>Last name</span><input className="input" required value={f.lastName} onChange={set('lastName')} /></label>
+          </div>
+          <div className="grid-2">
+            <label className="field"><span>Company <span className="faint">· optional</span></span><input className="input" value={f.company} onChange={set('company')} /></label>
+            <label className="field"><span>Purpose <span className="faint">· optional</span></span><input className="input" value={f.purpose} onChange={set('purpose')} placeholder="Meeting, delivery…" /></label>
+          </div>
+          <div className="field"><span>Meeting</span><HostPicker value={host} onChange={setHost} /></div>
+          <label className="field"><span>Note for the guard <span className="faint">· optional</span></span><input className="input" maxLength={200} value={f.note} onChange={set('note')} placeholder="e.g. Bringing a laptop, send to 3rd floor" /></label>
+          {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+        </div>
+        <div className="dialog-foot">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy || digits.length !== 10 || !f.firstName.trim() || !f.lastName.trim() || !host}>{busy ? <Spinner /> : <CalendarCheck />}Add expected visitor</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ================================================================= Blocked visitors
+function BlockedPage({ toast, tick }) {
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState('');
+  const [adding, setAdding] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+  const load = useCallback(() => api('/api/admin/blocks').then((d) => setRows(d.rows)).catch(() => setRows([])), []);
+  useEffect(() => { load(); }, [load, tick]);
+
+  const unblock = async (r) => {
+    if (confirmId !== r.id) return setConfirmId(r.id);
+    try { await api(`/api/admin/blocks/${r.id}`, { method: 'PATCH', body: { active: false } }); toast(`${r.name || fmtMobile(r.mobile)} can be checked in again.`); setConfirmId(null); load(); } catch (e) { toast(e.message, 'bad'); }
+  };
+
+  const term = q.trim().toLowerCase();
+  const shown = (rows || []).filter((r) => !term || `${r.name} ${r.mobile} ${r.reason}`.toLowerCase().includes(term));
+  return (
+    <section className="panel">
+      <div className="toolbar">
+        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, mobile, reason" aria-label="Search blocked visitors" /></div>
+        <span className="muted num" style={{ alignSelf: 'center' }}>{rows ? `${rows.length} blocked` : ''}</span>
+        <span className="spacer-x" />
+        <button className="btn btn-primary btn-sm" onClick={() => setAdding({})}><Ban />Block a visitor</button>
+      </div>
+      <div className="notice">
+        <Info />
+        <span className="grow">When a guard types a blocked number they see <strong>Do not admit</strong> with your reason, and the check-in is refused. Every attempt is recorded in the audit log.</span>
+      </div>
+      {!rows ? <ListSkeleton /> : shown.length === 0 ? (
+        <Empty icon={ShieldCheck} title={rows.length ? 'No match' : 'Nobody is blocked'}>{rows.length ? 'Try a different name or number.' : 'Block someone from their visit details, or with the button above.'}</Empty>
+      ) : (
+        <div className="table-scroll">
+          <table className="table">
+            <thead><tr><th>Person</th><th>Reason</th><th>Blocked</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              {shown.map((r) => (
+                <tr key={r.id}>
+                  <td><div className="name">{r.name || 'Unknown name'}</div><div className="meta-line num">{fmtMobile(r.mobile)}</div></td>
+                  <td className="meta-line wrap" style={{ color: 'var(--text)' }}>{r.reason}</td>
+                  <td className="num">{fmtDate(r.createdAt)}{r.by && <div className="meta-line">by {r.by}</div>}</td>
+                  <td className="r">
+                    <button className={`btn btn-sm ${confirmId === r.id ? 'btn-danger' : 'btn-ghost'}`} onClick={() => unblock(r)} onBlur={() => setConfirmId((c) => (c === r.id ? null : c))}>
+                      {confirmId === r.id ? 'Confirm: allow again' : 'Remove block'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <BlockDialog prefill={adding} onClose={() => setAdding(null)} onDone={load} />
+    </section>
+  );
+}
+
+function BlockDialog({ prefill, onClose, onDone }) {
+  const toast = useToast();
+  const open = Boolean(prefill);
+  const [f, setF] = useState({ mobile: '', name: '', reason: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (open) { setF({ mobile: (prefill.mobile || '').replace(/^\+91/, ''), name: prefill.name || '', reason: '' }); setErr(''); }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr('');
+    try {
+      await api('/api/admin/blocks', { method: 'POST', body: f });
+      toast(`${f.name || 'That number'} is blocked. Guards will see your reason.`);
+      onDone();
+      onClose();
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} label="Block a visitor">
+      <form onSubmit={submit}>
+        <div className="dialog-head"><h2>Block {prefill?.name || 'a visitor'}</h2><p>Guards will see “Do not admit” and your reason, and cannot check this number in.</p></div>
+        <div className="dialog-body">
+          <div className="grid-2">
+            <label className="field"><span>Mobile</span>
+              <div className="input-group"><span className="prefix">+91</span><input className="input num" inputMode="numeric" required value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value.replace(/[^\d ]/g, '').slice(0, 11) })} /></div>
+            </label>
+            <label className="field"><span>Name <span className="faint">· optional</span></span><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
+          </div>
+          <label className="field"><span>Reason</span>
+            <input className="input" required minLength={5} maxLength={200} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="e.g. Abusive to staff on 2 Oct" autoFocus />
+            <span className="hint">Shown to the guard at the gate. Keep it factual.</span>
+          </label>
+          {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+        </div>
+        <div className="dialog-foot">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-danger" disabled={busy || f.reason.trim().length < 5 || f.mobile.replace(/\D/g, '').length !== 10}>{busy ? <Spinner /> : <Ban />}Block</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ================================================================= Settings
+const RETENTION_LABEL = { 1: '1 day', 7: '7 days', 30: '30 days', 90: '90 days', 180: '180 days', 365: '1 year' };
+
+function SettingsPage({ toast }) {
+  const [s, setS] = useState(null);
+  const [f, setF] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    api('/api/admin/settings').then((d) => { setS(d); setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays }); }).catch((e) => setErr(e.message));
+  }, []);
+
+  if (!f) return err ? <div className="alert alert-bad"><AlertTriangle /><span className="grow">{err}</span></div> : <ListSkeleton />;
+  const changed = Object.keys(f).filter((k) => String(f[k]) !== String(s[k]));
+  const save = async (e) => {
+    e.preventDefault();
+    if (!changed.length) return;
+    setBusy(true); setErr('');
+    try {
+      const d = await api('/api/admin/settings', { method: 'PATCH', body: Object.fromEntries(changed.map((k) => [k, f[k]])) });
+      setS({ ...s, ...d });
+      toast('Settings saved. Guard screens pick up name changes next time they open.');
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+  const ch = s.channels || {};
+
+  return (
+    <form className="settings-grid" onSubmit={save}>
+      <section className="panel">
+        <div className="panel-head"><h2>Site</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Site name</span>
+            <input className="input" value={f.siteName} maxLength={60} onChange={(e) => setF({ ...f, siteName: e.target.value })} />
+            <span className="hint">Printed on visitor passes, shown on the host’s approval page and in downloads.</span>
+          </label>
+          <label className="field"><span>Gate name</span>
+            <input className="input" value={f.gateName} maxLength={40} onChange={(e) => setF({ ...f, gateName: e.target.value })} />
+            <span className="hint">Shown at the top of the guard desk.</span>
+          </label>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Privacy</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Keep masked Aadhaar images for</span>
+            <select className="select" value={f.idRetentionDays} onChange={(e) => setF({ ...f, idRetentionDays: Number(e.target.value) })}>
+              {(s.retentionChoices || [1, 7, 30, 90, 180, 365]).map((d) => <option key={d} value={d}>{RETENTION_LABEL[d] || `${d} days`}</option>)}
+            </select>
+            <span className="hint">Older images are deleted automatically and are then left out of downloads. Visitor photos are not affected.</span>
+          </label>
+          <div className="alert"><Info /><span className="grow">Under the DPDP Act, keep Aadhaar images only as long as you need them for security, and say so in the notice visitors see. Only masked images are ever stored: the first 8 digits are blacked out on the guard’s device.</span></div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Notifications and printing</h2></div>
+        <div className="panel-body">
+          <div className="channel">
+            <Send />
+            <span className="grow"><strong>Telegram</strong><small>{ch.telegram ? `Connected as @${ch.telegram}. Connect each host from the Hosts page.` : 'Not set up. Add a bot token in the server settings to send requests with Let them in / Decline buttons.'}</small></span>
+            {ch.telegram ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
+          </div>
+          <div className="channel">
+            <MessageSquare />
+            <span className="grow"><strong>SMS</strong><small>{ch.sms ? 'Connected to your SMS provider.' : 'No SMS provider connected: messages are logged under Messages and prints.'}</small></span>
+            {ch.sms ? <span className="badge badge-live">On</span> : <span className="badge">Logged only</span>}
+          </div>
+          <div className="channel">
+            <Printer />
+            <span className="grow"><strong>Visitor passes</strong><small>{ch.printer === 'off' ? 'Printed from the guard desk through the browser, on any printer installed on that computer.' : 'Sent to the label printer automatically when a visitor is approved.'}</small></span>
+            <span className="badge badge-live">On</span>
+          </div>
+        </div>
+      </section>
+
+      {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+      <div><button className="btn btn-primary" disabled={busy || !changed.length}>{busy ? <Spinner /> : <Save />}Save changes</button></div>
+    </form>
   );
 }

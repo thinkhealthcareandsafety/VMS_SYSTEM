@@ -203,6 +203,7 @@ button { font: inherit; color: inherit; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
 
 /* ---------- Dialog + drawer ---------- */
+dialog:focus { outline: none; }
 dialog { border: 0; padding: 0; background: transparent; color: inherit; max-width: none; max-height: none; }
 dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px); }
 .dialog { width: min(480px, calc(100vw - 32px)); background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-lg); animation: pop 220ms var(--ease) both; }
@@ -556,6 +557,22 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .notice-inline { display: flex; gap: 10px; align-items: center; }
 .attest-lite { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); font-size: 13.5px; }
 .attest-lite.on { border-color: #a9dcc9; background: var(--accent-soft); }
+.alert-strong { border: 1px solid #efb3ae; font-weight: 500; }
+.alert-strong svg { width: 22px; height: 22px; }
+.expected { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); color: #0b4f40; border: 1px solid #a9dcc9; animation: pop 240ms var(--ease) both; }
+.expected svg { width: 20px; height: 20px; flex: none; margin-top: 1px; color: var(--accent); }
+.expected .grow { flex: 1; font-size: 14px; }
+.expected-note { display: block; margin-top: 4px; font-size: 13px; color: var(--text-2); }
+.approve-brand { display: grid; justify-items: center; gap: 4px; }
+.approve-site { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.settings-grid { display: grid; gap: 20px; max-width: 760px; }
+.settings-grid .panel-body { display: grid; gap: 16px; }
+.channel { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.channel:first-child { border-top: 0; padding-top: 0; }
+.channel svg { width: 18px; height: 18px; color: var(--text-3); flex: none; }
+.channel .grow { flex: 1; min-width: 0; }
+.channel small { display: block; color: var(--text-3); font-size: 12.5px; }
+.day-today { font-weight: 600; }
 .export-opt:disabled { opacity: 0.55; cursor: not-allowed; }
 .notice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--info-soft); color: var(--info); font-size: 13.5px; }
 .notice svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
@@ -599,6 +616,8 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
   .me .grow, .me .avatar { display: none; }
   .page-head { position: static; padding: 14px 16px; }
   .page { padding: 16px; }
+  .table-scroll .table { min-width: 720px; }
+  .table-scroll { -webkit-overflow-scrolling: touch; }
   .toolbar { padding: 12px 14px; gap: 8px; }
   .toolbar .field, .toolbar .field.date { flex: 1 1 130px; }
   .toolbar .field.wide { flex: 1 1 100%; }

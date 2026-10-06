@@ -63,7 +63,7 @@ function records(docs) {
 // `files`: null for a sheet on its own; { aadhaar } when the sheet sits in the ZIP next to the folders.
 async function workbook(recs, { files = null, meta }) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = config.siteName;
+  wb.creator = meta.site || config.siteName;
   wb.created = new Date();
 
   const ws = wb.addWorksheet('Visits', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -118,7 +118,7 @@ async function workbook(recs, { files = null, meta }) {
   const about = wb.addWorksheet('About this download');
   about.columns = [{ width: 22 }, { width: 70 }];
   const lines = [
-    ['Site', config.siteName],
+    ['Site', meta.site || config.siteName],
     ['Downloaded', human(new Date())],
     ['Downloaded by', meta.by],
     ['Visits', recs.length],
@@ -200,7 +200,7 @@ function report(recs, { meta, aadhaar }) {
 <main>
   <header>
     <h1>Visitor records</h1>
-    <p>${esc(config.siteName)} · ${esc(meta.range)} · ${recs.length} ${recs.length === 1 ? 'visit' : 'visits'}${meta.filters ? ` · ${esc(meta.filters)}` : ''}</p>
+    <p>${esc(meta.site || config.siteName)} · ${esc(meta.range)} · ${recs.length} ${recs.length === 1 ? 'visit' : 'visits'}${meta.filters ? ` · ${esc(meta.filters)}` : ''}</p>
     <p>Downloaded ${esc(human(new Date()))} by ${esc(meta.by)}. Times are local to the site.</p>
   </header>
   ${days || '<p>No visits in this range.</p>'}

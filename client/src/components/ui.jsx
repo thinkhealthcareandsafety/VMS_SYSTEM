@@ -92,12 +92,17 @@ export function Modal({ open, onClose, children, className = 'dialog', label }) 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      // Native dialogs focus their first button; inputs that ask for focus keep it, buttons give it back to the dialog.
+      if (document.activeElement?.tagName === 'BUTTON' && !document.activeElement.hasAttribute('autofocus')) d.focus({ preventScroll: true });
+    }
     if (!open && d.open) d.close();
   }, [open]);
   return (
     <dialog
       ref={ref}
+      tabIndex={-1}
       aria-label={label}
       onCancel={(e) => { e.preventDefault(); onClose(); }}
       onClick={(e) => { if (e.target === ref.current) onClose(); }}

@@ -5,9 +5,10 @@ const path = require('node:path');
 const mongoose = require('mongoose');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
-const { Visit, Host, ApprovalToken, Outbox } = require('../models');
+const { Visit, Host, ApprovalToken, Outbox, Invite, Block } = require('../models');
+const { retireTelegram } = require('../services/notify');
 const telegram = require('../services/telegram');
-const { siteDay, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
+const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
@@ -65,11 +66,17 @@ const activeMessage = (v) => (v.status === 'approved'
   ? `${v.firstName} ${v.lastName} is already inside with pass ${v.dailyNumber} (meeting ${v.host?.fullName}). Check them out before registering a new visit.`
   : `${v.firstName} ${v.lastName} is already waiting for ${v.host?.fullName} to approve. Resend or cancel that request instead.`);
 
-// Latest SMS status per visit, in one query.
+// Someone the admin blocked. Checked on lookup (red warning) and again on check-in (refused).
+const blockFor = (mobile) => Block.findOne({ mobile, active: true }).lean();
+const blockMessage = (b) => `Do not admit${b.name ? ` ${b.name}` : ''}. This number is on the blocked list: ${b.reason}. Call your supervisor.`;
+// An expected visitor for today: let in without waiting for the host.
+const inviteFor = (mobile) => Invite.findOne({ mobile, day: siteDay(), status: 'expected' }).sort({ createdAt: -1 }).populate('host').lean();
+
+// Latest message status per visit (SMS or Telegram), in one query.
 async function smsStatusFor(visitIds) {
   if (!visitIds.length) return new Map();
   const rows = await Outbox.aggregate([
-    { $match: { kind: 'sms', visit: { $in: visitIds } } },
+    { $match: { kind: { $in: ['sms', 'telegram'] }, visit: { $in: visitIds } } },
     { $sort: { _id: -1 } },
     { $group: { _id: '$visit', status: { $first: '$status' } } },
   ]);
@@ -93,9 +100,24 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   const host = await Host.findOne({ _id: b.hostId, active: true }).lean();
   if (!host) return res.status(400).json({ error: 'Selected host is not active' });
 
+  const blocked = await blockFor(mobile);
+  if (blocked) {
+    audit(req.user, 'visit.blocked_attempt', { details: { mobile, name: `${firstName} ${lastName}`, reason: blocked.reason }, ip: req.ip });
+    return res.status(403).json({ code: 'blocked', error: blockMessage(blocked) });
+  }
+
   // One person cannot be inside, or waiting at the gate, twice.
   const active = await activeVisitFor(mobile);
   if (active) return res.status(409).json({ code: 'already_active', error: activeMessage(active), visit: activeSummary(active) });
+
+  // Expected visitor: only honoured for the same person, today, meeting the same host.
+  let invite = null;
+  if (b.inviteId) {
+    invite = isId(b.inviteId) ? await Invite.findOne({ _id: b.inviteId, status: 'expected' }).lean() : null;
+    if (!invite || invite.mobile !== mobile || invite.day !== siteDay() || String(invite.host) !== String(host._id)) {
+      return res.status(409).json({ error: 'That expected-visitor entry no longer matches. Send the request to the host instead.' });
+    }
+  }
 
   const photo = decodeJpeg(b.photo, MAX_PHOTO);
   if (!photo) return res.status(400).json({ error: 'A live photo is required' });
@@ -116,8 +138,21 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       photoPath, idImagePath: idPath,
       createdBy: req.user.id,
     });
-    await issueApprovalLink(visit, host, visitorName, company);
     audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });
+
+    if (invite) {
+      // Claim the invite first, so two guards cannot both use it.
+      const claimed = await Invite.findOneAndUpdate({ _id: invite._id, status: 'expected' }, { status: 'arrived', visit: visit._id }, { new: true });
+      if (claimed) {
+        const { day, number } = await nextDailyNumber();
+        Object.assign(visit, { status: 'approved', decidedAt: new Date(), checkedInAt: new Date(), dailyDay: day, dailyNumber: number });
+        await visit.save();
+        if (config.printer.mode !== 'off') await Outbox.create({ kind: 'print', visit: visit._id });
+        audit(req.user, 'visit.approved', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, dailyNumber: number, via: 'expected' }, ip: req.ip });
+        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number });
+      }
+    }
+    await issueApprovalLink(visit, host, visitorName, company);
     res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status });
   } catch (err) {
     await Promise.all([photoPath, idPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
@@ -141,13 +176,23 @@ router.get('/inside', requireRole('guard', 'admin'), async (req, res) => {
 router.get('/lookup', requireRole('guard', 'admin'), async (req, res) => {
   const mobile = normalizeMobile(req.query.mobile);
   if (!mobile) return res.json({ found: false });
-  const last = await Visit.findOne({ mobile }, 'firstName lastName company createdAt').sort({ createdAt: -1 }).lean();
+  const [last, blocked, invite] = await Promise.all([
+    Visit.findOne({ mobile }, 'firstName lastName company createdAt').sort({ createdAt: -1 }).lean(),
+    blockFor(mobile),
+    inviteFor(mobile),
+  ]);
   const visits = last ? await Visit.countDocuments({ mobile }) : 0;
   const active = last ? await activeVisitFor(mobile) : null;
-  res.json(last ? {
-    found: true, firstName: last.firstName, lastName: last.lastName, company: last.company, lastVisit: last.createdAt, visits,
+  res.json({
+    found: Boolean(last),
+    ...(last ? { firstName: last.firstName, lastName: last.lastName, company: last.company, lastVisit: last.createdAt, visits } : {}),
     active: active ? { ...activeSummary(active), message: activeMessage(active) } : null,
-  } : { found: false });
+    blocked: blocked ? { message: blockMessage(blocked) } : null,
+    invite: invite && invite.host?.active ? {
+      id: String(invite._id), firstName: invite.firstName, lastName: invite.lastName, company: invite.company, purpose: invite.purpose, note: invite.note,
+      host: { id: String(invite.host._id), name: invite.host.fullName, unit: invite.host.unit },
+    } : null,
+  });
 });
 
 // The guard's "waiting for host" tray: everything still undecided, no-replies from the last 30 minutes, and decisions from the last 20,
@@ -207,10 +252,11 @@ router.post('/:id/resend', requireRole('guard', 'admin'), async (req, res) => {
     const why = { approved: 'This visitor is already approved', rejected: 'The host declined this visit', cancelled: 'This visit was cancelled' }[v.status] || 'This visit is already closed';
     return res.status(409).json({ error: why });
   }
-  const last = await Outbox.findOne({ kind: 'sms', visit: v._id }).sort({ _id: -1 }).lean();
+  const last = await Outbox.findOne({ kind: { $in: ['sms', 'telegram'] }, visit: v._id }).sort({ _id: -1 }).lean();
   if (last && Date.now() - new Date(last.createdAt).getTime() < 30e3) {
-    return res.status(429).json({ error: 'An SMS was just sent. Give the host a few seconds before sending another.' });
+    return res.status(429).json({ error: 'A request was just sent. Give the host a few seconds before sending another.' });
   }
+  await retireTelegram(v._id, `↻ ${v.firstName} ${v.lastName}: a newer request was sent below.`);
   v.status = 'pending';
   v.decidedAt = undefined;
   await v.save();
@@ -239,6 +285,7 @@ router.post('/:id/cancel', requireRole('guard', 'admin'), async (req, res) => {
   if (!v) return res.status(409).json({ error: 'Only a visit still waiting for the host can be cancelled' });
   await ApprovalToken.updateMany({ visit: v._id, usedAt: { $exists: false } }, { usedAt: new Date() });
   audit(req.user, 'visit.cancelled', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
+  await retireTelegram(v._id, `🚫 ${v.firstName} ${v.lastName}: cancelled by the security desk.\nThe visitor left before you replied. Nothing more to do.`);
   res.json({ ok: true, status: v.status });
 });
 

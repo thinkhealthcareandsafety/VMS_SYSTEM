@@ -5,6 +5,8 @@ const { sendSms, buildStickerZpl, deliverZpl } = require('./messaging');
 const telegram = require('./telegram');
 const { audit } = require('./core');
 const { publish } = require('./events');
+const settings = require('./settings');
+const { retireTelegram } = require('./notify');
 
 const backoffMs = (attempts) => Math.min(60000, 2 ** attempts * 1000);
 
@@ -49,19 +51,23 @@ async function processOutbox() {
 
 // Pending approvals whose latest link has expired become "expired" (guard can resend).
 async function expireStaleApprovals() {
-  const pending = await Visit.find({ status: 'pending' }, '_id').lean();
+  const pending = await Visit.find({ status: 'pending' }, '_id ref firstName lastName').lean();
   for (const v of pending) {
     const latest = await ApprovalToken.findOne({ visit: v._id }).sort({ expiresAt: -1 }).lean();
     if (latest && latest.expiresAt < new Date()) {
       const r = await Visit.updateOne({ _id: v._id, status: 'pending' }, { status: 'expired', decidedAt: new Date() });
-      if (r.modifiedCount) publish('visit.expired', { visitId: String(v._id) });
+      if (r.modifiedCount) {
+        audit({ label: 'system' }, 'visit.expired', { entity: 'Visit', entityId: v._id, details: { ref: v.ref } }); // also tells open screens
+        await retireTelegram(v._id, `⌛ ${v.firstName} ${v.lastName}: no reply in time.\nThe security desk can send a new request.`);
+      }
     }
   }
 }
 
 // DPDP data minimisation: masked ID images are deleted after the retention window.
 async function purgeIdImages() {
-  const cutoff = new Date(Date.now() - config.idImageRetentionHours * 3600e3);
+  const { idRetentionDays } = await settings.get();
+  const cutoff = new Date(Date.now() - idRetentionDays * 86400e3);
   const due = await Visit.find({ idImagePath: { $exists: true }, idImagePurgedAt: { $exists: false }, createdAt: { $lt: cutoff } }, '_id idImagePath').limit(100);
   for (const v of due) {
     await fs.rm(v.idImagePath, { force: true });

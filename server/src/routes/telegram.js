@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const express = require('express');
-const { Host } = require('../models');
+const { Host, Outbox } = require('../models');
 const telegram = require('../services/telegram');
 const { decide, findByToken } = require('../services/decision');
 const { audit, sha256 } = require('../services/core');
@@ -49,6 +49,7 @@ async function onButton(cb) {
   if (status === 200) {
     const line = decision === 'approve' ? `✅ You let ${name} in.` : `❌ You declined ${name}.`;
     await telegram.answer(cb.id, decision === 'approve' ? 'Let in' : 'Declined');
+    await Outbox.updateMany({ kind: 'telegram', to: chatId, providerRef: String(cb.message.message_id) }, { retiredAt: new Date() });
     return telegram.finish(chatId, cb.message.message_id, `${line}\nSecurity has been told.`);
   }
   // Already decided, cancelled, expired, or replaced by a newer request: say so and retire the buttons.

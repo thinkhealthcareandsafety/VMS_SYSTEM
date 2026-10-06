@@ -79,6 +79,40 @@ const outboxSchema = new Schema({
   nextAttemptAt: { type: Date, default: () => new Date() },
   providerRef: { type: String },
   sentAt: { type: Date },
+  retiredAt: { type: Date },          // telegram: buttons replaced with the outcome
+}, opts);
+
+// Site settings an admin can change without a developer (one document, _id "site").
+const settingSchema = new Schema({
+  _id: { type: String },
+  siteName: { type: String, trim: true },     // printed on passes, the approval page and downloads
+  gateName: { type: String, trim: true },     // shown on the guard desk
+  idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
+}, { versionKey: false, timestamps: true });
+
+// A visitor the admin expects: at the gate they are let in without waiting for the host.
+const inviteSchema = new Schema({
+  firstName: { type: String, required: true, trim: true },
+  lastName: { type: String, required: true, trim: true },
+  mobile: { type: String, required: true, index: true },
+  company: { type: String, trim: true, default: '' },
+  purpose: { type: String, trim: true, default: '' },
+  note: { type: String, trim: true, default: '' },
+  host: { type: Schema.Types.ObjectId, ref: 'Host', required: true },
+  day: { type: String, required: true, index: true },        // YYYY-MM-DD, site time
+  status: { type: String, enum: ['expected', 'arrived', 'cancelled'], default: 'expected', index: true },
+  visit: { type: Schema.Types.ObjectId, ref: 'Visit' },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+}, opts);
+
+// People who must not be let in. Checked on every lookup and every check-in.
+const blockSchema = new Schema({
+  mobile: { type: String, required: true, index: true },
+  name: { type: String, trim: true, default: '' },
+  reason: { type: String, required: true, trim: true },
+  active: { type: Boolean, default: true, index: true },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  removedAt: { type: Date },
 }, opts);
 
 // Append-only audit trail. The API never updates or deletes these documents.
@@ -101,4 +135,7 @@ module.exports = {
   Counter: mongoose.model('Counter', counterSchema),
   Outbox: mongoose.model('Outbox', outboxSchema),
   Audit: mongoose.model('Audit', auditSchema),
+  Setting: mongoose.model('Setting', settingSchema),
+  Invite: mongoose.model('Invite', inviteSchema),
+  Block: mongoose.model('Block', blockSchema),
 };
