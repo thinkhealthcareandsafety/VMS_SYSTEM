@@ -3,11 +3,12 @@ import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
-  RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle,
+  RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info,
 } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, minutesSince } from '../api.js';
+import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, minutesSince, passLabel } from '../api.js';
+import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
-import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast } from '../components/ui.jsx';
+import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
 const NAV = [
@@ -22,6 +23,7 @@ const NAV = [
   ] },
   { group: 'Setup', items: [
     { id: 'hosts', label: 'Hosts', icon: Building2 },
+    { id: 'staff', label: 'Staff accounts', icon: UserCog },
   ] },
 ];
 const TITLES = {
@@ -31,6 +33,7 @@ const TITLES = {
   messages: ['SMS and prints', 'Approval messages and sticker jobs'],
   audit: ['Audit log', 'Who did what, and when'],
   hosts: ['Hosts', 'Residents and staff who can approve visitors'],
+  staff: ['Staff accounts', 'Who can sign in to the guard desk and this console'],
 };
 
 // ---------- date helpers (site timezone) ----------
@@ -51,6 +54,7 @@ export default function Admin({ user, onLogout }) {
   const [tick, setTick] = useState(0); // bumps on every live event; pages reload on change
   const [visitId, setVisitId] = useState(null);
   const [exportOpts, setExportOpts] = useState(null);
+  const [pwOpen, setPwOpen] = useState(false);
 
   const loadStats = useCallback(() => api('/api/admin/stats').then(setStats).catch(() => {}), []);
   const timer = useRef(null);
@@ -67,6 +71,7 @@ export default function Admin({ user, onLogout }) {
 
   const failures = stats ? stats.printFailed + stats.smsFailed : 0;
   const [title, sub] = TITLES[section];
+  useTitle(title);
   const page = { tick, refresh, go, openVisit: setVisitId, toast, stats, openExport: setExportOpts };
 
   return (
@@ -91,6 +96,7 @@ export default function Admin({ user, onLogout }) {
         <div className="me">
           <Avatar name={user.fullName} size={32} />
           <span className="grow"><strong>{user.fullName}</strong><small>Administrator</small></span>
+          <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setPwOpen(true)} aria-label="Change password" title="Change password"><KeyRound /></button>
           <button className="btn btn-ghost btn-sm btn-icon" onClick={onLogout} aria-label="Sign out" title="Sign out"><LogOut /></button>
         </div>
       </aside>
@@ -110,11 +116,13 @@ export default function Admin({ user, onLogout }) {
           {section === 'messages' && <MessagesPage {...page} />}
           {section === 'audit' && <AuditPage {...page} />}
           {section === 'hosts' && <HostsPage {...page} />}
+          {section === 'staff' && <StaffPage {...page} user={user} />}
         </div>
       </main>
 
       <VisitDrawer id={visitId} tick={tick} onClose={() => setVisitId(null)} onChanged={refresh} />
       <ExportDialog opts={exportOpts} onClose={() => setExportOpts(null)} />
+      <PasswordDialog open={pwOpen} onClose={() => setPwOpen(false)} />
     </div>
   );
 }
@@ -131,6 +139,9 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
 
   const resend = async (v) => {
     try { await api(`/api/visits/${v.id}/resend`, { method: 'POST' }); toast(`New approval SMS sent to ${v.host}.`); refresh(); } catch (e) { toast(e.message, 'bad'); }
+  };
+  const cancel = async (v) => {
+    try { await api(`/api/visits/${v.id}/cancel`, { method: 'POST' }); toast(`${v.name}’s visit was cancelled.`); refresh(); } catch (e) { toast(e.message, 'bad'); }
   };
 
   if (!stats) return <div className="skeleton" style={{ height: 120, borderRadius: 14 }} />;
@@ -189,6 +200,7 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
                     <span className="meta">to {v.host}, {v.unit} · waiting {fmtDuration(minutesSince(v.createdAt))}</span>
                   </button>
                   <button className="btn btn-sm" onClick={() => resend(v)} title="Send the host a fresh approval link"><RotateCcw />Resend</button>
+                  <button className="btn btn-sm btn-ghost btn-icon" onClick={() => cancel(v)} aria-label={`Cancel ${v.name}’s visit`} title="Visitor left: cancel"><X /></button>
                 </div>
               ))}
             </div>
@@ -362,7 +374,7 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
             const isLong = mins >= staleAfter * 60;
             return (
               <tr key={v.id} className="clickable" onClick={() => openVisit(v.id)}>
-                <td><span className="pass-chip">{v.dailyNumber}</span></td>
+                <td><span className="pass-chip">{passLabel(v)}</span></td>
                 <td>
                   <div className="person">
                     <Avatar src={photoUrl(v.id)} name={`${v.firstName} ${v.lastName}`} size={36} square />
@@ -535,6 +547,8 @@ function HistoryPage({ tick, openVisit, openExport }) {
 // ================================================================= Visit detail drawer
 const ACTIONS = {
   'visit.created': ['Registered at the gate', ''],
+  'visit.cancelled': ['Cancelled: visitor left before a reply', 'warn'],
+  'visit.expired': ['Approval link expired', 'warn'],
   'visit.approved': ['Host let them in', 'ok'],
   'visit.rejected': ['Host declined', 'bad'],
   'visit.resent': ['Approval SMS sent again', ''],
@@ -550,6 +564,10 @@ const ACTIONS = {
   'host.updated': ['Host updated', ''],
   'host.imported': ['Hosts imported', ''],
   'auth.login': ['Signed in', ''],
+  'auth.password_changed': ['Changed their password', ''],
+  'user.created': ['Staff account added', ''],
+  'user.updated': ['Staff account changed', ''],
+  'user.password_reset': ['Staff password reset', 'warn'],
   'auth.login_failed': ['Failed sign-in attempt', 'bad'],
 };
 const actionLabel = (a) => ACTIONS[a]?.[0] || a;
@@ -645,6 +663,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
       </div>
       {v && (
         <div className="drawer-foot">
+          {['pending', 'expired'].includes(v.status) && <button className="btn btn-ghost" onClick={() => act('cancel', 'Visit cancelled. The host’s link no longer works.')}><X />Cancel visit</button>}
           {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New approval SMS sent.')}><RotateCcw />Resend SMS</button>}
           {admitted && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
           {v.status === 'approved' && <button className="btn btn-danger-outline" onClick={() => setForce(v)}><LogOut />Check out</button>}
@@ -657,6 +676,12 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
 
 // ================================================================= SMS and prints
 const LINK_RE = /https?:\/\/\S+/;
+function OutboxBadge({ status, logged }) {
+  if (status === 'sent') return logged ? <span className="badge">Logged</span> : <span className="badge badge-ok">Sent</span>;
+  if (status === 'failed') return <span className="badge badge-bad">Failed</span>;
+  return <span className="badge badge-warn">{logged ? 'Queued' : 'Retrying'}</span>;
+}
+
 function MessagesPage({ tick, stats }) {
   const [kind, setKind] = useState('sms');
   const [rows, setRows] = useState(null);
@@ -673,6 +698,18 @@ function MessagesPage({ tick, stats }) {
         </div>
         <span className="muted" style={{ alignSelf: 'center', fontSize: 13 }}>Failed items retry automatically, up to five times.</span>
       </div>
+      {kind === 'sms' && stats && !stats.smsLive && (
+        <div className="notice">
+          <Info />
+          <span className="grow"><strong>SMS are logged here, not delivered yet.</strong> No SMS provider is connected. To approve a visitor, open the approval link below, or share it with the host.</span>
+        </div>
+      )}
+      {kind === 'print' && stats && !stats.printerOn && (
+        <div className="notice">
+          <Info />
+          <span className="grow"><strong>No sticker printer is connected.</strong> Guards see the pass number on screen and write it on the visitor slip.</span>
+        </div>
+      )}
       {!rows ? <ListSkeleton /> : rows.length === 0 ? (
         <Empty icon={kind === 'sms' ? MessageSquare : Printer} title="Nothing yet">{kind === 'sms' ? 'Approval messages to hosts appear here.' : 'Sticker print jobs appear here.'}</Empty>
       ) : (
@@ -691,7 +728,7 @@ function MessagesPage({ tick, stats }) {
                 return (
                   <tr key={o.id}>
                     <td>
-                      <span className={`badge ${o.status === 'sent' ? 'badge-ok' : o.status === 'failed' ? 'badge-bad' : 'badge-warn'}`}>{o.status === 'sent' ? 'Sent' : o.status === 'failed' ? 'Failed' : 'Retrying'}</span>
+                      <OutboxBadge status={o.status} logged={kind === 'sms' && stats && !stats.smsLive} />
                       {o.lastError && o.status !== 'sent' && <div className="meta-line err">{o.lastError}</div>}
                     </td>
                     <td className="mono">{o.ref || '—'}</td>
@@ -720,7 +757,7 @@ function MessagesPage({ tick, stats }) {
 // ================================================================= Audit log
 const AUDIT_FILTERS = [
   { id: '', label: 'All' }, { id: 'visit.', label: 'Visits' }, { id: 'force', label: 'Force checkouts' },
-  { id: 'id_image', label: 'Aadhaar views' }, { id: 'export', label: 'Downloads' }, { id: 'auth', label: 'Sign-ins' }, { id: 'host.', label: 'Hosts' },
+  { id: 'id_image', label: 'Aadhaar views' }, { id: 'export', label: 'Downloads' }, { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' },
 ];
 const ROLE_LABEL = { admin: 'Administrator', guard: 'Guard' };
 const DETAIL_KEYS = { dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', errors: 'errors', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors' };
@@ -772,6 +809,7 @@ function AuditPage({ tick, openVisit }) {
 // ================================================================= Hosts
 function HostsPage({ toast }) {
   const [rows, setRows] = useState(null);
+  const [editingHost, setEditingHost] = useState(null);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -803,7 +841,7 @@ function HostsPage({ toast }) {
       ) : (
         <div className="table-scroll">
           <table className="table">
-            <thead><tr><th>Host</th><th>Flat / dept</th><th>Mobile</th><th className="r">Receives visitors</th></tr></thead>
+            <thead><tr><th>Host</th><th>Flat / dept</th><th>Mobile</th><th className="r">Receives visitors</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {shown.map((h) => (
                 <tr key={h.id} className={h.active ? '' : 'row-off'}>
@@ -811,6 +849,7 @@ function HostsPage({ toast }) {
                   <td>{h.unit}</td>
                   <td className="num">{fmtMobile(h.mobile)}</td>
                   <td className="r"><button className="switch" role="switch" aria-checked={h.active} aria-label={`${h.fullName} receives visitors`} onClick={() => toggle(h)} /></td>
+                  <td className="r"><button className="btn btn-sm" onClick={() => setEditingHost(h)}>Edit</button></td>
                 </tr>
               ))}
             </tbody>
@@ -818,30 +857,42 @@ function HostsPage({ toast }) {
         </div>
       )}
       <AddHostDialog open={adding} onClose={() => setAdding(false)} onDone={load} />
+      <AddHostDialog open={Boolean(editingHost)} host={editingHost} onClose={() => setEditingHost(null)} onDone={load} />
       <ImportDialog open={importing} onClose={() => setImporting(false)} onDone={load} />
     </section>
   );
 }
 
-function AddHostDialog({ open, onClose, onDone }) {
+function AddHostDialog({ open, host, onClose, onDone }) {
   const toast = useToast();
   const blank = { fullName: '', unit: '', mobile: '', email: '' };
   const [f, setF] = useState(blank);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { if (open) { setF(blank); setErr(''); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const editing = Boolean(host);
+  useEffect(() => {
+    if (!open) return;
+    setErr('');
+    setF(host ? { fullName: host.fullName, unit: host.unit, mobile: host.mobile.replace(/^\+91/, ''), email: host.email || '' } : blank);
+  }, [open, host?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true); setErr('');
-    try { await api('/api/admin/hosts', { method: 'POST', body: f }); toast(`${f.fullName} added.`); onDone(); onClose(); } catch (x) { setErr(x.message); } finally { setBusy(false); }
+    try {
+      if (editing) await api(`/api/admin/hosts/${host.id}`, { method: 'PATCH', body: f });
+      else await api('/api/admin/hosts', { method: 'POST', body: f });
+      toast(editing ? `${f.fullName} updated.` : `${f.fullName} added.`);
+      onDone();
+      onClose();
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
 
   return (
-    <Modal open={open} onClose={onClose} label="Add host">
+    <Modal open={open} onClose={onClose} label={editing ? 'Edit host' : 'Add host'}>
       <form onSubmit={submit}>
-        <div className="dialog-head"><h2>Add host</h2><p>They will get an SMS each time a visitor asks for them.</p></div>
+        <div className="dialog-head"><h2>{editing ? 'Edit host' : 'Add host'}</h2><p>{editing ? 'Changes apply to the next approval SMS.' : 'They will get an SMS each time a visitor asks for them.'}</p></div>
         <div className="dialog-body">
           <label className="field"><span>Full name</span><input className="input" required minLength={2} value={f.fullName} onChange={set('fullName')} autoFocus /></label>
           <div className="grid-2">
@@ -853,7 +904,7 @@ function AddHostDialog({ open, onClose, onDone }) {
         </div>
         <div className="dialog-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : <UserPlus />}Add host</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : editing ? <CheckCircle2 /> : <UserPlus />}{editing ? 'Save changes' : 'Add host'}</button>
         </div>
       </form>
     </Modal>
@@ -982,6 +1033,251 @@ function ExportDialog({ opts, onClose }) {
           ? <button className="btn btn-primary" disabled><Download />Download</button>
           : <a className="btn btn-primary" href={href} download onClick={() => setTimeout(onClose, 300)}><Download />Download</a>}
       </div>
+    </Modal>
+  );
+}
+
+// ================================================================= Staff accounts
+const ROLE_INFO = {
+  guard: ['Guard', 'Checks visitors in and out at the gate'],
+  admin: ['Admin', 'Everything a guard can do, plus this console'],
+};
+const ago = (iso) => {
+  if (!iso) return 'Never';
+  const m = minutesSince(iso);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m} min ago`;
+  if (m < 24 * 60) return `${Math.floor(m / 60)} h ago`;
+  return fmtDate(iso);
+};
+const suggestUsername = (name) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s]/g, '').trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.').slice(0, 30);
+
+function StaffPage({ toast, user }) {
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const load = useCallback(() => api('/api/admin/users').then((d) => setRows(d.rows)).catch(() => setRows([])), []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async (u) => {
+    setRows((rs) => rs.map((r) => (r.id === u.id ? { ...r, active: !u.active } : r)));
+    try {
+      await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: { active: !u.active } });
+      toast(u.active ? `${u.fullName} can no longer sign in, and was signed out everywhere.` : `${u.fullName} can sign in again.`);
+    } catch (e) { toast(e.message, 'bad'); load(); }
+  };
+
+  const term = q.trim().toLowerCase();
+  const shown = (rows || []).filter((u) => !term || `${u.fullName} ${u.username} ${u.role}`.toLowerCase().includes(term));
+  const counts = (rows || []).reduce((c, u) => (u.active ? { ...c, [u.role]: (c[u.role] || 0) + 1 } : c), {});
+
+  return (
+    <section className="panel">
+      <div className="toolbar">
+        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or username" aria-label="Search staff" /></div>
+        <span className="muted num" style={{ alignSelf: 'center' }}>{rows ? `${counts.guard || 0} ${counts.guard === 1 ? 'guard' : 'guards'} · ${counts.admin || 0} ${counts.admin === 1 ? 'admin' : 'admins'}` : ''}</span>
+        <span className="spacer-x" />
+        <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><UserPlus />Add staff</button>
+      </div>
+      {!rows ? <ListSkeleton /> : shown.length === 0 ? (
+        <Empty icon={UserCog} title="No match">Try a different name.</Empty>
+      ) : (
+        <div className="table-scroll">
+          <table className="table">
+            <thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th className="r">Can sign in</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              {shown.map((u) => {
+                const self = u.id === user.id;
+                return (
+                  <tr key={u.id} className={u.active ? '' : 'row-off'}>
+                    <td>
+                      <div className="person">
+                        <Avatar name={u.fullName} size={34} />
+                        <div>
+                          <div className="name">{u.fullName}{self && <span className="badge plain you">You</span>}</div>
+                          <div className="meta mono">{u.username}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span className={`badge plain ${u.role === 'admin' ? 'role-admin' : ''}`}>{ROLE_INFO[u.role][0]}</span></td>
+                    <td className="num">{ago(u.lastLoginAt)}</td>
+                    <td className="r">
+                      <button className="switch" role="switch" aria-checked={u.active} disabled={self}
+                        aria-label={`${u.fullName} can sign in`} title={self ? 'You cannot switch off your own account' : undefined} onClick={() => toggle(u)} />
+                    </td>
+                    <td className="r"><button className="btn btn-sm" onClick={() => setEditing(u)}>Manage</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <AddStaffDialog open={adding} onClose={() => setAdding(false)} onDone={load} />
+      <EditStaffDialog member={editing} self={editing?.id === user.id} onClose={() => setEditing(null)} onDone={load} />
+    </section>
+  );
+}
+
+function RolePicker({ value, onChange, disabled }) {
+  return (
+    <div className="export-opts" role="radiogroup" aria-label="Role">
+      {Object.entries(ROLE_INFO).map(([id, [label, desc]]) => (
+        <button type="button" key={id} role="radio" aria-checked={value === id} className="export-opt" disabled={disabled} onClick={() => onChange(id)}>
+          {id === 'admin' ? <ShieldCheck /> : <Users />}<span><strong>{label}</strong><small>{desc}</small></span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AddStaffDialog({ open, onClose, onDone }) {
+  const blank = { fullName: '', username: '', role: 'guard', password: '' };
+  const [f, setF] = useState(blank);
+  const [ownPassword, setOwnPassword] = useState(false);
+  const [userEdited, setUserEdited] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [created, setCreated] = useState(null);
+  useEffect(() => { if (open) { setF(blank); setOwnPassword(false); setUserEdited(false); setErr(''); setCreated(null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setName = (fullName) => setF((x) => ({ ...x, fullName, username: userEdited ? x.username : suggestUsername(fullName) }));
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr('');
+    try {
+      const res = await api('/api/admin/users', { method: 'POST', body: { fullName: f.fullName, username: f.username, role: f.role, ...(ownPassword ? { password: f.password } : {}) } });
+      onDone();
+      setCreated({ ...res, password: res.password || null });
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+
+  if (created) {
+    return (
+      <Modal open={open} onClose={onClose} label="Staff account ready">
+        <div className="dialog-head">
+          <h2>{created.fullName} can sign in</h2>
+          <p>{created.password ? 'Give them these details in person. The password is shown only once.' : 'They can sign in with the password you set.'}</p>
+        </div>
+        <div className="dialog-body">
+          <SecretBox label="Username" value={created.username} />
+          {created.password && <SecretBox label="Password" value={created.password} />}
+          <p className="faint" style={{ fontSize: 13 }}>They can change it any time from their account menu.</p>
+        </div>
+        <div className="dialog-foot"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} label="Add staff">
+      <form onSubmit={submit}>
+        <div className="dialog-head"><h2>Add a staff account</h2><p>For a guard at the gate, or another admin.</p></div>
+        <div className="dialog-body">
+          <label className="field"><span>Full name</span><input className="input" required minLength={2} value={f.fullName} onChange={(e) => setName(e.target.value)} autoFocus /></label>
+          <label className="field"><span>Username</span>
+            <input className="input mono" required value={f.username} onChange={(e) => { setUserEdited(true); setF({ ...f, username: e.target.value.toLowerCase().replace(/\s/g, '') }); }} autoCapitalize="none" spellCheck="false" />
+            <span className="hint">What they type to sign in. Lowercase letters, numbers, dot or dash.</span>
+          </label>
+          <div className="field"><span>Role</span><RolePicker value={f.role} onChange={(role) => setF({ ...f, role })} /></div>
+          <label className="checkbox" style={{ fontSize: 13.5 }}>
+            <input type="checkbox" checked={ownPassword} onChange={(e) => setOwnPassword(e.target.checked)} />
+            <span>I will set the password myself <span className="faint">(otherwise a strong one is made for you)</span></span>
+          </label>
+          {ownPassword && (
+            <label className="field"><span>Password</span>
+              <input className="input" type="text" minLength={10} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" />
+              <span className="hint">At least 10 characters.</span>
+            </label>
+          )}
+          {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+        </div>
+        <div className="dialog-foot">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy || f.fullName.trim().length < 2 || f.username.length < 3 || (ownPassword && f.password.length < 10)}>{busy ? <Spinner /> : <UserPlus />}Add account</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditStaffDialog({ member, self, onClose, onDone }) {
+  const toast = useToast();
+  const [f, setF] = useState({ fullName: '', role: 'guard' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [newPassword, setNewPassword] = useState(null);
+  useEffect(() => {
+    if (member) { setF({ fullName: member.fullName, role: member.role }); setErr(''); setConfirmReset(false); setNewPassword(null); }
+  }, [member?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const changed = member && (f.fullName.trim() !== member.fullName || f.role !== member.role);
+  const save = async (e) => {
+    e.preventDefault();
+    if (!changed) return onClose();
+    setBusy(true); setErr('');
+    try {
+      await api(`/api/admin/users/${member.id}`, { method: 'PATCH', body: { fullName: f.fullName, role: f.role } });
+      toast(`${f.fullName} updated.`);
+      onDone();
+      onClose();
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+  const reset = async () => {
+    setBusy(true); setErr('');
+    try {
+      const res = await api(`/api/admin/users/${member.id}`, { method: 'PATCH', body: { resetPassword: true } });
+      setNewPassword(res.password);
+      setConfirmReset(false);
+      onDone();
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+  const first = member?.fullName.split(' ')[0];
+
+  return (
+    <Modal open={Boolean(member)} onClose={onClose} label="Manage staff account">
+      {member && (
+        <form onSubmit={save}>
+          <div className="dialog-head">
+            <h2>{member.fullName}</h2>
+            <p><span className="mono">{member.username}</span> · last signed in {ago(member.lastLoginAt).toLowerCase()}</p>
+          </div>
+          <div className="dialog-body">
+            <label className="field"><span>Full name</span><input className="input" value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} /></label>
+            <div className="field">
+              <span>Role {self && <span className="faint">· you cannot change your own role</span>}</span>
+              <RolePicker value={f.role} onChange={(role) => setF({ ...f, role })} disabled={self} />
+            </div>
+            <div className="field">
+              <span>Password</span>
+              {newPassword ? (
+                <>
+                  <SecretBox label="New password" value={newPassword} />
+                  <span className="hint">Give this to {first} in person. It is shown only once, and they have been signed out everywhere.</span>
+                </>
+              ) : confirmReset ? (
+                <div className="alert alert-warn">
+                  <AlertTriangle />
+                  <span className="grow">This makes a new password and signs {first} out on every device.</span>
+                  <button type="button" className="btn btn-sm" onClick={() => setConfirmReset(false)}>Keep</button>
+                  <button type="button" className="btn btn-sm btn-danger" onClick={reset} disabled={busy}>Reset</button>
+                </div>
+              ) : self ? (
+                <span className="hint">To change your own password, use the key button next to your name in the sidebar.</span>
+              ) : (
+                <div><button type="button" className="btn btn-sm" onClick={() => setConfirmReset(true)}><KeyRound />Reset password</button></div>
+              )}
+            </div>
+            {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+          </div>
+          <div className="dialog-foot">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Close</button>
+            <button className="btn btn-primary" disabled={busy || !changed || f.fullName.trim().length < 2}>{busy && <Spinner />}Save changes</button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }

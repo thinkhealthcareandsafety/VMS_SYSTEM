@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Building2, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
-import { Logo, Spinner } from '../components/ui.jsx';
+import { Logo, Spinner, useTitle } from '../components/ui.jsx';
 import { useTick } from '../lib/live.js';
 
 // Public page from the SMS link. The single-use token is the only credential.
@@ -11,6 +11,7 @@ const CLOSED = {
   rejected: { icon: XCircle, tone: 'bad', title: 'Visit declined', text: 'Security has been told not to let them in.' },
   expired: { icon: Clock, tone: 'warn', title: 'This request expired', text: 'Ask the security desk to send a new link.' },
   superseded: { icon: LinkIcon, tone: 'warn', title: 'A newer link was sent', text: 'Open the latest SMS from the security desk.' },
+  cancelled: { icon: X, tone: 'warn', title: 'Request cancelled', text: 'The visitor left before you replied. Nothing more to do.' },
   checked_out: { icon: CheckCircle2, tone: 'ok', title: 'This visit is over', text: 'The visitor has already left.' },
   force_checked_out: { icon: CheckCircle2, tone: 'ok', title: 'This visit is over', text: 'The visitor has already left.' },
 };
@@ -22,6 +23,8 @@ export default function Approve() {
   const [busy, setBusy] = useState('');
   const [result, setResult] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [photoOk, setPhotoOk] = useState(true);
+  useTitle('Visitor at the gate');
   useTick(1000);
 
   useEffect(() => {
@@ -35,7 +38,9 @@ export default function Approve() {
       const res = await api(`/api/approvals/${token}/decision`, { method: 'POST', body: { decision } });
       setResult(res.status);
     } catch (err) {
-      setActionError(err.message);
+      // Closed in the meantime (cancelled, expired, newer link): show that state instead of an error.
+      if (err.data?.state && CLOSED[err.data.state]) setResult(err.data.state);
+      else setActionError(err.message);
     } finally {
       setBusy('');
     }
@@ -66,7 +71,9 @@ export default function Approve() {
     <div className="approve-wrap">
       <Logo />
       <article className="approve-card">
-        <img className="photo" src={info.photoUrl} alt={`Photo of ${name} taken at the gate`} />
+        {photoOk && !['cancelled', 'expired', 'superseded'].includes(state) && (
+          <img className="photo" src={info.photoUrl} alt={`Photo of ${name} taken at the gate`} onError={() => setPhotoOk(false)} />
+        )}
         <div className="body">
           <div>
             <p className="muted" style={{ marginBottom: 4 }}>Hi {info.hostName.split(' ')[0]}, someone is at the gate for you</p>
@@ -101,7 +108,7 @@ export default function Approve() {
           )}
         </div>
       </article>
-      <p className="approve-foot">Didn’t expect anyone? Decline, and security will not let them in. Your decision is recorded.</p>
+      {!closed && <p className="approve-foot">Didn’t expect anyone? Decline, and security will not let them in. Your decision is recorded.</p>}
     </div>
   );
 }

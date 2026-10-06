@@ -36,14 +36,21 @@ function audit(actor, action, { entity, entityId, details, ip } = {}) {
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-// Mobile normaliser: accepts 10-digit Indian numbers or +country numbers.
+// Mobile normaliser: accepts 10-digit local numbers or +country numbers.
+// Indian mobiles always start with 6-9; anything else is a typo or a landline that cannot get SMS.
 function normalizeMobile(raw) {
   let n = String(raw || '').replace(/[\s\-()]/g, '');
+  if (/^0\d{10}$/.test(n)) n = n.slice(1); // trunk prefix: 09876543210
   if (/^\d{10}$/.test(n)) n = config.defaultCountryCode + n;
-  return /^\+\d{8,15}$/.test(n) ? n : null;
+  if (!/^\+\d{8,15}$/.test(n)) return null;
+  if (n.startsWith('+91') && !/^\+91[6-9]\d{9}$/.test(n)) return null;
+  return n;
 }
 
 const cleanText = (v, max) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
+
+// "ravi kumar" -> "Ravi Kumar". Only touches all-lowercase input, so "McDonald" or "de Souza" typed carefully stay as typed.
+const tidyName = (s) => (s && s === s.toLowerCase() ? s.replace(/(^|[\s'-])(\p{L})/gu, (m, sep, ch) => sep + ch.toUpperCase()) : s);
 
 // Only JPEG data URLs are accepted; checks the JPEG magic bytes.
 function decodeJpeg(dataUrl, maxBytes) {
@@ -55,4 +62,12 @@ function decodeJpeg(dataUrl, maxBytes) {
   return buf;
 }
 
-module.exports = { siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, decodeJpeg };
+// One password rule for sign-up, reset and change. Long beats clever; no composition rules.
+function passwordProblem(pw) {
+  if (typeof pw !== 'string' || pw.length < 10) return 'Use at least 10 characters';
+  if (pw.length > 200) return 'Use at most 200 characters';
+  if (/^(.)\1+$/.test(pw) || /^(0123456789|1234567890|password\d*|qwertyuiop)$/i.test(pw)) return 'That password is too easy to guess';
+  return null;
+}
+
+module.exports = { siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { Eye, EyeOff, ShieldCheck, Lock, Radio, AlertCircle } from 'lucide-react';
+import { Navigate, useLocation } from 'react-router-dom';
+import { Eye, EyeOff, ShieldCheck, Lock, Radio, AlertCircle, Info } from 'lucide-react';
 import { api } from '../api.js';
-import { Logo, Spinner } from '../components/ui.jsx';
+import { Logo, Spinner, useTitle } from '../components/ui.jsx';
 
 // Concentric arches: the gate, drawn once for the brand panel.
 function GateArt() {
@@ -28,6 +28,8 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
+  const expired = useLocation().state?.expired;
+  useTitle('Sign in');
 
   if (done) return <Navigate to={done.role === 'admin' ? '/admin' : '/guard'} replace />;
 
@@ -70,6 +72,7 @@ export default function Login({ onLogin }) {
             <p className="lead">Use the account your site admin gave you.</p>
           </div>
           {error && <div className="alert alert-bad" role="alert"><AlertCircle /><span>{error}</span></div>}
+          {!error && expired && <div className="alert" role="status"><Info /><span>You were signed out because your session ended. Sign in again to carry on; anything you had typed is still there.</span></div>}
           <label className="field">
             <span>Username</span>
             <input className="input" autoComplete="username" autoCapitalize="none" spellCheck="false" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />

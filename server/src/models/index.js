@@ -9,6 +9,8 @@ const userSchema = new Schema({
   passwordHash: { type: String, required: true, select: false },
   role: { type: String, enum: ['guard', 'admin'], required: true },
   active: { type: Boolean, default: true },
+  sessionVersion: { type: Number, default: 0 },   // bumped on password change: signs out every other device
+  lastLoginAt: { type: Date },
 }, opts);
 
 const hostSchema = new Schema({
@@ -30,7 +32,7 @@ const visitSchema = new Schema({
   host: { type: Schema.Types.ObjectId, ref: 'Host', required: true },
   status: {
     type: String, required: true, index: true,
-    enum: ['pending', 'approved', 'rejected', 'expired', 'checked_out', 'force_checked_out'],
+    enum: ['pending', 'approved', 'rejected', 'expired', 'cancelled', 'checked_out', 'force_checked_out'],
   },
   visitDay: { type: String, required: true, index: true },  // YYYY-MM-DD, site timezone
   dailyDay: { type: String },                                // day the pass number belongs to
@@ -48,6 +50,7 @@ const visitSchema = new Schema({
 // one pass number per day
 visitSchema.index({ dailyDay: 1, dailyNumber: 1 }, { unique: true, partialFilterExpression: { dailyNumber: { $exists: true } } });
 visitSchema.index({ status: 1, checkedOutAt: 1 });
+visitSchema.index({ mobile: 1, status: 1 }); // duplicate check-in guard
 
 const approvalTokenSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true, index: true },

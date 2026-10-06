@@ -1,60 +1,149 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Building2, Check, ChevronDown, Clock, CreditCard, History, LogOut, Printer,
-  RotateCcw, Search, Send, ShieldCheck, UserPlus, UserRound, Users, XCircle, AlertTriangle, CheckCircle2,
+  AlertTriangle, Bell, Building2, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
+  Printer, RotateCcw, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
-import { api, fmtDate, fmtTime, fmtDuration, minutesSince } from '../api.js';
+import { api, clock, fmtDate, fmtTime, fmtDuration, minutesSince, passLabel, secondsSince } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
-import { Avatar, Empty, Logo, Spinner, useToast, initials } from '../components/ui.jsx';
+import { cue } from '../lib/notify.js';
+import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials } from '../components/ui.jsx';
+import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
 
 const DRAFT_KEY = 'vms-guard-draft';
+const DISMISS_KEY = 'vms-guard-dismissed';
 const EMPTY = { mobile: '', firstName: '', lastName: '', company: '', purpose: '' };
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
+const MOBILE_RE = /^[6-9]\d{9}$/;
 const PURPOSES = ['Delivery', 'Meeting', 'Interview', 'Service / repair', 'Guest'];
+const RESEND_AFTER = 30; // seconds; the server enforces the same gap
 
 const store = {
   load() { try { return { ...EMPTY, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch { return EMPTY; } },
   save(v) { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(v)); } catch { /* storage blocked */ } },
   clear() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage blocked */ } },
 };
+// Decisions the guard has acknowledged ("Done") stay out of the waiting list for this browser session.
+const dismissedStore = {
+  load() { try { return new Set(JSON.parse(sessionStorage.getItem(DISMISS_KEY) || '[]')); } catch { return new Set(); } },
+  save(set) { try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...set].slice(-300))); } catch { /* storage blocked */ } },
+};
+
+// Needs attention first: approvals to hand a pass for, declines, no-replies; then everyone still waiting, longest first.
+const RANK = { approved: 0, rejected: 1, expired: 2, pending: 3 };
+const sortTray = (rows) => rows.slice().sort((a, b) => (RANK[a.status] - RANK[b.status])
+  || (a.status === 'pending' ? new Date(a.createdAt) - new Date(b.createdAt) : new Date(b.decidedAt || b.createdAt) - new Date(a.decidedAt || a.createdAt)));
 
 export default function GuardDesk({ user, onLogout }) {
   const toast = useToast();
   const [tab, setTab] = useState('checkin');
   const [inside, setInside] = useState(null);
-  const [visit, setVisit] = useState(null); // submitted visit being tracked
-  const visitRef = useRef(null);
-  visitRef.current = visit;
+  const [queue, setQueue] = useState(null);
+  const [dismissed, setDismissed] = useState(dismissedStore.load);
+  const [open, setOpen] = useState(null); // visit shown in the main column; null = check-in form
+  const [sentAt, setSentAt] = useState({}); // visit id -> when this device last sent its SMS
+  const [liveTick, setLiveTick] = useState(0); // bumps on every server event
+  const openRef = useRef(null);
+  openRef.current = open;
 
   const refreshInside = useCallback(() => api('/api/visits/inside').then(setInside).catch(() => {}), []);
-  const refreshVisit = useCallback(async (id) => {
+  const refreshQueue = useCallback(() => api('/api/visits/queue').then((d) => setQueue(d.rows)).catch(() => {}), []);
+  const refreshOpen = useCallback(async (id) => {
     try {
       const v = await api(`/api/visits/${id}`);
-      setVisit((cur) => (cur && cur.id === id ? { ...cur, ...v } : cur));
+      setOpen((cur) => (cur && cur.id === id ? { ...cur, ...v } : cur));
     } catch { /* keep last known state */ }
   }, []);
 
   const connected = useLive((evt) => {
+    setLiveTick((t) => t + 1);
     refreshInside();
-    if (visitRef.current && evt.visitId === visitRef.current.id) refreshVisit(evt.visitId);
+    refreshQueue();
+    const cur = openRef.current;
+    if (cur && (!evt.visitId || evt.visitId === cur.id)) refreshOpen(cur.id);
   });
 
+  useEffect(() => { refreshInside(); refreshQueue(); }, [refreshInside, refreshQueue]);
+
+  // Safety net in case the live stream drops; faster while someone is still waiting for a host.
+  const waitingNow = (queue || []).filter((r) => r.status === 'pending').length;
   useEffect(() => {
+    const ms = connected ? 30000 : waitingNow ? 5000 : 15000;
+    const t = setInterval(() => {
+      refreshInside();
+      refreshQueue();
+      if (openRef.current) refreshOpen(openRef.current.id);
+    }, ms);
+    return () => clearInterval(t);
+  }, [connected, waitingNow, refreshInside, refreshQueue, refreshOpen]);
+
+  // Every decision that lands gets a sound, a vibration and a toast, even for visitors the guard has moved past.
+  const seen = useRef(null);
+  useEffect(() => {
+    if (!queue) return;
+    const prev = seen.current;
+    seen.current = new Map(queue.map((r) => [r.id, r.status]));
+    if (!prev) return;
+    for (const r of queue) {
+      const was = prev.get(r.id);
+      if (!was || was === r.status) continue;
+      const who = `${r.firstName} ${r.lastName}`;
+      const host = r.host?.name || 'The host';
+      if (r.status === 'approved') { cue.approved(); toast(`${host} let ${who} in · Pass ${r.dailyNumber}`, 'ok'); }
+      else if (r.status === 'rejected') { cue.rejected(); toast(`${host} declined ${who}. Do not let them in.`, 'bad'); }
+      else if (r.status === 'expired') { cue.expired(); toast(`No reply from ${host} for ${who}. Resend or cancel.`, 'info'); }
+    }
+  }, [queue, toast]);
+
+  const dismiss = useCallback((id) => setDismissed((s) => {
+    const n = new Set(s);
+    n.add(id);
+    dismissedStore.save(n);
+    return n;
+  }), []);
+
+  const act = {
+    resend: async (v) => {
+      try {
+        await api(`/api/visits/${v.id}/resend`, { method: 'POST' });
+        setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
+        toast(`New approval SMS sent to ${v.host?.name}.`);
+        refreshQueue();
+        if (openRef.current?.id === v.id) refreshOpen(v.id);
+      } catch (e) { toast(e.message, 'bad'); }
+    },
+    cancel: async (v) => {
+      try {
+        await api(`/api/visits/${v.id}/cancel`, { method: 'POST' });
+        toast(`${v.firstName} ${v.lastName}’s visit was cancelled. The host’s link no longer works.`);
+        dismiss(v.id);
+        refreshQueue();
+        if (openRef.current?.id === v.id) setOpen(null);
+      } catch (e) { toast(e.message, 'bad'); }
+    },
+    reprint: async (v) => {
+      try { await api(`/api/visits/${v.id}/reprint`, { method: 'POST' }); toast('Sticker sent to the printer.'); refreshOpen(v.id); } catch (e) { toast(e.message, 'bad'); }
+    },
+  };
+
+  const openVisit = (v) => {
+    setOpen(v);
+    setTab('checkin');
+    refreshOpen(v.id);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const closeOpen = () => {
+    if (open && ['approved', 'rejected', 'cancelled'].includes(open.status)) dismiss(open.id);
+    setOpen(null);
     refreshInside();
-    const t = setInterval(refreshInside, 30000); // safety net if the live stream drops
-    return () => clearInterval(t);
-  }, [refreshInside]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-  // Fallback poll while waiting, in case an event is missed.
-  useEffect(() => {
-    if (!visit || !['pending', 'approved'].includes(visit.status)) return undefined;
-    const t = setInterval(() => refreshVisit(visit.id), connected ? 15000 : 4000);
-    return () => clearInterval(t);
-  }, [visit?.id, visit?.status, connected, refreshVisit]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const count = inside?.count ?? 0;
+  const tray = useMemo(() => sortTray((queue || []).filter((r) => !dismissed.has(r.id))), [queue, dismissed]);
+  const insideCount = inside?.count ?? 0;
+  const needsAttention = tray.filter((r) => r.status !== 'pending').length;
+  useTitle(needsAttention ? `(${needsAttention}) Guard desk` : 'Guard desk');
 
   return (
     <div className="app-guard">
@@ -63,7 +152,11 @@ export default function GuardDesk({ user, onLogout }) {
           <Logo name="" />
           <div className="where">
             <strong>Main gate</strong>
-            <small><span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'} · {count} on premises</small>
+            <small>
+              <span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}
+              <span className="sep">·</span>{insideCount} inside
+              {waitingNow > 0 && <><span className="sep">·</span>{waitingNow} waiting</>}
+            </small>
           </div>
         </div>
         <UserMenu user={user} onLogout={onLogout} />
@@ -72,33 +165,48 @@ export default function GuardDesk({ user, onLogout }) {
       <main className="guard-main">
         <div className="guard-split">
           <section className={tab === 'checkin' ? '' : 'hide-mobile'} aria-label="Check in">
-            {visit ? (
+            {open ? (
               <Outcome
-                visit={visit}
-                connected={connected}
-                onNext={() => { setVisit(null); refreshInside(); }}
-                onResend={async () => {
-                  try { await api(`/api/visits/${visit.id}/resend`, { method: 'POST' }); toast('New approval SMS sent.'); refreshVisit(visit.id); } catch (e) { toast(e.message, 'bad'); }
-                }}
-                onReprint={async () => {
-                  try { await api(`/api/visits/${visit.id}/reprint`, { method: 'POST' }); toast('Sticker sent to the printer.'); refreshVisit(visit.id); } catch (e) { toast(e.message, 'bad'); }
-                }}
+                visit={open}
+                sentAt={sentAt[open.id]}
+                onNext={closeOpen}
+                onResend={() => act.resend(open)}
+                onCancel={() => act.cancel(open)}
+                onReprint={() => act.reprint(open)}
               />
             ) : (
-              <CheckInForm onSubmitted={(v) => { setVisit(v); refreshInside(); }} />
+              <CheckInForm
+                liveTick={liveTick}
+                onOpenActive={openVisit}
+                onSubmitted={(v) => {
+                  setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
+                  setOpen(v);
+                  refreshQueue();
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              />
             )}
           </section>
-          <aside className={tab === 'inside' ? '' : 'hide-mobile'} aria-label="On premises">
-            <InsideList data={inside} onChanged={refreshInside} />
+          <aside className={`guard-side ${tab === 'checkin' ? 'hide-mobile' : ''}`} aria-label="Waiting and on premises">
+            <div className={tab === 'waiting' ? '' : 'hide-mobile'}>
+              <WaitingTray rows={tray} loaded={Boolean(queue)} sentAt={sentAt} openId={open?.id} onOpen={openVisit} act={act} onDismiss={dismiss} />
+            </div>
+            <div className={tab === 'inside' ? '' : 'hide-mobile'}>
+              <InsideList data={inside} onChanged={refreshInside} />
+            </div>
           </aside>
         </div>
       </main>
 
       <nav className="tabbar" role="tablist" aria-label="Guard views">
         <button role="tab" aria-selected={tab === 'checkin'} onClick={() => setTab('checkin')}><UserPlus />Check in</button>
+        <button role="tab" aria-selected={tab === 'waiting'} onClick={() => setTab('waiting')}>
+          <Bell />Waiting
+          {tray.length > 0 && <span className={`count ${tray.some((r) => r.status !== 'pending') ? 'hot' : ''}`}>{tray.length}</span>}
+        </button>
         <button role="tab" aria-selected={tab === 'inside'} onClick={() => setTab('inside')}>
           <Users />On premises
-          {count > 0 && <span className="count">{count}</span>}
+          {insideCount > 0 && <span className="count">{insideCount}</span>}
         </button>
       </nav>
     </div>
@@ -107,6 +215,7 @@ export default function GuardDesk({ user, onLogout }) {
 
 function UserMenu({ user, onLogout }) {
   const [open, setOpen] = useState(false);
+  const [pw, setPw] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
@@ -118,22 +227,24 @@ function UserMenu({ user, onLogout }) {
   }, [open]);
   return (
     <div className="menu" ref={ref}>
-      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" style={{ paddingLeft: 4 }}>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" aria-label="Account" style={{ paddingLeft: 4 }}>
         <Avatar name={user.fullName} size={30} />
         <ChevronDown />
       </button>
       {open && (
         <div className="menu-pop" role="menu">
-          <div className="who"><strong>{user.fullName}</strong><small>Security guard · {user.username}</small></div>
+          <div className="who"><strong>{user.fullName}</strong><small>{user.role === 'admin' ? 'Administrator' : 'Security guard'} · {user.username}</small></div>
+          <button role="menuitem" onClick={() => { setOpen(false); setPw(true); }}><KeyRound />Change password</button>
           <button role="menuitem" onClick={onLogout}><LogOut />Sign out</button>
         </div>
       )}
+      <PasswordDialog open={pw} onClose={() => setPw(false)} />
     </div>
   );
 }
 
 // ---------------------------------------------------------------- Check-in (single page)
-function CheckInForm({ onSubmitted }) {
+function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [form, setForm] = useState(store.load);
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
@@ -141,49 +252,76 @@ function CheckInForm({ onSubmitted }) {
   const [idConfirmed, setIdConfirmed] = useState(false);
   const [cam, setCam] = useState('face'); // which camera is live; only one at a time (phones cannot run two)
   const [returning, setReturning] = useState(null);
+  const [active, setActive] = useState(null); // this person is already inside or waiting
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tried, setTried] = useState(false);
+  const autofill = useRef(null); // what the returning-visitor lookup filled in, and for which number
+  const formRef = useRef(form);
+  formRef.current = form;
   const sec = { visitor: useRef(null), host: useRef(null), capture: useRef(null) };
 
   const update = (patch) => setForm((f) => { const next = { ...f, ...patch }; store.save(next); return next; });
   const digits = form.mobile.replace(/\D/g, '');
+  const mobileOk = MOBILE_RE.test(digits);
 
-  // Returning visitor: fill name and company straight away if the guard has not typed them.
   useEffect(() => {
     setReturning(null);
-    if (digits.length !== 10) return undefined;
-    let live = true;
-    api(`/api/visits/lookup?mobile=${digits}`).then((r) => {
-      if (!live || !r.found) return;
-      setReturning(r);
+    setActive(null);
+    // Number corrected after an autofill: the filled-in name belonged to someone else, so take it back out.
+    const a = autofill.current;
+    if (a && a.mobile !== digits) {
+      autofill.current = null;
       setForm((f) => {
-        if (f.firstName.trim() || f.lastName.trim()) return f;
-        const next = { ...f, firstName: r.firstName, lastName: r.lastName, company: f.company || r.company };
+        if (f.firstName !== a.firstName || f.lastName !== a.lastName) return f;
+        const next = { ...f, firstName: '', lastName: '', company: f.company === a.company ? '' : f.company };
         store.save(next);
         return next;
       });
+    }
+    if (!MOBILE_RE.test(digits)) return undefined;
+    let live = true;
+    api(`/api/visits/lookup?mobile=${digits}`).then((r) => {
+      if (!live || !r.found) return;
+      setActive(r.active || null);
+      const f = formRef.current;
+      if (f.firstName.trim() || f.lastName.trim()) { setReturning({ ...r, filled: false }); return; }
+      const filled = { firstName: r.firstName, lastName: r.lastName, company: f.company || r.company };
+      autofill.current = { mobile: digits, ...filled };
+      setReturning({ ...r, filled: true });
+      update(filled);
     }).catch(() => {});
     return () => { live = false; };
   }, [digits]);
 
+  // The person's status can change while the guard types (host approves, someone checks them out).
+  useEffect(() => {
+    const d = formRef.current.mobile.replace(/\D/g, '');
+    if (!liveTick || !MOBILE_RE.test(d)) return undefined;
+    let live = true;
+    api(`/api/visits/lookup?mobile=${d}`).then((r) => { if (live) setActive(r.found ? r.active || null : null); }).catch(() => {});
+    return () => { live = false; };
+  }, [liveTick]);
+
   const checks = [
-    ['visitor', digits.length === 10, '10-digit mobile'],
+    ['visitor', mobileOk, 'mobile number'],
+    ['visitor', !active, ''], // explained by the warning above the fields, not in the list
     ['visitor', NAME_RE.test(form.firstName.trim()), 'first name'],
     ['visitor', NAME_RE.test(form.lastName.trim()), 'last name'],
     ['visitor', form.company.trim().length > 0, 'company'],
-    ['host', Boolean(host), 'host'],
+    ['host', Boolean(host), 'whom to meet'],
     ['capture', Boolean(photo), 'photo'],
     ['capture', Boolean(idImage), 'Aadhaar'],
-    ['capture', !idImage || idConfirmed, 'Aadhaar mask check'],
+    ['capture', !idImage || idConfirmed, 'Aadhaar check'],
   ];
   const missing = checks.filter(([, ok]) => !ok);
   const done = (s) => checks.every(([k, ok]) => k !== s || ok);
 
   const reset = () => {
     store.clear();
+    autofill.current = null;
     setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdConfirmed(false);
-    setCam('face'); setTried(false); setError('');
+    setCam('face'); setTried(false); setError(''); setActive(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -201,9 +339,15 @@ function CheckInForm({ onSubmitted }) {
         body: { ...form, mobile: digits, hostId: host.id, photo, idImage, idMaskConfirmed: idConfirmed },
       });
       store.clear();
-      onSubmitted({ id: res.id, ref: res.ref, status: res.status, firstName: form.firstName.trim(), lastName: form.lastName.trim(), company: form.company.trim(), host: { name: host.name, unit: host.unit }, photo, createdAt: new Date().toISOString() });
+      onSubmitted({
+        id: res.id, ref: res.ref, status: res.status, firstName: form.firstName.trim(), lastName: form.lastName.trim(),
+        company: form.company.trim(), host: { name: host.name, unit: host.unit }, photo, createdAt: new Date().toISOString(),
+      });
     } catch (e) {
-      setError(e.message);
+      if (e.status === 409 && e.data?.code === 'already_active') {
+        setActive({ ...e.data.visit, message: e.message });
+        sec.visitor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else setError(e.message);
     } finally {
       setBusy(false);
     }
@@ -225,14 +369,26 @@ function CheckInForm({ onSubmitted }) {
           <div className="input-group">
             <span className="prefix">+91</span>
             <input className="input num" inputMode="numeric" autoComplete="off" maxLength={11} placeholder="98765 43210"
+              aria-invalid={digits.length === 10 && !mobileOk}
               value={digits.length > 5 ? `${digits.slice(0, 5)} ${digits.slice(5)}` : digits}
               onChange={(e) => update({ mobile: e.target.value.replace(/\D/g, '').slice(0, 10) })} autoFocus />
           </div>
+          {digits.length === 10 && !mobileOk && <span className="hint err">Indian mobile numbers start with 6, 7, 8 or 9.</span>}
         </label>
-        {returning && (
+        {active && (
+          <div className="alert alert-warn" role="alert">
+            <AlertTriangle />
+            <span className="grow">{active.message}</span>
+            <button type="button" className="btn btn-sm" onClick={() => onOpenActive({ ...active, firstName: active.name.split(' ')[0], lastName: active.name.split(' ').slice(1).join(' ') })}>View</button>
+          </div>
+        )}
+        {returning && !active && (
           <div className="returning">
             <History />
-            <span className="grow">Returning visitor, {returning.visits} {returning.visits === 1 ? 'visit' : 'visits'}, last on {fmtDate(returning.lastVisit)}. Details filled in.</span>
+            <span className="grow">
+              Returning visitor · {returning.visits} {returning.visits === 1 ? 'visit' : 'visits'}, last on {fmtDate(returning.lastVisit)}.
+              {returning.filled ? ' Details filled in.' : ''}
+            </span>
           </div>
         )}
         <div className="grid-2">
@@ -261,7 +417,7 @@ function CheckInForm({ onSubmitted }) {
           <div className="field">
             <span>Live photo <span className="faint">· no mask or cap</span></span>
             {photo || cam === 'face'
-              ? <Camera mode="face" captured={photo} onCapture={(p) => { setPhoto(p); if (!idImage) setCam('aadhaar'); else setCam(null); }} onRetake={() => { setPhoto(null); setCam('face'); }} />
+              ? <Camera mode="face" captured={photo} onCapture={(p) => { setPhoto(p); setCam(idImage ? null : 'aadhaar'); }} onRetake={() => { setPhoto(null); setCam('face'); }} />
               : <CamTile icon={UserRound} label="Take photo" onClick={() => setCam('face')} />}
           </div>
           <div className="field">
@@ -283,7 +439,7 @@ function CheckInForm({ onSubmitted }) {
 
       <div className="footer-bar">
         <div className="inner">
-          {tried && missing.length > 0 && <p className="need">Still needed: {missing.map(([, , l]) => l).join(', ')}</p>}
+          {tried && missing.some(([, , l]) => l) && <p className="need">Still needed: {missing.map(([, , l]) => l).filter(Boolean).join(', ')}</p>}
           <button type="button" className="btn btn-xl" onClick={reset} disabled={busy}>Clear</button>
           <button type="button" className="btn btn-primary btn-xl" disabled={busy} onClick={submit}>
             {busy ? <><Spinner />Sending</> : <><Send />Send for approval</>}
@@ -312,26 +468,39 @@ function CamTile({ icon: Icon, label, onClick }) {
   );
 }
 
-// ---------------------------------------------------------------- After submit
-function Outcome({ visit, onNext, onResend, onReprint }) {
+// ---------------------------------------------------------------- One visit, after sending
+function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint }) {
   useTick(1000);
   const name = `${visit.firstName} ${visit.lastName}`;
-  const secs = Math.max(0, Math.round((Date.now() - new Date(visit.createdAt).getTime()) / 1000));
-  const elapsed = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  const hostFirst = visit.host?.name?.split(' ')[0] || 'the host';
+  const secs = secondsSince(visit.createdAt);
+  const sinceSend = sentAt ? Math.round((Date.now() - sentAt) / 1000) : secs;
+  const wait = Math.max(0, RESEND_AFTER - sinceSend);
+  const photo = visit.photo || `/api/visits/${visit.id}/photo`;
 
   return (
     <div className="card outcome" aria-live="polite">
       {visit.status === 'pending' && (
         <>
-          <div className="wait-ring"><Avatar name={visit.host.name} size={84} /></div>
+          <div className="wait-ring"><Avatar src={photo} name={name} size={84} /></div>
           <div>
-            <h1>Waiting for {visit.host.name.split(' ')[0]}</h1>
-            <p className="lead" style={{ margin: '6px auto 0' }}>An SMS was sent to {visit.host.name} ({visit.host.unit}). This screen updates the moment they respond.</p>
+            <h1>Waiting for {hostFirst}</h1>
+            <p className="lead" style={{ margin: '6px auto 0' }}>
+              {name} is asking for {visit.host?.name} ({visit.host?.unit}). You can check in the next visitor; you’ll hear a chime the moment {hostFirst} replies.
+            </p>
           </div>
-          <span className="timer"><Clock size={15} />Waiting {elapsed}</span>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button className="btn" onClick={onResend} disabled={secs < 30}><RotateCcw />{secs < 30 ? `Resend in ${30 - secs}s` : 'Resend SMS'}</button>
-            <button className="btn btn-ghost" onClick={onNext}>Check in someone else</button>
+          <span className="timer"><Clock size={15} />Waiting {clock(secs)}</span>
+          {visit.smsStatus === 'failed' && (
+            <div className="alert alert-bad" role="alert" style={{ textAlign: 'left' }}>
+              <AlertTriangle /><span className="grow">The SMS to {hostFirst} could not be sent. Call them, or try sending it again.</span>
+            </div>
+          )}
+          <div className="outcome-actions">
+            <button className="btn btn-primary btn-lg" onClick={onNext}><UserPlus />Check in next visitor</button>
+            <div className="row">
+              <button className="btn" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend SMS'}</button>
+              <button className="btn btn-ghost" onClick={onCancel}><X />Cancel visit</button>
+            </div>
           </div>
         </>
       )}
@@ -345,12 +514,12 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
             </div>
             <div className="pass-body">
               <div className="who">
-                <span className="avatar" style={{ '--s': '48px', borderRadius: 12 }}>{visit.photo ? <img src={visit.photo} alt="" /> : initials(name)}</span>
+                <span className="avatar" style={{ '--s': '48px', borderRadius: 12 }}>{photo ? <img src={photo} alt="" /> : initials(name)}</span>
                 <div><strong>{name}</strong><span className="muted">{visit.company}</span></div>
               </div>
               <div className="pass-row">
-                <div><small>Meeting</small>{visit.host.name}</div>
-                <div><small>Flat / dept</small>{visit.host.unit}</div>
+                <div><small>Meeting</small>{visit.host?.name}</div>
+                <div><small>Flat / dept</small>{visit.host?.unit}</div>
                 <div><small>Entry</small><span className="num">{fmtTime(visit.decidedAt)}</span></div>
                 <div><small>Visitor ID</small><span className="mono">{visit.ref}</span></div>
               </div>
@@ -358,10 +527,13 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
             <div className="pass-perf" />
             <div className="pass-foot">
               <PrintStatus status={visit.printStatus} />
-              {visit.printStatus !== 'off' && <button className="btn btn-sm" onClick={onReprint}><Printer />Reprint</button>}
+              {visit.printStatus && visit.printStatus !== 'off' && <button className="btn btn-sm" onClick={onReprint}><Printer />Reprint</button>}
             </div>
           </div>
-          <p className="lead">Approved by {visit.host.name}. Hand over the sticker and let the visitor in.</p>
+          <p className="lead">
+            Approved by {visit.host?.name}.{' '}
+            {visit.printStatus === 'off' ? `Write pass ${visit.dailyNumber} on the visitor slip and let them in.` : 'Hand over the sticker and let the visitor in.'}
+          </p>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}><UserPlus />Next visitor</button>
         </>
       )}
@@ -369,7 +541,7 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
       {visit.status === 'rejected' && (
         <>
           <div className="state-icon bad"><XCircle /></div>
-          <div><h1>Entry declined</h1><p className="lead" style={{ margin: '6px auto 0' }}>{visit.host.name} declined this visit. Do not let {visit.firstName} in.</p></div>
+          <div><h1>Entry declined</h1><p className="lead" style={{ margin: '6px auto 0' }}>{visit.host?.name} declined this visit. Do not let {visit.firstName} in.</p></div>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}>Done</button>
         </>
       )}
@@ -377,11 +549,28 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
       {visit.status === 'expired' && (
         <>
           <div className="state-icon warn"><Clock /></div>
-          <div><h1>No response yet</h1><p className="lead" style={{ margin: '6px auto 0' }}>{visit.host.name} did not respond in time. Send a fresh link, or ask the visitor to call them.</p></div>
+          <div><h1>No reply from {hostFirst}</h1><p className="lead" style={{ margin: '6px auto 0' }}>The approval link expired. Send a fresh one, or ask {visit.firstName} to call {hostFirst}.</p></div>
           <div style={{ display: 'grid', gap: 8, width: '100%', maxWidth: 340 }}>
-            <button className="btn btn-primary btn-xl" onClick={onResend}><RotateCcw />Resend approval SMS</button>
-            <button className="btn btn-ghost" onClick={onNext}>Cancel and start over</button>
+            <button className="btn btn-primary btn-xl" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend approval SMS'}</button>
+            <button className="btn" onClick={onCancel}><X />Visitor left: cancel visit</button>
+            <button className="btn btn-ghost" onClick={onNext}>Back to check-in</button>
           </div>
+        </>
+      )}
+
+      {visit.status === 'cancelled' && (
+        <>
+          <div className="state-icon"><X /></div>
+          <div><h1>Visit cancelled</h1><p className="lead" style={{ margin: '6px auto 0' }}>{name} was not let in. The host’s link no longer works.</p></div>
+          <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}>Done</button>
+        </>
+      )}
+
+      {['checked_out', 'force_checked_out'].includes(visit.status) && (
+        <>
+          <div className="state-icon ok"><CheckCircle2 /></div>
+          <div><h1>Visit over</h1><p className="lead" style={{ margin: '6px auto 0' }}>{name} has already checked out.</p></div>
+          <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}>Done</button>
         </>
       )}
     </div>
@@ -389,10 +578,67 @@ function Outcome({ visit, onNext, onResend, onReprint }) {
 }
 
 function PrintStatus({ status }) {
-  if (status === 'off') return <span className="badge">No printer connected</span>;
+  if (!status) return null;
+  if (status === 'off') return <span className="badge plain">No printer connected</span>;
   if (status === 'sent') return <span className="badge badge-ok">Sticker printed</span>;
   if (status === 'failed') return <span className="badge badge-bad">Printer failed</span>;
   return <span className="badge badge-warn">Printing…</span>;
+}
+
+// ---------------------------------------------------------------- Waiting for host
+function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss }) {
+  useTick(1000);
+  return (
+    <div className={`tray ${rows.length ? '' : 'tray-empty'}`}>
+      <div className="list-head">
+        <div>
+          <h1>Waiting for host</h1>
+          <p className="muted">{rows.length ? 'Updates live. You’ll hear a chime on every reply.' : 'Nobody is waiting right now.'}</p>
+        </div>
+      </div>
+      {!loaded && <div className="skeleton" style={{ height: 74, borderRadius: 16 }} />}
+      {loaded && rows.length === 0 && (
+        <div className="panel"><Empty icon={Bell} title="Nobody waiting">Visitors you send for approval appear here until the host replies.</Empty></div>
+      )}
+      <div className="visitor-list">
+        {rows.map((v) => {
+          const name = `${v.firstName} ${v.lastName}`;
+          const sinceSend = sentAt[v.id] ? Math.round((Date.now() - sentAt[v.id]) / 1000) : secondsSince(v.createdAt);
+          const canResend = sinceSend >= RESEND_AFTER;
+          return (
+            <div key={v.id} className={`tray-item is-${v.status} ${openId === v.id ? 'is-open' : ''}`}>
+              <button type="button" className="tray-main" onClick={() => onOpen(v)}>
+                <Avatar src={`/api/visits/${v.id}/photo`} name={name} size={44} square />
+                <span className="grow">
+                  <span className="name">{name}</span>
+                  <span className="meta">for {v.host?.name} · {v.host?.unit}</span>
+                </span>
+                <TrayState v={v} />
+              </button>
+              <div className="tray-actions">
+                {(v.status === 'pending' || v.status === 'expired') && (
+                  <>
+                    <button className="btn btn-sm" disabled={!canResend} onClick={() => act.resend(v)}><RotateCcw />{canResend ? 'Resend' : `${RESEND_AFTER - sinceSend}s`}</button>
+                    <button className="btn btn-sm btn-ghost" onClick={() => act.cancel(v)}><X />Cancel</button>
+                  </>
+                )}
+                {v.status === 'approved' && <button className="btn btn-sm btn-success" onClick={() => onDismiss(v.id)}><Check />Pass handed over</button>}
+                {v.status === 'rejected' && <button className="btn btn-sm" onClick={() => onDismiss(v.id)}><Check />Got it</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TrayState({ v }) {
+  if (v.status === 'approved') return <span className="tray-state ok"><span className="pass-chip">{passLabel(v)}</span>Let in</span>;
+  if (v.status === 'rejected') return <span className="tray-state bad"><XCircle />Declined</span>;
+  if (v.status === 'expired') return <span className="tray-state warn"><Clock />No reply</span>;
+  if (v.smsStatus === 'failed') return <span className="tray-state bad"><AlertTriangle />SMS failed</span>;
+  return <span className="tray-state wait"><span className="live-dot" />{clock(secondsSince(v.createdAt))}</span>;
 }
 
 // ---------------------------------------------------------------- On premises
@@ -403,8 +649,9 @@ function InsideList({ data, onChanged }) {
   const [confirmId, setConfirmId] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
+  const term = q.trim().toLowerCase();
   const rows = (data?.visits || [])
-    .filter((v) => `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .filter((v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref}`.toLowerCase().includes(term))
     .slice()
     .reverse();
 
@@ -452,7 +699,7 @@ function InsideList({ data, onChanged }) {
             <div className="visitor-item" key={v.id}>
               <Avatar src={`/api/visits/${v.id}/photo`} name={`${v.firstName} ${v.lastName}`} size={48} square />
               <div style={{ minWidth: 0 }}>
-                <div className="top"><span className="pass-chip">{v.dailyNumber}</span><span className="name">{v.firstName} {v.lastName}</span></div>
+                <div className="top"><span className="pass-chip">{passLabel(v)}</span><span className="name">{v.firstName} {v.lastName}</span></div>
                 <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
                 <div className="time">In {fmtTime(v.decidedAt)} · {fmtDuration(mins)}{long && <span className="badge badge-warn">Long stay</span>}</div>
               </div>

@@ -1,4 +1,6 @@
 const express = require('express');
+const crypto = require('node:crypto');
+const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -6,8 +8,8 @@ const mongoose = require('mongoose');
 const archiver = require('archiver');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
-const { Visit, Host, Outbox, Audit } = require('../models');
-const { siteDay, audit, normalizeMobile, cleanText } = require('../services/core');
+const { Visit, Host, Outbox, Audit, User } = require('../models');
+const { siteDay, audit, normalizeMobile, cleanText, passwordProblem } = require('../services/core');
 
 const router = express.Router();
 const dayStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
@@ -58,7 +60,7 @@ router.get('/visits', requireRole('admin'), async (req, res) => {
 const EXPORT_LIMIT = 50000;
 const STATUS_LABEL = {
   pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'No response',
-  checked_out: 'Checked out', force_checked_out: 'Force checked out',
+  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Force checked out',
 };
 const localStamp = (d) => (d ? new Intl.DateTimeFormat('en-GB', {
   timeZone: config.timezone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
@@ -133,7 +135,11 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
     const h = Number(new Intl.DateTimeFormat('en-GB', { timeZone: config.timezone, hour: '2-digit', hourCycle: 'h23' }).format(a.createdAt));
     byHour[h] += 1;
   }
-  res.json({ today, inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleInside: staleCut, arrivalsToday: arrivals.length, byHour });
+  res.json({
+    today, inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleInside: staleCut, arrivalsToday: arrivals.length, byHour,
+    // So the console can say plainly when SMS are only logged, or no sticker printer is connected.
+    smsLive: config.sms.driver !== 'console', printerOn: config.printer.mode !== 'off',
+  });
 });
 
 // Force checkout lives in routes/visits.js; this is the admin list of stale "still inside" visitors.
@@ -171,7 +177,8 @@ router.get('/hosts', requireRole('admin'), async (req, res) => {
 router.post('/hosts', requireRole('admin'), async (req, res) => {
   const parsed = hostSchema.safeParse(req.body);
   const mobile = parsed.success ? normalizeMobile(parsed.data.mobile) : null;
-  if (!parsed.success || !mobile) return res.status(400).json({ error: 'Name, unit and a valid mobile are required' });
+  if (!parsed.success) return res.status(400).json({ error: 'Enter the name, flat and a mobile number' });
+  if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number (Indian mobiles start with 6 to 9)' });
   const host = await Host.create({ ...parsed.data, mobile, email: parsed.data.email || undefined });
   audit(req.user, 'host.created', { entity: 'Host', entityId: host._id, details: { unit: host.unit }, ip: req.ip });
   res.status(201).json({ id: String(host._id) });
@@ -180,14 +187,30 @@ router.post('/hosts', requireRole('admin'), async (req, res) => {
 router.patch('/hosts/:id', requireRole('admin'), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
   const allowed = {};
-  if (typeof req.body?.active === 'boolean') allowed.active = req.body.active;
-  if (req.body?.unit) allowed.unit = cleanText(req.body.unit, 40);
-  if (req.body?.mobile) {
-    const m = normalizeMobile(req.body.mobile);
-    if (!m) return res.status(400).json({ error: 'Invalid mobile' });
+  const b = req.body || {};
+  if (typeof b.active === 'boolean') allowed.active = b.active;
+  if (b.fullName !== undefined) {
+    const fullName = cleanText(b.fullName, 80);
+    if (fullName.length < 2) return res.status(400).json({ error: 'Enter the host\'s full name' });
+    allowed.fullName = fullName;
+  }
+  if (b.unit !== undefined) {
+    const unit = cleanText(b.unit, 40);
+    if (!unit) return res.status(400).json({ error: 'Enter the flat or department' });
+    allowed.unit = unit;
+  }
+  if (b.mobile !== undefined) {
+    const m = normalizeMobile(b.mobile);
+    if (!m) return res.status(400).json({ error: 'Enter a valid mobile number (Indian mobiles start with 6 to 9)' });
     allowed.mobile = m;
   }
-  const host = await Host.findByIdAndUpdate(req.params.id, allowed, { new: true });
+  const unset = {};
+  if (b.email !== undefined) {
+    const email = String(b.email || '').trim().toLowerCase();
+    if (email && !z.string().email().safeParse(email).success) return res.status(400).json({ error: 'Enter a valid email, or leave it empty' });
+    if (email) allowed.email = email; else unset.email = 1;
+  }
+  const host = await Host.findByIdAndUpdate(req.params.id, { $set: allowed, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { new: true });
   if (!host) return res.status(404).json({ error: 'Not found' });
   audit(req.user, 'host.updated', { entity: 'Host', entityId: host._id, details: allowed, ip: req.ip });
   res.json({ ok: true });
@@ -208,6 +231,81 @@ router.post('/hosts/import', requireRole('admin'), async (req, res) => {
   const result = docs.length ? await Host.insertMany(docs) : [];
   audit(req.user, 'host.imported', { details: { created: result.length, errors: errors.length }, ip: req.ip });
   res.json({ created: result.length, errors });
+});
+
+// ----- Staff accounts: guards and admins -----
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/;
+// No look-alike characters (0/O, 1/l/I), so a guard can read a reset password off paper.
+const PW_ALPHABET = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const genPassword = () => Array.from(crypto.randomBytes(14)).map((b) => PW_ALPHABET[b % PW_ALPHABET.length]).join('');
+const staffRow = (u) => ({
+  id: String(u._id), username: u.username, fullName: u.fullName, role: u.role, active: u.active,
+  lastLoginAt: u.lastLoginAt || null, createdAt: u.createdAt || null,
+});
+
+router.get('/users', requireRole('admin'), async (req, res) => {
+  const users = await User.find().sort({ active: -1, role: 1, fullName: 1 }).lean();
+  res.json({ rows: users.map(staffRow) });
+});
+
+router.post('/users', requireRole('admin'), async (req, res) => {
+  const username = String(req.body?.username || '').trim().toLowerCase();
+  const fullName = cleanText(req.body?.fullName, 80);
+  const { role } = req.body || {};
+  if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Username: 3 to 30 lowercase letters or numbers (dot, dash and underscore allowed)' });
+  if (fullName.length < 2) return res.status(400).json({ error: "Enter the person's full name" });
+  if (!['guard', 'admin'].includes(role)) return res.status(400).json({ error: 'Choose guard or admin' });
+  if (await User.exists({ username })) return res.status(409).json({ error: `The username "${username}" is already taken` });
+  const typed = typeof req.body?.password === 'string' && req.body.password.length > 0;
+  const password = typed ? req.body.password : genPassword();
+  const problem = passwordProblem(password);
+  if (problem) return res.status(400).json({ error: problem });
+  const user = await User.create({ username, fullName, role, passwordHash: await bcrypt.hash(password, 12) });
+  audit(req.user, 'user.created', { entity: 'User', entityId: user._id, details: { username, role }, ip: req.ip });
+  res.status(201).json({ ...staffRow(user.toObject()), password: typed ? undefined : password });
+});
+
+// Edit name/role, switch access on or off, or issue a new password. A reset signs the person out everywhere.
+router.patch('/users/:id', requireRole('admin'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  const self = String(user._id) === req.user.id;
+  const b = req.body || {};
+  const changes = {};
+
+  if (b.fullName !== undefined) {
+    const fullName = cleanText(b.fullName, 80);
+    if (fullName.length < 2) return res.status(400).json({ error: "Enter the person's full name" });
+    changes.fullName = fullName;
+  }
+  if (b.role !== undefined) {
+    if (!['guard', 'admin'].includes(b.role)) return res.status(400).json({ error: 'Choose guard or admin' });
+    if (self && b.role !== 'admin') return res.status(400).json({ error: 'You cannot remove your own admin access' });
+    changes.role = b.role;
+  }
+  if (b.active !== undefined) {
+    if (typeof b.active !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
+    if (self && !b.active) return res.status(400).json({ error: 'You cannot switch off your own account' });
+    changes.active = b.active;
+  }
+  // Never leave the site without an active admin.
+  const losesAdmin = user.role === 'admin' && user.active && (changes.role === 'guard' || changes.active === false);
+  if (losesAdmin && (await User.countDocuments({ role: 'admin', active: true, _id: { $ne: user._id } })) === 0) {
+    return res.status(400).json({ error: 'Keep at least one active admin' });
+  }
+
+  let password;
+  if (b.resetPassword === true) {
+    password = genPassword();
+    changes.passwordHash = await bcrypt.hash(password, 12);
+    changes.sessionVersion = (user.sessionVersion || 0) + 1;
+  }
+  Object.assign(user, changes);
+  await user.save();
+  const logged = Object.keys(changes).filter((k) => k !== 'passwordHash' && k !== 'sessionVersion');
+  audit(req.user, password ? 'user.password_reset' : 'user.updated', { entity: 'User', entityId: user._id, details: { username: user.username, ...(logged.length ? { changed: logged.join(', ') } : {}) }, ip: req.ip });
+  res.json({ ...staffRow(user.toObject()), password });
 });
 
 module.exports = router;

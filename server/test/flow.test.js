@@ -77,8 +77,10 @@ async function tokenFor(visitId) {
   return /approve\/([\w-]+)/.exec(sms.body)[1];
 }
 
-const checkIn = (first, hostId) => call('POST', '/api/visits', {
-  firstName: first, lastName: 'Sharma', mobile: '9876543210', company: 'Acme Ltd', purpose: 'Demo',
+// Each test visitor gets their own number: one person cannot be waiting or inside twice.
+const MOBILES = { Ravi: '9876543210', Meera: '9876543211', Kiran: '9876543212' };
+const checkIn = (first, hostId, mobile = MOBILES[first]) => call('POST', '/api/visits', {
+  firstName: first, lastName: 'Sharma', mobile, company: 'Acme Ltd', purpose: 'Demo',
   hostId, photo: jpeg(), idImage: jpeg(), idMaskConfirmed: true,
 }, guard);
 
@@ -179,4 +181,130 @@ test('worker delivers SMS and writes sticker files; print jobs are marked sent',
   assert.equal(stickers.length, 2);
   const zpl = fs.readFileSync(path.join(tmp, 'print-out', stickers[0]), 'utf8');
   assert.match(zpl, /\^XA/);
+});
+
+// ---------------------------------------------------------------- Rules added for the client review
+test('same person cannot be checked in twice while waiting or inside; cancelling frees them', async () => {
+  const first = await checkIn('Anil', hostIds.asha, '9811111111');
+  assert.equal(first.status, 201);
+  const dup = await checkIn('Anil', hostIds.asha, '9811111111');
+  assert.equal(dup.status, 409);
+  assert.equal(dup.body.code, 'already_active');
+  assert.match(dup.body.error, /already waiting/);
+
+  const look = await call('GET', '/api/visits/lookup?mobile=9811111111', null, guard);
+  assert.equal(look.body.active.status, 'pending', 'the form can warn as soon as the number is typed');
+
+  const queue = await call('GET', '/api/visits/queue', null, guard);
+  assert.ok(queue.body.rows.some((r) => r.id === first.body.id && r.status === 'pending'));
+
+  const raw = await tokenFor(first.body.id);
+  const cancel = await call('POST', `/api/visits/${first.body.id}/cancel`, {}, guard);
+  assert.equal(cancel.body.status, 'cancelled');
+  const info = await call('GET', `/api/approvals/${raw}`);
+  assert.equal(info.body.state, 'cancelled', 'host link explains instead of offering buttons');
+  const late = await call('POST', `/api/approvals/${raw}/decision`, { decision: 'approve' });
+  assert.equal(late.status, 409);
+  assert.match(late.body.error, /cancelled/);
+
+  const again = await checkIn('Anil', hostIds.asha, '9811111111');
+  assert.equal(again.status, 201);
+});
+
+test('resend is throttled, an old link says a newer one exists, and a decline is logged as visit.rejected', async () => {
+  const { Outbox, Audit } = require('../src/models');
+  const v = await checkIn('Sunita', hostIds.rahul, '9822222222');
+  const oldRaw = await tokenFor(v.body.id);
+
+  const tooSoon = await call('POST', `/api/visits/${v.body.id}/resend`, {}, guard);
+  assert.equal(tooSoon.status, 429);
+  await Outbox.collection.updateMany({ visit: new mongoose.Types.ObjectId(v.body.id) }, { $set: { createdAt: new Date(Date.now() - 60e3) } });
+  const resent = await call('POST', `/api/visits/${v.body.id}/resend`, {}, guard);
+  assert.equal(resent.status, 200);
+
+  const stale = await call('POST', `/api/approvals/${oldRaw}/decision`, { decision: 'approve' });
+  assert.equal(stale.status, 409);
+  assert.match(stale.body.error, /newer link/);
+
+  const dec = await call('POST', `/api/approvals/${await tokenFor(v.body.id)}/decision`, { decision: 'reject' });
+  assert.equal(dec.body.status, 'rejected');
+  await new Promise((r) => setTimeout(r, 100)); // audit writes are fire-and-forget
+  assert.ok(await Audit.exists({ action: 'visit.rejected', entityId: v.body.id }));
+  assert.equal(await Audit.exists({ action: 'visit.rejectd' }), null);
+});
+
+test('mobiles must be real Indian mobiles; all-lowercase names are tidied', async () => {
+  const bad = await checkIn('Test', hostIds.asha, '5123456789');
+  assert.equal(bad.status, 400);
+  const r = await call('POST', '/api/visits', {
+    firstName: 'priya', lastName: "d'souza", mobile: '09833333333', company: 'X Corp',
+    hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), idMaskConfirmed: true,
+  }, guard);
+  assert.equal(r.status, 201);
+  const { Visit } = require('../src/models');
+  const v = await Visit.findById(r.body.id).lean();
+  assert.equal(v.firstName, 'Priya');
+  assert.equal(v.lastName, "D'Souza");
+  assert.equal(v.mobile, '+919833333333');
+});
+
+test('admin manages staff: add a guard, reset signs them out everywhere, cannot lock themselves out', async () => {
+  const created = await call('POST', '/api/admin/users', { username: 'gate2', fullName: 'Second Gate', role: 'guard' }, admin);
+  assert.equal(created.status, 201);
+  assert.ok(created.body.password.length >= 12, 'a strong password is generated and shown once');
+  assert.equal((await call('POST', '/api/admin/users', { username: 'gate2', fullName: 'Someone Else', role: 'guard' }, admin)).status, 409);
+  assert.equal((await call('GET', '/api/admin/users', null, guard)).status, 403);
+
+  const gate2 = await login('gate2', created.body.password);
+  assert.equal((await call('GET', '/api/visits/inside', null, gate2)).status, 200);
+
+  const reset = await call('PATCH', `/api/admin/users/${created.body.id}`, { resetPassword: true }, admin);
+  assert.ok(reset.body.password && reset.body.password !== created.body.password);
+  const old = await call('GET', '/api/visits/inside', null, gate2);
+  assert.equal(old.status, 401, 'the old session ends after a reset');
+  assert.equal(old.body.code, 'session_expired');
+  await login('gate2', reset.body.password);
+
+  const off = await call('PATCH', `/api/admin/users/${created.body.id}`, { active: false }, admin);
+  assert.equal(off.body.active, false);
+  const blocked = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'gate2', password: reset.body.password }) });
+  assert.equal(blocked.status, 401);
+
+  const me = (await call('GET', '/api/admin/users', null, admin)).body.rows.find((u) => u.username === 'admin');
+  assert.equal((await call('PATCH', `/api/admin/users/${me.id}`, { active: false }, admin)).status, 400);
+  assert.equal((await call('PATCH', `/api/admin/users/${me.id}`, { role: 'guard' }, admin)).status, 400);
+});
+
+test('admin can edit a host; bad mobiles and emails are refused with a clear reason', async () => {
+  const edit = (body) => call('PATCH', `/api/admin/hosts/${hostIds.rahul}`, body, admin);
+  assert.equal((await edit({ fullName: 'Rahul K Mehta', unit: 'B-303', mobile: '9123456789', email: 'rahul@example.com' })).status, 200);
+  const { Host } = require('../src/models');
+  const h = await Host.findById(hostIds.rahul).lean();
+  assert.equal(h.fullName, 'Rahul K Mehta');
+  assert.equal(h.unit, 'B-303');
+  assert.equal(h.mobile, '+919123456789');
+  assert.equal(h.email, 'rahul@example.com');
+  assert.equal((await edit({ email: '' })).status, 200);
+  assert.equal((await Host.findById(hostIds.rahul).lean()).email, undefined, 'clearing the email removes it');
+  const badMobile = await edit({ mobile: '1234567890' });
+  assert.equal(badMobile.status, 400);
+  assert.match(badMobile.body.error, /6 to 9/);
+  assert.equal((await edit({ email: 'not-an-email' })).status, 400);
+});
+
+// Runs last: it changes guard1's password, which ends the `guard` session used above.
+test('anyone can change their own password; other devices are signed out, this one continues', async () => {
+  const otherDevice = await login('guard1', 'guard-pass-123');
+  const thisDevice = await login('guard1', 'guard-pass-123');
+  assert.equal((await call('POST', '/api/auth/password', { current: 'wrong-wrong-wrong', next: 'new-guard-pass-456' }, thisDevice)).status, 400);
+  assert.equal((await call('POST', '/api/auth/password', { current: 'guard-pass-123', next: 'short' }, thisDevice)).status, 400);
+
+  const res = await fetch(`${base}/api/auth/password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: thisDevice },
+    body: JSON.stringify({ current: 'guard-pass-123', next: 'new-guard-pass-456' }),
+  });
+  assert.equal(res.status, 200);
+  const fresh = res.headers.get('set-cookie').split(';')[0];
+  assert.equal((await call('GET', '/api/visits/inside', null, fresh)).status, 200);
+  assert.equal((await call('GET', '/api/visits/inside', null, otherDevice)).status, 401);
 });

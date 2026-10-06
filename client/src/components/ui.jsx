@@ -15,6 +15,11 @@ export function Logo({ name = 'Visitor Desk', dark = false }) {
   );
 }
 
+// Each screen names itself in the browser tab.
+export function useTitle(title) {
+  useEffect(() => { document.title = title ? `${title} · Visitor Desk` : 'Visitor Desk'; }, [title]);
+}
+
 export function initials(name = '') {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('');
 }
@@ -33,6 +38,7 @@ export const STATUS = {
   approved: ['On premises', 'badge-live'],
   rejected: ['Declined', 'badge-bad'],
   expired: ['No response', ''],
+  cancelled: ['Cancelled', ''],
   checked_out: ['Checked out', ''],
   force_checked_out: ['Force checked out', 'badge-warn'],
 };
