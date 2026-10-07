@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle, Bell, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
-  Printer, RotateCcw, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
+  Printer, RotateCcw, ScanFace, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, minutesSince, passLabel, secondsSince } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
@@ -12,11 +12,14 @@ import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
+import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 
 const DRAFT_KEY = 'vms-guard-draft';
 const DISMISS_KEY = 'vms-guard-dismissed';
 const AUTOPRINT_KEY = 'vms-guard-autoprint';
-const EMPTY = { mobile: '', firstName: '', lastName: '', company: '', purpose: '' };
+const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '' };
+const GENDERS = [['male', 'Male'], ['female', 'Female'], ['other', 'Other']];
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
 const MOBILE_RE = /^[6-9]\d{9}$/;
 const PURPOSES = ['Delivery', 'Meeting', 'Interview', 'Service / repair', 'Guest'];
@@ -288,7 +291,10 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [idImage, setIdImage] = useState(null);
-  const [idInfo, setIdInfo] = useState(null); // how the Aadhaar was masked: auto, already, guide (+ manual touch-ups)
+  const [idInfo, setIdInfo] = useState(null); // how the Aadhaar was masked: auto, already, guide (+ manual touch-ups); also the face found on the card
+  const [photoMirrored, setPhotoMirrored] = useState(false); // the front camera saves its preview flipped
+  const [photoFace, setPhotoFace] = useState(null); // the face found in the live photo, for the match: { of: photo, face }
+  const [match, setMatch] = useState(null); // { status, score } or 'working'
   const [cam, setCam] = useState('face'); // which camera is live; only one at a time (phones cannot run two)
   const [returning, setReturning] = useState(null);
   const [active, setActive] = useState(null); // this person is already inside or waiting
@@ -301,8 +307,41 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
 
   // Load the on-device Aadhaar reader while the guard is still typing, so the scan is quick.
   useEffect(() => { const t = setTimeout(warmUpMasking, 1200); return () => clearTimeout(t); }, []);
+  // The face engine follows a little later, so the two loads do not fight on a slow phone.
+  useEffect(() => { const t = setTimeout(warmUpFaces, 3000); return () => clearTimeout(t); }, []);
   const formRef = useRef(form);
   formRef.current = form;
+
+  // Live photo taken: find the face in it (on this device). The card's face is found when the card is scanned.
+  useEffect(() => {
+    setPhotoFace(null);
+    if (!photo) return undefined;
+    let live = true;
+    describePhoto(photo, { mirrored: photoMirrored })
+      .then((face) => live && setPhotoFace({ of: photo, face }))
+      .catch(() => live && setPhotoFace({ of: photo, face: 'unavailable' }));
+    return () => { live = false; };
+  }, [photo, photoMirrored]);
+
+  // Both faces known: compare them. Only the resulting score is kept; the descriptors stay in memory on this device.
+  const matchDone = useRef(Promise.resolve());
+  useEffect(() => {
+    const cardFace = idInfo?.face;
+    if (!photo || !idImage || !photoFace || photoFace.of !== photo || cardFace === undefined) { setMatch(photo && idImage ? 'working' : null); return undefined; }
+    let live = true;
+    matchDone.current = (async () => {
+      let next;
+      if (photoFace.face === 'unavailable' || cardFace === 'unavailable') next = { status: 'unavailable' };
+      else if (!photoFace.face) next = { status: 'no_photo_face' };
+      else if (!cardFace) next = { status: 'no_card_face' };
+      else {
+        try { next = { status: 'scored', score: await compare(photoFace.face, cardFace) }; } catch { next = { status: 'unavailable' }; }
+      }
+      if (live) setMatch(next);
+      return next;
+    })();
+    return () => { live = false; };
+  }, [photo, idImage, idInfo, photoFace]);
   const sec = { visitor: useRef(null), host: useRef(null), capture: useRef(null) };
 
   const update = (patch) => setForm((f) => { const next = { ...f, ...patch }; store.save(next); return next; });
@@ -320,7 +359,10 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
       autofill.current = null;
       setForm((f) => {
         if (f.firstName !== a.firstName || f.lastName !== a.lastName) return f;
-        const next = { ...f, firstName: '', lastName: '', company: f.company === a.company ? '' : f.company };
+        const next = {
+          ...f, firstName: '', lastName: '', company: f.company === a.company ? '' : f.company,
+          gender: f.gender === a.gender ? '' : f.gender, email: f.email === a.email ? '' : f.email,
+        };
         store.save(next);
         return next;
       });
@@ -339,7 +381,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           firstName: f.firstName.trim() || r.invite.firstName, lastName: f.lastName.trim() || r.invite.lastName,
           company: f.company.trim() || r.invite.company, purpose: f.purpose || r.invite.purpose,
         };
-        autofill.current = { mobile: digits, firstName: filled.firstName, lastName: filled.lastName, company: filled.company };
+        autofill.current = { mobile: digits, firstName: filled.firstName, lastName: filled.lastName, company: filled.company, gender: '', email: '' };
         update(filled);
         setHost((h) => h || r.invite.host);
         return;
@@ -347,8 +389,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
       if (!r.found) return;
       const f = formRef.current;
       if (f.firstName.trim() || f.lastName.trim()) { setReturning({ ...r, filled: false }); return; }
-      const filled = { firstName: r.firstName, lastName: r.lastName, company: f.company || r.company };
-      autofill.current = { mobile: digits, ...filled };
+      const filled = { firstName: r.firstName, lastName: r.lastName, company: f.company || r.company, gender: f.gender || r.gender || '', email: f.email || r.email || '' };
+      // gender and email are only taken back out if they came from the lookup, never if the guard had already chosen them
+      autofill.current = { mobile: digits, ...filled, gender: f.gender ? null : filled.gender, email: f.email ? null : filled.email };
       setReturning({ ...r, filled: true });
       update(filled);
     }).catch(() => {});
@@ -370,7 +413,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     ['visitor', !blocked, ''],
     ['visitor', NAME_RE.test(form.firstName.trim()), 'first name'],
     ['visitor', NAME_RE.test(form.lastName.trim()), 'last name'],
+    ['visitor', Boolean(form.gender), 'gender'],
     ['visitor', form.company.trim().length > 0, 'company'],
+    ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)'],
     ['host', Boolean(host), 'whom to meet'],
     ['capture', Boolean(photo), 'photo'],
     ['capture', Boolean(idImage), 'Aadhaar'],
@@ -381,7 +426,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const reset = () => {
     store.clear();
     autofill.current = null;
-    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null);
+    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null); setPhotoFace(null); setMatch(null);
     setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -395,9 +440,12 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     setBusy(true);
     setError('');
     try {
+      const faces = await Promise.race([matchDone.current, new Promise((r) => setTimeout(() => r(null), 8000))]); // the comparison is quick; never hold up a visitor for it
       const res = await api('/api/visits', {
         method: 'POST',
-        body: { ...form, mobile: digits, hostId: host.id, photo, idImage, idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
+        body: {
+          ...form, mobile: digits, hostId: host.id, photo, idImage,
+          ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
       });
       store.clear();
       onSubmitted({
@@ -476,7 +524,20 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           <label className="field"><span>First name</span><input className="input" value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
           <label className="field"><span>Last name</span><input className="input" value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
         </div>
+        <div className="field">
+          <span id="lbl-gender">Gender</span>
+          <div className="chips" role="radiogroup" aria-labelledby="lbl-gender" aria-invalid={tried && !form.gender}>
+            {GENDERS.map(([key, label]) => (
+              <button type="button" role="radio" aria-checked={form.gender === key} key={key} className="chip" aria-pressed={form.gender === key} onClick={() => update({ gender: form.gender === key ? '' : key })}>{label}</button>
+            ))}
+          </div>
+        </div>
         <label className="field"><span>Company or coming from</span><input className="input" value={form.company} onChange={(e) => update({ company: e.target.value })} autoComplete="off" maxLength={100} placeholder="e.g. Blue Dart, Infosys, Personal" /></label>
+        <label className="field">
+          <span>Email <span className="faint">· optional</span></span>
+          <input className="input" type="email" inputMode="email" value={form.email} onChange={(e) => update({ email: e.target.value })} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={120} aria-invalid={Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim())} />
+          {Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim()) && <span className="hint err">That email address does not look right.</span>}
+        </label>
         <div className="field">
           <span>Purpose <span className="faint">· optional</span></span>
           <div className="chips" role="group" aria-label="Purpose">
@@ -498,7 +559,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           <div className="field">
             <span>Live photo <span className="faint">· no mask or cap</span></span>
             {photo || cam === 'face'
-              ? <Camera mode="face" captured={photo} onCapture={(p) => { setPhoto(p); setCam(idImage ? null : 'aadhaar'); }} onRetake={() => { setPhoto(null); setCam('face'); }} />
+              ? <Camera mode="face" captured={photo} onCapture={(p, how) => { setPhotoMirrored(Boolean(how?.mirrored)); setPhoto(p); setCam(idImage ? null : 'aadhaar'); }} onRetake={() => { setPhoto(null); setCam('face'); }} />
               : <CamTile icon={UserRound} label="Take photo" onClick={() => setCam('face')} />}
           </div>
           <div className="field">
@@ -508,6 +569,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
               : <CamTile icon={CreditCard} label="Scan Aadhaar" onClick={() => setCam('aadhaar')} />}
           </div>
         </div>
+        <FaceMatch match={match} />
       </section>
 
       {error && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{error}</span></div>}
@@ -521,6 +583,33 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Live photo against the face on the Aadhaar card, compared on this device. Advice for the guard, never a decision.
+const MATCH_TEXT = {
+  strong: ['alert-ok', 'Looks like the same person.'],
+  possible: ['alert-warn', 'Could be the same person. Compare the photo and the card yourself.'],
+  weak: ['alert-bad', 'The faces do not look alike. Check the card and the person carefully.'],
+};
+const MATCH_NOTE = {
+  no_card_face: ['alert-warn', 'No face found on the card. Check the card by eye, or scan it again, flat and in good light.'],
+  no_photo_face: ['alert-warn', 'No face found in the live photo. Retake it with the visitor facing the camera.'],
+  unavailable: ['', 'Face match is not available on this device. Check the card by eye.'],
+};
+function FaceMatch({ match }) {
+  if (!match) return null;
+  if (match === 'working') return <div className="alert face-match" role="status"><Spinner /><span className="grow">Comparing the photo with the card…</span></div>;
+  const scored = match.status === 'scored';
+  const [tone, text] = scored ? MATCH_TEXT[bandOf(match.score)] : MATCH_NOTE[match.status];
+  return (
+    <div className={`alert face-match ${tone}`} role="status">
+      {scored ? <span className="pct num">{match.score}%</span> : <ScanFace />}
+      <span className="grow">
+        {scored && <strong>Face match. </strong>}{text}
+        <span className="face-match-foot">Checked on this device. Only the score is saved, to help you, not to decide.</span>
+      </span>
     </div>
   );
 }

@@ -101,7 +101,7 @@ async function tokenFor(visitId) {
 // Each test visitor gets their own number: one person cannot be waiting or inside twice.
 const MOBILES = { Ravi: '9876543210', Meera: '9876543211', Kiran: '9876543212' };
 const checkIn = (first, hostId, mobile = MOBILES[first]) => call('POST', '/api/visits', {
-  firstName: first, lastName: 'Sharma', mobile, company: 'Acme Ltd', purpose: 'Demo',
+  firstName: first, lastName: 'Sharma', gender: 'male', mobile, company: 'Acme Ltd', purpose: 'Demo',
   hostId, photo: jpeg(), idImage: jpeg(), idMaskConfirmed: true,
 }, guard);
 
@@ -209,10 +209,11 @@ test('admin can download visits as an Excel-safe sheet and as a ZIP with photos'
   await wb.xlsx.load(Buffer.from(await xr.arrayBuffer()));
   const ws = wb.getWorksheet('Visits');
   const header = ws.getRow(1).values.slice(1);
-  assert.deepEqual(header.slice(0, 5), ['Visitor ID', 'Date', 'Pass no', 'Name', 'Mobile (+91)']);
+  assert.deepEqual(header.slice(0, 6), ['Visitor ID', 'Date', 'Pass no', 'Name', 'Gender', 'Mobile (+91)']);
   const ravi = ws.getSheetValues().find((r) => r && r[4] === 'Ravi Sharma');
   assert.ok(ravi, 'a row per visit');
-  assert.equal(ravi[5], '98765 43210');
+  assert.equal(ravi[5], 'Male');
+  assert.equal(ravi[6], '98765 43210');
   assert.ok(ravi[2] instanceof Date, 'Date is a real date, sortable in Excel');
   assert.ok(wb.getWorksheet('About this download'), 'says what the file contains');
 });
@@ -283,7 +284,7 @@ test('mobiles must be real Indian mobiles; all-lowercase names are tidied', asyn
   const bad = await checkIn('Test', hostIds.asha, '5123456789');
   assert.equal(bad.status, 400);
   const r = await call('POST', '/api/visits', {
-    firstName: 'priya', lastName: "d'souza", mobile: '09833333333', company: 'X Corp',
+    firstName: 'priya', lastName: "d'souza", gender: 'female', mobile: '09833333333', company: 'X Corp',
     hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), idMaskConfirmed: true,
   }, guard);
   assert.equal(r.status, 201);
@@ -292,6 +293,55 @@ test('mobiles must be real Indian mobiles; all-lowercase names are tidied', asyn
   assert.equal(v.firstName, 'Priya');
   assert.equal(v.lastName, "D'Souza");
   assert.equal(v.mobile, '+919833333333');
+});
+
+test('gender is required; the on-device face match score is kept, clamped and shown to the admin only', async () => {
+  const body = { firstName: 'Anil', lastName: 'Rao', company: 'Rao Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg() };
+  const none = await call('POST', '/api/visits', { ...body, mobile: '9844400001' }, guard);
+  assert.equal(none.status, 400);
+  assert.match(none.body.error, /male, female or other/i);
+  assert.equal((await call('POST', '/api/visits', { ...body, mobile: '9844400001', gender: 'robot' }, guard)).status, 400);
+
+  const ok = await call('POST', '/api/visits', { ...body, mobile: '9844400002', gender: 'other', faceMatch: 'scored', faceMatchScore: 73.6 }, guard);
+  assert.equal(ok.status, 201);
+  const { Visit } = require('../src/models');
+  const v = await Visit.findById(ok.body.id).lean();
+  assert.equal(v.gender, 'other');
+  assert.equal(v.faceMatchStatus, 'scored');
+  assert.equal(v.faceMatchScore, 74);
+
+  // A made-up or out-of-range score is ignored, and a score without the "scored" flag is not stored.
+  for (const [i, extra] of [{ faceMatch: 'scored', faceMatchScore: 240 }, { faceMatch: 'scored', faceMatchScore: 'high' }, { faceMatchScore: 90 }].entries()) {
+    const r = await call('POST', '/api/visits', { ...body, mobile: `984440001${i}`, gender: 'female', ...extra }, guard);
+    assert.equal(r.status, 201);
+    const d = await Visit.findById(r.body.id).lean();
+    assert.equal(d.faceMatchScore, undefined);
+    assert.equal(d.faceMatchStatus, undefined);
+  }
+  const noFace = await call('POST', '/api/visits', { ...body, mobile: '9844400020', gender: 'male', faceMatch: 'no_card_face' }, guard);
+  assert.equal((await Visit.findById(noFace.body.id).lean()).faceMatchStatus, 'no_card_face');
+
+  const asAdmin = await call('GET', `/api/visits/${ok.body.id}`, null, admin);
+  assert.equal(asAdmin.body.gender, 'other');
+  assert.equal(asAdmin.body.faceMatchScore, 74);
+  const asGuard = await call('GET', `/api/visits/${ok.body.id}`, null, guard);
+  assert.equal(asGuard.body.faceMatchScore, undefined, 'the guard sees the score at the desk, the stored value is admin-only');
+
+  const hist = await call('GET', '/api/admin/visits?name=Anil', null, admin);
+  assert.ok(hist.body.rows.some((r) => r.gender === 'other' && r.faceMatchScore === 74));
+  const csv = await fetch(`${base}/api/admin/visits.csv?name=Anil`, { headers: { Cookie: admin } }).then((r) => r.text());
+  assert.match(csv, /"Gender"/);
+  assert.match(csv, /"Other"/);
+  assert.match(csv, /"74"/);
+  const lookup = await call('GET', '/api/visits/lookup?mobile=9844400002', null, guard);
+  assert.equal(lookup.body.gender, 'other', 'a returning visitor comes back with their gender filled in');
+
+  // Email is optional: empty is fine, a malformed one is refused, a good one is kept in lower case.
+  assert.equal((await call('POST', '/api/visits', { ...body, mobile: '9844400030', gender: 'male', email: 'not-an-email' }, guard)).status, 400);
+  const withMail = await call('POST', '/api/visits', { ...body, mobile: '9844400031', gender: 'male', email: ' Anil.Rao@Example.com ' }, guard);
+  assert.equal(withMail.status, 201);
+  assert.equal((await Visit.findById(withMail.body.id).lean()).email, 'anil.rao@example.com');
+  assert.equal((await Visit.findById(ok.body.id).lean()).email, undefined);
 });
 
 test('admin manages staff: add a guard, reset signs them out everywhere, cannot lock themselves out', async () => {
@@ -456,10 +506,10 @@ test('expected visitor: admin registers them, the guard sees them on lookup, and
   assert.equal(look.body.invite.host.id, hostIds.rahul);
 
   // Expected for Rahul, but sent to Asha: the shortcut is refused rather than silently ignored.
-  const wrongHost = await call('POST', '/api/visits', { firstName: 'Neel', lastName: 'Joshi', mobile: '9811122233', company: 'Joshi & Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
+  const wrongHost = await call('POST', '/api/visits', { firstName: 'Neel', lastName: 'Joshi', gender: 'male', mobile: '9811122233', company: 'Joshi & Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
   assert.equal(wrongHost.status, 409);
 
-  const v = await call('POST', '/api/visits', { firstName: 'Neel', lastName: 'Joshi', mobile: '9811122233', company: 'Joshi & Co', hostId: hostIds.rahul, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
+  const v = await call('POST', '/api/visits', { firstName: 'Neel', lastName: 'Joshi', gender: 'male', mobile: '9811122233', company: 'Joshi & Co', hostId: hostIds.rahul, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
   assert.equal(v.status, 201);
   assert.equal(v.body.status, 'approved', 'let in on arrival');
   assert.ok(v.body.dailyNumber >= 1, 'pass number issued');

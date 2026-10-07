@@ -43,8 +43,8 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
   return {
     total, page, limit, docs: visits,
     rows: visits.map((v) => ({
-      id: String(v._id), ref: v.ref, name: `${v.firstName} ${v.lastName}`, mobile: v.mobile, company: v.company,
-      purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status,
+      id: String(v._id), ref: v.ref, name: `${v.firstName} ${v.lastName}`, mobile: v.mobile, email: v.email ?? null, company: v.company,
+      purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status, gender: v.gender ?? null, faceMatchScore: v.faceMatchScore ?? null,
       dailyNumber: v.dailyNumber ?? null, dailyDay: v.dailyDay ?? null, visitDay: v.visitDay,
       createdAt: v.createdAt, decidedAt: v.decidedAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason,
       hasIdImage: Boolean(v.idImagePath),
@@ -78,15 +78,15 @@ const sheetCell = (v) => csvCell(/^[=+\-@\t\r]/.test(String(v ?? '')) ? `'${v}` 
 
 // Excel reads UTF-8 CSV correctly only with a BOM; CRLF keeps Excel and Notepad happy.
 function visitsSheet(docs) {
-  const header = ['Visitor ID', 'Date', 'Pass no', 'First name', 'Last name', `Mobile (${config.defaultCountryCode})`, 'Company', 'Purpose', 'Host', 'Flat / dept',
-    'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Force checkout reason', 'Photo file'];
+  const header = ['Visitor ID', 'Date', 'Pass no', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Company', 'Purpose', 'Host', 'Flat / dept',
+    'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Force checkout reason', 'Face match %', 'Photo file'];
   const lines = docs.map((v) => {
     const admitted = ['approved', 'checked_out', 'force_checked_out'].includes(v.status);
     const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : null;
     const mins = admitted && v.decidedAt && end ? Math.round((end - new Date(v.decidedAt)) / 60000) : '';
-    return [v.ref, v.visitDay, v.dailyNumber ?? '', v.firstName, v.lastName, sheetMobile(v.mobile), v.company, v.purpose, v.host?.fullName, v.host?.unit,
+    return [v.ref, v.visitDay, v.dailyNumber ?? '', v.firstName, v.lastName, exporter.GENDER_LABEL[v.gender] || '', sheetMobile(v.mobile), v.email, v.company, v.purpose, v.host?.fullName, v.host?.unit,
       STATUS_LABEL[v.status] || v.status, localStamp(v.createdAt), admitted ? localStamp(v.decidedAt) : '', localStamp(v.checkedOutAt),
-      mins, v.forceReason, v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
+      mins, v.forceReason, v.faceMatchScore ?? '', v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
   });
   return `﻿${[header.map(sheetCell).join(','), ...lines].join('\r\n')}\r\n`;
 }

@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { ToastProvider } from './components/ui.jsx';
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './styles.css';
 
 // A render error should never leave a guard staring at a blank page. Typed form data survives in storage.

@@ -31,6 +31,13 @@ The pass counter is keyed by the site-local date (`SITE_TIMEZONE`). A new day st
 - The visit records how it was masked (`auto`, `already`, `guide`, plus `+manual`), shown in the admin's visit details.
 - Retention is set in Admin → Settings (1 day to 1 year); older masked images are deleted automatically. Admin views are audited. Confirm the period with your legal team under the DPDP Act 2023.
 
+## Face match (photo vs Aadhaar card)
+- On the guard's device, the live photo is compared with the face on the card (BlazeFace finds and straightens the face, SFace describes it). Models and the WebAssembly runtime are served from `/faces` on our own site (about 27 MB, downloaded once and cached; started while the guard types). Nothing is sent anywhere: the server stores only the score (0-100), never a face descriptor.
+- The score is advice, never a decision: 70+ "looks like the same person", 50-69 "compare yourself", under 50 "faces do not look alike". If no face is found on the card or the photo, the guard is told and the visit goes ahead as usual.
+- **Calibrate before relying on it.** The bands come from SFace's published threshold (cosine 0.363 = 50) and a small test (same person on a different photo scored cosine 0.45-0.73, different people up to 0.27). Aadhaar photos are small and old, so test about 50 real card/person pairs at your gate and adjust `COSINE` in `client/src/lib/faceMatch.js`.
+- Face recognition is less accurate for some groups and in poor light; this is why it never admits or refuses anyone. Treat face data as sensitive personal data under the DPDP Act and mention it in your visitor notice.
+- The model (`client/vendor/sface/`) is Apache-2.0 (OpenCV model zoo); the Human library is MIT; onnxruntime-web is MIT.
+
 ## Audit and roles
 - Every check-in, approval, rejection, checkout, force checkout, print, and ID image view is written to the `audits` collection.
 - Restrict MongoDB write access so the audit collection cannot be edited by the application user.

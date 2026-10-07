@@ -4,6 +4,8 @@ const config = require('../config');
 // Builds every download format from one normalised record per visit, so the Excel sheet, the
 // printable report and the folder of photos can never disagree with each other.
 
+const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
+
 const STATUS_LABEL = {
   pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'No response',
   cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Checked out by admin',
@@ -39,7 +41,9 @@ function records(docs) {
       day: v.visitDay,
       pass: v.dailyNumber ?? null,
       name: `${v.firstName} ${v.lastName}`,
+      gender: GENDER_LABEL[v.gender] || '',
       mobile: localMobile(v.mobile),
+      email: v.email || '',
       company: v.company || '',
       purpose: v.purpose || '',
       host: v.host?.fullName || '',
@@ -51,6 +55,7 @@ function records(docs) {
       left: v.checkedOutAt || null,
       minutes,
       note: v.forceReason || '',
+      faceMatch: v.faceMatchScore ?? null,
       folder: `${v.visitDay}/${v.ref} ${safe(`${v.firstName} ${v.lastName}`)}`,
       photoPath: v.photoPath || null,
       idImagePath: v.idImagePath || null,
@@ -73,7 +78,9 @@ async function workbook(recs, { files = null, meta }) {
     { header: 'Date', key: 'day', width: 13, style: { numFmt: 'dd-mmm-yyyy' } },
     { header: 'Pass no', key: 'pass', width: 9 },
     { header: 'Name', key: 'name', width: 24 },
+    { header: 'Gender', key: 'gender', width: 9 },
     { header: `Mobile (${config.defaultCountryCode})`, key: 'mobile', width: 14 },
+    { header: 'Email', key: 'email', width: 24 },
     { header: 'Company', key: 'company', width: 22 },
     { header: 'Purpose', key: 'purpose', width: 15 },
     { header: 'Meeting', key: 'host', width: 20 },
@@ -84,6 +91,7 @@ async function workbook(recs, { files = null, meta }) {
     { header: 'Left', key: 'left', width: 18, style: when },
     { header: 'Time inside', key: 'inside', width: 13 },
     { header: 'Checkout note', key: 'note', width: 30 },
+    { header: 'Face match %', key: 'faceMatch', width: 13 },
     ...(files ? [{ header: 'Photo', key: 'photo', width: 10 }, { header: 'Aadhaar (masked)', key: 'aadhaar', width: 18 }] : []),
   ];
 
@@ -149,12 +157,15 @@ function report(recs, { meta, aadhaar }) {
         <p class="sub">${esc(r.company)}${r.purpose ? ` · ${esc(r.purpose)}` : ''}</p>
         <dl>
           <dt>Visitor ID</dt><dd>${esc(r.ref)}</dd>
+          ${r.gender ? `<dt>Gender</dt><dd>${esc(r.gender)}</dd>` : ''}
           <dt>Mobile</dt><dd>${esc(r.mobile)}</dd>
+          ${r.email ? `<dt>Email</dt><dd>${esc(r.email)}</dd>` : ''}
           <dt>Meeting</dt><dd>${esc(r.host)}, ${esc(r.unit)}</dd>
           <dt>Status</dt><dd>${esc(r.status)}</dd>
           <dt>Arrived</dt><dd>${esc(human(r.arrived))}</dd>
           ${r.letIn ? `<dt>Let in</dt><dd>${esc(human(r.letIn))}</dd>` : ''}
           ${r.left ? `<dt>Left</dt><dd>${esc(human(r.left))}${r.minutes != null ? ` (${duration(r.minutes)} inside)` : ''}</dd>` : ''}
+          ${r.faceMatch != null ? `<dt>Face match</dt><dd>${r.faceMatch}% (photo vs Aadhaar card)</dd>` : ''}
           ${r.note ? `<dt>Note</dt><dd>${esc(r.note)}</dd>` : ''}
         </dl>
       </div>
@@ -210,4 +221,4 @@ function report(recs, { meta, aadhaar }) {
 </html>`;
 }
 
-module.exports = { records, workbook, report, STATUS_LABEL };
+module.exports = { records, workbook, report, STATUS_LABEL, GENDER_LABEL };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CameraOff, CheckCircle2, Maximize2, RefreshCcw, SwitchCamera } from 'lucide-react';
 import { CARD_ASPECT, GUIDE_WIDTH, grabCard, maskCard, paintBoxes } from '../lib/aadhaarMask.js';
+import { describeCard } from '../lib/faceMatch.js';
 import { Spinner } from './ui.jsx';
 import ImageViewer from './ImageViewer.jsx';
 
@@ -53,8 +54,14 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
       setBusy(true);
       try {
         const card = grabCard(video, boxRef.current);
+        // The face on the card is read on this device from a copy, while the number is being hidden. The descriptor stays in memory.
+        const copy = document.createElement('canvas');
+        copy.width = card.width;
+        copy.height = card.height;
+        copy.getContext('2d').drawImage(card, 0, 0);
+        const face = describeCard(copy).catch(() => 'unavailable');
         const result = await maskCard(card); // the unmasked card never leaves this function
-        onCapture(result.dataUrl, result);
+        onCapture(result.dataUrl, { ...result, face: await face });
       } finally {
         setBusy(false);
       }
@@ -67,7 +74,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
     const ctx = canvas.getContext('2d');
     if (facing === 'user') { ctx.translate(w, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    onCapture(canvas.toDataURL('image/jpeg', 0.82));
+    onCapture(canvas.toDataURL('image/jpeg', 0.82), { mirrored: facing === 'user' });
   };
 
   if (captured) {

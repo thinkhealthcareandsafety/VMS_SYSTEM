@@ -594,6 +594,7 @@ const ACTIONS = {
   'user.password_reset': ['Staff password reset', 'warn'],
   'auth.login_failed': ['Failed sign-in attempt', 'bad'],
 };
+const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
 const actionLabel = (a) => ACTIONS[a]?.[0] || a;
 const TL_ICON = { ok: CheckCircle2, bad: XCircle, warn: AlertTriangle };
 // How the guard's phone masked the Aadhaar number before upload.
@@ -663,6 +664,8 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
               <dt>Visitor ID</dt><dd className="mono">{v.ref}</dd>
               {v.dailyNumber != null && <><dt>Pass number</dt><dd className="num">{v.dailyNumber} · {fmtDate(v.decidedAt)}</dd></>}
               <dt>Mobile</dt><dd className="num">{fmtMobile(v.mobile)}</dd>
+              {v.email && <><dt>Email</dt><dd>{v.email}</dd></>}
+              <dt>Gender</dt><dd>{GENDER_LABEL[v.gender] || <span className="faint">Not recorded</span>}</dd>
               <dt>Purpose</dt><dd>{v.purpose || <span className="faint">Not given</span>}</dd>
               <dt>Meeting</dt><dd>{v.host?.name}, {v.host?.unit}</dd>
               <dt>Arrived</dt><dd className="num">{fmtDateTime(v.createdAt)}</dd>
@@ -692,6 +695,13 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
                 </div>
               )}
               {v.idMaskMethod && <p className="faint" style={{ fontSize: 12.5, marginTop: 8 }}>{maskNote(v.idMaskMethod)}</p>}
+              {v.faceMatchStatus && (
+                <p className="faint" style={{ fontSize: 12.5, marginTop: 4 }}>
+                  {v.faceMatchStatus === 'scored'
+                    ? `Face match ${v.faceMatchScore}%: live photo against the card photo, compared on the guard’s device. Advice only.`
+                    : { no_card_face: 'Face match: no face could be read on the card.', no_photo_face: 'Face match: no face could be read in the live photo.', unavailable: 'Face match was not available on that device.' }[v.faceMatchStatus]}
+                </p>
+              )}
             </div>
 
             <div>

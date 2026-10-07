@@ -14,7 +14,15 @@ const telegram = require('./services/telegram');
 function createApp() {
   const app = express();
   app.set('trust proxy', config.trustProxy);
-  app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], imgSrc: ["'self'", 'data:', 'blob:'], connectSrc: ["'self'"] } } }));
+  // 'wasm-unsafe-eval' lets the on-device engines (Aadhaar reader, face match) run WebAssembly; no other script source is allowed.
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"], scriptSrc: ["'self'", "'wasm-unsafe-eval'"], imgSrc: ["'self'", 'data:', 'blob:'],
+        mediaSrc: ["'self'", 'blob:', 'mediastream:'], connectSrc: ["'self'"], workerSrc: ["'self'"],
+      },
+    },
+  }));
   app.use(express.json({ limit: '6mb' }));
   app.use(cookieParser());
   app.use('/api', rateLimit({ windowMs: 60e3, limit: 300, standardHeaders: true, legacyHeaders: false }));

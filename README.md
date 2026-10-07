@@ -3,7 +3,8 @@
 Gate check-in, host approval and a live roster of everyone on site.
 
 **Guard desk** (phone or desktop)
-- One-page check-in: mobile, name, company, host, live photo, Aadhaar (first 8 digits masked on the device before upload).
+- One-page check-in: mobile, name, gender, optional email, company, host, live photo, Aadhaar (first 8 digits masked on the device before upload).
+- Face match: the live photo is compared with the face on the Aadhaar card on the guard's device, and the guard sees a score (advice only; only the score is saved).
 - Returning visitors fill in from their mobile number; expected visitors are let in without waiting; blocked visitors are stopped with a "Do not admit" warning.
 - Live "Waiting for host" list with a chime on every reply; resend or cancel inline.
 - Visitor pass printed from the browser on any printer (80 mm receipt layout); printing is the handover.

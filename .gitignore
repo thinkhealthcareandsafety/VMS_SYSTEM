@@ -13,3 +13,6 @@ data/
 
 # On-device OCR engine, copied from node_modules at build time
 client/public/ocr/
+
+# On-device face-matching models, copied from node_modules at build time
+client/public/faces/

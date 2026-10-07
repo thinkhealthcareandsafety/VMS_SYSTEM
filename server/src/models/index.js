@@ -30,6 +30,8 @@ const visitSchema = new Schema({
   firstName: { type: String, required: true, trim: true },
   lastName: { type: String, required: true, trim: true },
   mobile: { type: String, required: true },
+  email: { type: String, trim: true, lowercase: true },           // optional
+  gender: { type: String, enum: ['male', 'female', 'other'] },  // chosen by the guard; absent on visits from before the field existed
   company: { type: String, required: true, trim: true },
   purpose: { type: String, trim: true, default: '' },
   host: { type: Schema.Types.ObjectId, ref: 'Host', required: true },
@@ -44,6 +46,10 @@ const visitSchema = new Schema({
   idImagePath: { type: String },                             // MASKED Aadhaar image only
   idMaskMethod: { type: String },                            // auto | already | guide, + "+manual" if the guard blacked out more
   idImagePurgedAt: { type: Date },
+  // Live photo vs the face on the Aadhaar card, compared on the guard's device. Only the score is kept, never a face template.
+  // Advisory: it helps the guard look twice, it never admits or refuses anyone.
+  faceMatchScore: { type: Number, min: 0, max: 100 },
+  faceMatchStatus: { type: String, enum: ['scored', 'no_card_face', 'no_photo_face', 'unavailable'] },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   decidedAt: { type: Date },
   checkedInAt: { type: Date },

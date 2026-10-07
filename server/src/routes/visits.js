@@ -14,8 +14,18 @@ const router = express.Router();
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
 const MAX_PHOTO = 2 * 1024 * 1024;
 const MAX_ID = 3 * 1024 * 1024;
+const GENDERS = ['male', 'female', 'other'];
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const isId = (v) => mongoose.isValidObjectId(v);
+
+// The face comparison is made on the guard's device; the server only keeps the score (0-100) and why there is none.
+function faceMatchFrom(b) {
+  const score = Number(b.faceMatchScore);
+  if (b.faceMatch === 'scored' && Number.isFinite(score) && score >= 0 && score <= 100) return { faceMatchStatus: 'scored', faceMatchScore: Math.round(score) };
+  if (['no_card_face', 'no_photo_face', 'unavailable'].includes(b.faceMatch)) return { faceMatchStatus: b.faceMatch };
+  return {};
+}
 const publicVisit = (v, host, withMobile = false) => ({
   id: String(v._id),
   ref: v.ref,
@@ -23,11 +33,12 @@ const publicVisit = (v, host, withMobile = false) => ({
   lastName: v.lastName,
   company: v.company,
   purpose: v.purpose,
+  gender: v.gender ?? null,
   status: v.status,
   dailyNumber: v.dailyNumber ?? null,
   dailyDay: v.dailyDay ?? null,
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
-  ...(withMobile ? { mobile: v.mobile, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod } : {}),
+  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null } : {}),
   decidedAt: v.decidedAt,
   checkedOutAt: v.checkedOutAt,
 });
@@ -91,9 +102,13 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   const company = cleanText(b.company, 100);
   const purpose = cleanText(b.purpose, 100);
   const mobile = normalizeMobile(b.mobile);
+  const gender = GENDERS.includes(b.gender) ? b.gender : '';
+  const email = cleanText(b.email, 120).toLowerCase();
 
   if (!NAME_RE.test(firstName) || !NAME_RE.test(lastName)) return res.status(400).json({ error: 'Enter a valid first and last name' });
+  if (!gender) return res.status(400).json({ error: 'Choose male, female or other' });
   if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number' });
+  if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email address does not look right. Fix it or leave it empty.' });
   if (!company) return res.status(400).json({ error: 'Company / source is required' });
   if (!isId(b.hostId)) return res.status(400).json({ error: 'Select whom to meet' });
 
@@ -132,11 +147,12 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     const visitorName = `${firstName} ${lastName}`;
     const visit = await Visit.create({
       ref: await nextVisitorRef(),
-      firstName, lastName, mobile, company, purpose,
+      firstName, lastName, mobile, email: email || undefined, gender, company, purpose,
       host: host._id,
       status: 'pending',
       visitDay: siteDay(),
       photoPath, idImagePath: idPath, idMaskMethod,
+      ...faceMatchFrom(b),
       createdBy: req.user.id,
     });
     audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });
@@ -178,7 +194,7 @@ router.get('/lookup', requireRole('guard', 'admin'), async (req, res) => {
   const mobile = normalizeMobile(req.query.mobile);
   if (!mobile) return res.json({ found: false });
   const [last, blocked, invite] = await Promise.all([
-    Visit.findOne({ mobile }, 'firstName lastName company createdAt').sort({ createdAt: -1 }).lean(),
+    Visit.findOne({ mobile }, 'firstName lastName gender email company createdAt').sort({ createdAt: -1 }).lean(),
     blockFor(mobile),
     inviteFor(mobile),
   ]);
@@ -186,7 +202,7 @@ router.get('/lookup', requireRole('guard', 'admin'), async (req, res) => {
   const active = last ? await activeVisitFor(mobile) : null;
   res.json({
     found: Boolean(last),
-    ...(last ? { firstName: last.firstName, lastName: last.lastName, company: last.company, lastVisit: last.createdAt, visits } : {}),
+    ...(last ? { firstName: last.firstName, lastName: last.lastName, gender: last.gender || null, email: last.email || '', company: last.company, lastVisit: last.createdAt, visits } : {}),
     active: active ? { ...activeSummary(active), message: activeMessage(active) } : null,
     blocked: blocked ? { message: blockMessage(blocked) } : null,
     invite: invite && invite.host?.active ? {

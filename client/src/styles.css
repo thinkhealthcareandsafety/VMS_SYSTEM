@@ -34,8 +34,8 @@
   --shadow-lg: 0 24px 48px -12px rgba(15, 20, 30, 0.22), 0 4px 12px rgba(15, 20, 30, 0.06);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
-  --font: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --font: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
   color-scheme: light;
 }
 
@@ -718,3 +718,10 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
   .viewer-hint { flex-basis: 100%; }
   .viewer-area { padding: 8px; }
 }
+
+/* Face match: live photo against the face on the Aadhaar card */
+.face-match { align-items: center; margin-top: 2px; animation: pop 240ms var(--ease) both; }
+.face-match .pct { font-size: 26px; font-weight: 700; line-height: 1; min-width: 3.1ch; letter-spacing: -0.02em; }
+.face-match > svg:first-child { margin-top: 0; }
+.face-match-foot { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; opacity: 0.85; }
+.chips[aria-invalid='true'] .chip { border-color: var(--bad); }
