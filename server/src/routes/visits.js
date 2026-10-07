@@ -5,7 +5,9 @@ const path = require('node:path');
 const mongoose = require('mongoose');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
-const { Visit, Host, ApprovalToken, Outbox, Invite, Block } = require('../models');
+const { Visit, Host, ApprovalToken, Outbox, Invite, Block, Otp } = require('../models');
+const settings = require('../services/settings');
+const messaging = require('../services/messaging');
 const { retireTelegram } = require('../services/notify');
 const telegram = require('../services/telegram');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
@@ -38,7 +40,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   dailyNumber: v.dailyNumber ?? null,
   dailyDay: v.dailyDay ?? null,
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
-  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null } : {}),
+  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
   decidedAt: v.decidedAt,
   checkedOutAt: v.checkedOutAt,
 });
@@ -94,6 +96,73 @@ async function smsStatusFor(visitIds) {
   return new Map(rows.map((r) => [String(r._id), r]));
 }
 
+// ---------- Mobile verification by OTP ----------
+const OTP_RESEND_GAP = 30e3;     // seconds between two codes to the same number
+const OTP_PER_HOUR = 5;          // codes per number per hour
+const OTP_MAX_TRIES = 3;
+const OTP_FRESH_MS = 15 * 60e3;  // a verification counts for this long, so the guard can finish the check-in
+const otpHash = (mobile, code) => sha256(`otp:${mobile}:${code}:${process.env.JWT_SECRET}`);
+
+// Was this number already proven recently? Returns how, or null. `invite`: an expected visitor the admin entered.
+async function verifiedVia(mobile, invite) {
+  if (invite) return 'expected'; // the host gave us this number
+  if (await Otp.exists({ mobile, verifiedAt: { $gte: new Date(Date.now() - OTP_FRESH_MS) } })) return 'otp';
+  const since = new Date(Date.now() - config.otp.verifiedDays * 86400e3);
+  if (await Visit.exists({ mobile, mobileVerified: 'otp', mobileVerifiedAt: { $gte: since } })) return 'returning';
+  return null;
+}
+
+router.post('/otp/send', requireRole('guard', 'admin'), async (req, res) => {
+  const { otpMode } = await settings.get();
+  if (otpMode === 'off') return res.status(409).json({ error: 'Number verification is switched off in Settings' });
+  const mobile = normalizeMobile(req.body?.mobile);
+  if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number' });
+
+  const last = await Otp.findOne({ mobile }).sort({ createdAt: -1 }).lean();
+  if (last && Date.now() - new Date(last.createdAt).getTime() < OTP_RESEND_GAP) {
+    return res.status(429).json({ error: 'A code was just sent. Wait a few seconds before sending another.' });
+  }
+  if (await Otp.countDocuments({ mobile, createdAt: { $gte: new Date(Date.now() - 3600e3) } }) >= OTP_PER_HOUR) {
+    return res.status(429).json({ error: 'Too many codes for this number. Try again in an hour, or skip verification.' });
+  }
+  if (await Otp.countDocuments({ createdAt: { $gte: new Date(Date.now() - 86400e3) } }) >= config.otp.dailyLimit) {
+    return res.status(429).json({ error: 'The daily SMS limit was reached. Skip verification for now and tell your admin.' });
+  }
+
+  const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+  const doc = await Otp.create({ mobile, codeHash: otpHash(mobile, code), expiresAt: new Date(Date.now() + config.otp.expiryMinutes * 60e3), createdBy: req.user.id });
+  try {
+    await messaging.sendOtp(mobile, code);
+  } catch (err) {
+    await Otp.deleteOne({ _id: doc._id });
+    console.error('[otp] send failed:', err.message);
+    audit(req.user, 'otp.failed', { details: { mobile, error: err.message }, ip: req.ip });
+    return res.status(502).json({ error: 'The SMS could not be sent. Try again, or skip verification.' });
+  }
+  audit(req.user, 'otp.sent', { details: { mobile }, ip: req.ip });
+  res.json({ ok: true, expiresInSeconds: config.otp.expiryMinutes * 60, live: messaging.otpLive() });
+});
+
+router.post('/otp/verify', requireRole('guard', 'admin'), async (req, res) => {
+  const mobile = normalizeMobile(req.body?.mobile);
+  const code = String(req.body?.code || '').replace(/\D/g, '');
+  if (!mobile || code.length !== 6) return res.status(400).json({ error: 'Enter the 6-digit code' });
+  const open = await Otp.findOne({ mobile, verifiedAt: { $exists: false }, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
+  if (!open) return res.status(400).json({ error: 'That code has expired. Send a new one.' });
+  const tried = await Otp.findOneAndUpdate({ _id: open._id, attempts: { $lt: OTP_MAX_TRIES } }, { $inc: { attempts: 1 } }, { new: true });
+  if (!tried) return res.status(429).json({ error: 'Too many wrong tries. Send a new code.' });
+  const a = Buffer.from(otpHash(mobile, code));
+  const b = Buffer.from(tried.codeHash);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    audit(req.user, 'otp.wrong', { details: { mobile }, ip: req.ip });
+    return res.status(400).json({ error: 'Wrong code', triesLeft: OTP_MAX_TRIES - tried.attempts });
+  }
+  tried.verifiedAt = new Date();
+  await tried.save();
+  audit(req.user, 'otp.verified', { details: { mobile }, ip: req.ip });
+  res.json({ verified: true });
+});
+
 // Guard check-in: captures visitor, masked Aadhaar, host, and sends approval SMS.
 router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   const b = req.body || {};
@@ -134,6 +203,16 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     }
   }
 
+  // Mobile verification: off, optional (the guard may verify or skip) or required (only an admin may skip).
+  const { otpMode } = await settings.get();
+  let mobileCheck = {};
+  if (otpMode !== 'off') {
+    const via = await verifiedVia(mobile, invite);
+    if (via) mobileCheck = { mobileVerified: via, mobileVerifiedAt: new Date() };
+    else if (b.otpSkip === true && (otpMode === 'optional' || req.user.role === 'admin')) mobileCheck = { mobileVerified: 'skipped', mobileVerifiedAt: new Date() };
+    else if (otpMode === 'required') return res.status(409).json({ code: 'verify_required', error: 'Verify the visitor’s mobile number with the code first.' });
+  }
+
   const photo = decodeJpeg(b.photo, MAX_PHOTO);
   if (!photo) return res.status(400).json({ error: 'A live photo is required' });
   const idImage = decodeJpeg(b.idImage, MAX_ID);
@@ -152,7 +231,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       status: 'pending',
       visitDay: siteDay(),
       photoPath, idImagePath: idPath, idMaskMethod,
-      ...faceMatchFrom(b),
+      ...faceMatchFrom(b), ...mobileCheck,
       createdBy: req.user.id,
     });
     audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });
@@ -193,6 +272,7 @@ router.get('/inside', requireRole('guard', 'admin'), async (req, res) => {
 router.get('/lookup', requireRole('guard', 'admin'), async (req, res) => {
   const mobile = normalizeMobile(req.query.mobile);
   if (!mobile) return res.json({ found: false });
+  const { otpMode } = await settings.get();
   const [last, blocked, invite] = await Promise.all([
     Visit.findOne({ mobile }, 'firstName lastName gender email company createdAt').sort({ createdAt: -1 }).lean(),
     blockFor(mobile),
@@ -200,7 +280,9 @@ router.get('/lookup', requireRole('guard', 'admin'), async (req, res) => {
   ]);
   const visits = last ? await Visit.countDocuments({ mobile }) : 0;
   const active = last ? await activeVisitFor(mobile) : null;
+  const otpVia = otpMode === 'off' ? null : await verifiedVia(mobile, invite && invite.host?.active ? invite : null);
   res.json({
+    otp: { mode: otpMode, verified: otpVia },
     found: Boolean(last),
     ...(last ? { firstName: last.firstName, lastName: last.lastName, gender: last.gender || null, email: last.email || '', company: last.company, lastVisit: last.createdAt, visits } : {}),
     active: active ? { ...activeSummary(active), message: activeMessage(active) } : null,

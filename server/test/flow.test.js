@@ -344,6 +344,101 @@ test('gender is required; the on-device face match score is kept, clamped and sh
   assert.equal((await Visit.findById(ok.body.id).lean()).email, undefined);
 });
 
+test('mobile OTP: off by default, then optional and required modes, limits and expected visitors', async () => {
+  const messaging = require('../src/services/messaging');
+  const settings = require('../src/services/settings');
+  const { Visit, Otp } = require('../src/models');
+  const sent = [];
+  const realSend = messaging.sendOtp;
+  messaging.sendOtp = async (to, code) => { sent.push({ to, code }); return 'test'; };
+  const body = (mobile, extra = {}) => ({ firstName: 'Omar', lastName: 'Khan', gender: 'male', company: 'Khan Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), mobile, ...extra });
+  try {
+    // Off by default: no codes, check-in works as before, nothing is recorded about verification.
+    assert.equal((await call('POST', '/api/visits/otp/send', { mobile: '9855500001' }, guard)).status, 409);
+    const plain = await call('POST', '/api/visits', body('9855500001'), guard);
+    assert.equal(plain.status, 201);
+    assert.equal((await Visit.findById(plain.body.id).lean()).mobileVerified, undefined);
+
+    // Only admins can change the mode, and only to a known value.
+    assert.equal((await call('PATCH', '/api/admin/settings', { otpMode: 'required' }, guard)).status, 403);
+    assert.equal((await call('PATCH', '/api/admin/settings', { otpMode: 'sometimes' }, admin)).status, 400);
+    assert.equal((await call('PATCH', '/api/admin/settings', { otpMode: 'required' }, admin)).status, 200);
+
+    // Required: refused until the number is verified; the guard cannot skip.
+    const mobile = '9855500002';
+    assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.mode, 'required');
+    const refused = await call('POST', '/api/visits', body(mobile), guard);
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, 'verify_required');
+    assert.equal((await call('POST', '/api/visits', body(mobile, { otpSkip: true }), guard)).status, 409);
+
+    // Send, get it wrong, then right. Only a hash of the code is stored.
+    assert.equal((await call('POST', '/api/visits/otp/send', { mobile }, guard)).status, 200);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].code, /^\d{6}$/);
+    assert.equal((await Otp.findOne({ mobile: '+91' + mobile }).lean()).codeHash.includes(sent[0].code), false);
+    assert.equal((await call('POST', '/api/visits/otp/send', { mobile }, guard)).status, 429, 'resend needs a short wait');
+    const wrong = sent[0].code === '000000' ? '111111' : '000000';
+    const bad = await call('POST', '/api/visits/otp/verify', { mobile, code: wrong }, guard);
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.triesLeft, 2);
+    assert.equal((await call('POST', '/api/visits', body(mobile), guard)).status, 409, 'a wrong try does not verify');
+    const good = await call('POST', '/api/visits/otp/verify', { mobile, code: sent[0].code }, guard);
+    assert.equal(good.body.verified, true);
+    const ok = await call('POST', '/api/visits', body(mobile), guard);
+    assert.equal(ok.status, 201);
+    const saved = await Visit.findById(ok.body.id).lean();
+    assert.equal(saved.mobileVerified, 'otp');
+    assert.ok(saved.mobileVerifiedAt);
+
+    // Three wrong tries lock that code.
+    const m2 = '9855500003';
+    await call('POST', '/api/visits/otp/send', { mobile: m2 }, guard);
+    for (let i = 0; i < 3; i += 1) await call('POST', '/api/visits/otp/verify', { mobile: m2, code: '999999' }, guard);
+    const locked = await call('POST', '/api/visits/otp/verify', { mobile: m2, code: sent[sent.length - 1].code }, guard);
+    assert.equal(locked.status, 429);
+
+    // An expired code is refused.
+    const m3 = '9855500004';
+    await call('POST', '/api/visits/otp/send', { mobile: m3 }, guard);
+    await Otp.updateMany({ mobile: '+91' + m3 }, { expiresAt: new Date(Date.now() - 1000) });
+    assert.equal((await call('POST', '/api/visits/otp/verify', { mobile: m3, code: sent[sent.length - 1].code }, guard)).status, 400);
+
+    // Optional: no code needed; an explicit skip is recorded; a failed SMS never blocks the visitor.
+    assert.equal((await call('PATCH', '/api/admin/settings', { otpMode: 'optional' }, admin)).status, 200);
+    const skipped = await call('POST', '/api/visits', body('9855500005', { otpSkip: true }), guard);
+    assert.equal((await Visit.findById(skipped.body.id).lean()).mobileVerified, 'skipped');
+    const silent = await call('POST', '/api/visits', body('9855500006'), guard);
+    assert.equal(silent.status, 201);
+    assert.equal((await Visit.findById(silent.body.id).lean()).mobileVerified, undefined);
+    messaging.sendOtp = async () => { throw new Error('gateway down'); };
+    assert.equal((await call('POST', '/api/visits/otp/send', { mobile: '9855500007' }, guard)).status, 502);
+
+    // A number verified recently is not asked again; the lookup says so.
+    assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, 'otp', 'still fresh right after the code');
+    await Otp.updateMany({ mobile: '+91' + mobile }, { verifiedAt: new Date(Date.now() - 3600e3) });
+    const again = await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard);
+    assert.equal(again.body.otp.verified, 'returning');
+
+    // Expected visitors come with a number the host gave us: no code.
+    await call('PATCH', '/api/admin/settings', { otpMode: 'required' }, admin);
+    const day = require('../src/services/core').siteDay();
+    const inv = await call('POST', '/api/admin/invites', { firstName: 'Omar', lastName: 'Khan', mobile: '9855500008', company: 'Khan Co', hostId: hostIds.asha, day }, admin);
+    assert.equal(inv.status, 201);
+    const viaInvite = await call('POST', '/api/visits', body('9855500008', { inviteId: inv.body.id }), guard);
+    assert.equal(viaInvite.status, 201);
+    assert.equal((await Visit.findById(viaInvite.body.id).lean()).mobileVerified, 'expected');
+
+    // Admins may skip even in required mode (and it is on the record).
+    const adminSkip = await call('POST', '/api/visits', body('9855500009', { otpSkip: true }), admin);
+    assert.equal(adminSkip.status, 201);
+    assert.equal((await Visit.findById(adminSkip.body.id).lean()).mobileVerified, 'skipped');
+  } finally {
+    messaging.sendOtp = realSend;
+    await settings.update({ otpMode: 'off' });
+  }
+});
+
 test('admin manages staff: add a guard, reset signs them out everywhere, cannot lock themselves out', async () => {
   const created = await call('POST', '/api/admin/users', { username: 'gate2', fullName: 'Second Gate', role: 'guard' }, admin);
   assert.equal(created.status, 201);

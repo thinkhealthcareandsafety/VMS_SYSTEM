@@ -27,6 +27,14 @@ module.exports = {
     botUsername: env.TELEGRAM_BOT_USERNAME || '',   // optional; learned from Telegram when empty
     apiBase: env.TELEGRAM_API_BASE || 'https://api.telegram.org',
   },
+  // Mobile-number verification by OTP (MSG91). Without an auth key the code is only written to the server log (test mode).
+  otp: {
+    authKey: env.MSG91_AUTHKEY || '',
+    templateId: env.MSG91_OTP_TEMPLATE_ID || '',   // the DLT-approved OTP template, from MSG91 -> OTP
+    expiryMinutes: Number(env.OTP_EXPIRY_MINUTES || 5),
+    dailyLimit: Number(env.OTP_DAILY_LIMIT || 300), // SMS sent per day across the site: a cap on cost if someone keeps pressing "send"
+    verifiedDays: Number(env.OTP_VERIFIED_DAYS || 90), // a number verified within this many days is not asked again
+  },
   sms: {
     driver: env.SMS_DRIVER || 'console',   // console | http
     httpUrl: env.SMS_HTTP_URL || '',

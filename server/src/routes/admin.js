@@ -9,6 +9,7 @@ const archiver = require('archiver');
 const config = require('../config');
 const { requireRole } = require('../middleware/auth');
 const telegram = require('../services/telegram');
+const messaging = require('../services/messaging');
 const exporter = require('../services/export');
 const { Visit, Host, Outbox, Audit, User, Invite, Block } = require('../models');
 const settings = require('../services/settings');
@@ -44,7 +45,7 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
     total, page, limit, docs: visits,
     rows: visits.map((v) => ({
       id: String(v._id), ref: v.ref, name: `${v.firstName} ${v.lastName}`, mobile: v.mobile, email: v.email ?? null, company: v.company,
-      purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status, gender: v.gender ?? null, faceMatchScore: v.faceMatchScore ?? null,
+      purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status, gender: v.gender ?? null, faceMatchScore: v.faceMatchScore ?? null, mobileVerified: v.mobileVerified ?? null,
       dailyNumber: v.dailyNumber ?? null, dailyDay: v.dailyDay ?? null, visitDay: v.visitDay,
       createdAt: v.createdAt, decidedAt: v.decidedAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason,
       hasIdImage: Boolean(v.idImagePath),
@@ -78,13 +79,13 @@ const sheetCell = (v) => csvCell(/^[=+\-@\t\r]/.test(String(v ?? '')) ? `'${v}` 
 
 // Excel reads UTF-8 CSV correctly only with a BOM; CRLF keeps Excel and Notepad happy.
 function visitsSheet(docs) {
-  const header = ['Visitor ID', 'Date', 'Pass no', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Company', 'Purpose', 'Host', 'Flat / dept',
+  const header = ['Visitor ID', 'Date', 'Pass no', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Number checked', 'Company', 'Purpose', 'Host', 'Flat / dept',
     'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Force checkout reason', 'Face match %', 'Photo file'];
   const lines = docs.map((v) => {
     const admitted = ['approved', 'checked_out', 'force_checked_out'].includes(v.status);
     const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : null;
     const mins = admitted && v.decidedAt && end ? Math.round((end - new Date(v.decidedAt)) / 60000) : '';
-    return [v.ref, v.visitDay, v.dailyNumber ?? '', v.firstName, v.lastName, exporter.GENDER_LABEL[v.gender] || '', sheetMobile(v.mobile), v.email, v.company, v.purpose, v.host?.fullName, v.host?.unit,
+    return [v.ref, v.visitDay, v.dailyNumber ?? '', v.firstName, v.lastName, exporter.GENDER_LABEL[v.gender] || '', sheetMobile(v.mobile), v.email, exporter.VERIFIED_LABEL[v.mobileVerified] || '', v.company, v.purpose, v.host?.fullName, v.host?.unit,
       STATUS_LABEL[v.status] || v.status, localStamp(v.createdAt), admitted ? localStamp(v.decidedAt) : '', localStamp(v.checkedOutAt),
       mins, v.forceReason, v.faceMatchScore ?? '', v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
   });
@@ -376,6 +377,7 @@ router.get('/settings', requireRole('admin'), async (req, res) => {
     ...s,
     retentionChoices: RETENTION_DAYS,
     channels: {
+      otp: messaging.otpLive(),
       telegram: telegram.enabled() ? await telegram.botUsername().catch(() => null) || 'connected' : null,
       sms: config.sms.driver !== 'console',
       printer: config.printer.mode,
@@ -399,6 +401,10 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
   if (b.idRetentionDays !== undefined) {
     if (!RETENTION_DAYS.includes(Number(b.idRetentionDays))) return res.status(400).json({ error: 'Pick one of the listed retention periods' });
     patch.idRetentionDays = Number(b.idRetentionDays);
+  }
+  if (b.otpMode !== undefined) {
+    if (!['off', 'optional', 'required'].includes(b.otpMode)) return res.status(400).json({ error: 'Pick off, optional or required' });
+    patch.otpMode = b.otpMode;
   }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
   const before = await settings.get();

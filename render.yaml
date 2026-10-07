@@ -39,5 +39,9 @@ services:
         value: "off"
       - key: TELEGRAM_BOT_TOKEN   # free approval requests with Let them in / Decline buttons: create a bot with @BotFather
         sync: false
+      - key: MSG91_AUTHKEY          # MSG91 -> AuthKey. Paste it here in Render, never in chat or in git
+        sync: false
+      - key: MSG91_OTP_TEMPLATE_ID  # MSG91 -> OTP -> your DLT-approved OTP template (its template id)
+        sync: false
       - key: SMS_DRIVER      # switch to http once an SMS provider is set up
         value: console

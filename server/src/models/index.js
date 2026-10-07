@@ -48,6 +48,8 @@ const visitSchema = new Schema({
   idImagePurgedAt: { type: Date },
   // Live photo vs the face on the Aadhaar card, compared on the guard's device. Only the score is kept, never a face template.
   // Advisory: it helps the guard look twice, it never admits or refuses anyone.
+  mobileVerified: { type: String, enum: ['otp', 'expected', 'returning', 'skipped'] }, // how the number was checked; absent = not checked
+  mobileVerifiedAt: { type: Date },
   faceMatchScore: { type: Number, min: 0, max: 100 },
   faceMatchStatus: { type: String, enum: ['scored', 'no_card_face', 'no_photo_face', 'unavailable'] },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -95,6 +97,7 @@ const settingSchema = new Schema({
   siteName: { type: String, trim: true },     // printed on passes, the approval page and downloads
   gateName: { type: String, trim: true },     // shown on the guard desk
   idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
+  otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
 }, { versionKey: false, timestamps: true });
 
 // A visitor the admin expects: at the gate they are let in without waiting for the host.
@@ -122,6 +125,17 @@ const blockSchema = new Schema({
   removedAt: { type: Date },
 }, opts);
 
+// One-time codes for verifying a visitor's mobile number. Only a hash of the code is kept; documents expire after two days.
+const otpSchema = new Schema({
+  mobile: { type: String, required: true, index: true },
+  codeHash: { type: String, required: true },
+  expiresAt: { type: Date, required: true },
+  attempts: { type: Number, default: 0 },
+  verifiedAt: { type: Date },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  createdAt: { type: Date, default: () => new Date(), index: { expireAfterSeconds: 2 * 86400 } },
+}, { versionKey: false });
+
 // Append-only audit trail. The API never updates or deletes these documents.
 const auditSchema = new Schema({
   at: { type: Date, default: () => new Date(), index: true },
@@ -145,4 +159,5 @@ module.exports = {
   Setting: mongoose.model('Setting', settingSchema),
   Invite: mongoose.model('Invite', inviteSchema),
   Block: mongoose.model('Block', blockSchema),
+  Otp: mongoose.model('Otp', otpSchema),
 };

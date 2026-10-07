@@ -11,6 +11,7 @@ import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials } from '../c
 import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
+import MobileVerify from '../components/MobileVerify.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 
@@ -209,6 +210,7 @@ export default function GuardDesk({ user, onLogout }) {
             ) : (
               <CheckInForm
                 liveTick={liveTick}
+                isAdmin={user.role === 'admin'}
                 onOpenActive={openVisit}
                 onSubmitted={(v) => {
                   setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
@@ -286,7 +288,7 @@ function UserMenu({ user, onLogout, autoPrint, onToggleAutoPrint }) {
 }
 
 // ---------------------------------------------------------------- Check-in (single page)
-function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
+function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
   const [form, setForm] = useState(store.load);
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
@@ -300,6 +302,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const [active, setActive] = useState(null); // this person is already inside or waiting
   const [blocked, setBlocked] = useState(null); // on the admin's blocked list: do not admit
   const [invite, setInvite] = useState(null); // expected today: let in without waiting for the host
+  const [otp, setOtp] = useState({ mode: 'off', verified: null }); // number verification: how this gate is set up, and whether this number is already proven
+  const [verify, setVerify] = useState(null); // null | 'verified' | 'skipped': what the guard did for this number
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tried, setTried] = useState(false);
@@ -353,6 +357,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     setActive(null);
     setBlocked(null);
     setInvite(null);
+    setOtp((o) => ({ mode: o.mode, verified: null }));
+    setVerify(null);
     // Number corrected after an autofill: the filled-in name belonged to someone else, so take it back out.
     const a = autofill.current;
     if (a && a.mobile !== digits) {
@@ -373,6 +379,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
       if (!live) return;
       setActive(r.active || null);
       setBlocked(r.blocked || null);
+      setOtp(r.otp || { mode: 'off', verified: null });
       if (r.invite && !r.blocked) {
         // Expected visitor: fill in what the admin entered and pick the host, ready to let in.
         setInvite(r.invite);
@@ -414,6 +421,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
     ['visitor', NAME_RE.test(form.firstName.trim()), 'first name'],
     ['visitor', NAME_RE.test(form.lastName.trim()), 'last name'],
     ['visitor', Boolean(form.gender), 'gender'],
+    ['visitor', otp.mode !== 'required' || Boolean(otp.verified) || verify === 'verified' || (isAdmin && verify === 'skipped'), 'verify the mobile number'],
     ['visitor', form.company.trim().length > 0, 'company'],
     ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)'],
     ['host', Boolean(host), 'whom to meet'],
@@ -426,7 +434,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
   const reset = () => {
     store.clear();
     autofill.current = null;
-    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null); setPhotoFace(null); setMatch(null);
+    setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null); setPhotoFace(null); setMatch(null); setVerify(null);
     setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -445,6 +453,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
         method: 'POST',
         body: {
           ...form, mobile: digits, hostId: host.id, photo, idImage,
+          ...(verify === 'skipped' ? { otpSkip: true } : {}),
           ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
       });
       store.clear();
@@ -488,6 +497,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick }) {
           </div>
           {digits.length === 10 && !mobileOk && <span className="hint err">Indian mobile numbers start with 6, 7, 8 or 9.</span>}
         </label>
+        {mobileOk && otp.mode !== 'off' && !active && !blocked && !otp.verified && (
+          <MobileVerify mobile={digits} mode={otp.mode} canSkip={otp.mode === 'optional' || isAdmin} value={verify} onChange={setVerify} />
+        )}
         {active && (
           <div className="alert alert-warn" role="alert">
             <AlertTriangle />

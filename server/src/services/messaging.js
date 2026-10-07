@@ -25,6 +25,29 @@ async function sendSms(to, body) {
   throw new Error(`Unknown SMS driver: ${config.sms.driver}`);
 }
 
+// OTP for mobile verification. MSG91 sends our own code through the DLT-approved OTP template; with no
+// auth key the code is written to the server log instead (test mode), and nothing is sent.
+const otpLive = () => Boolean(config.otp.authKey && config.otp.templateId);
+async function sendOtp(to, code) {
+  if (!otpLive()) {
+    console.log(`[OTP -> ${to}] ${code} (test mode: no MSG91 key set, nothing was sent)`);
+    return 'console';
+  }
+  const q = new URLSearchParams({
+    template_id: config.otp.templateId, mobile: to.replace(/^\+/, ''), otp: code,
+    otp_expiry: String(config.otp.expiryMinutes), otp_length: '6',
+  });
+  const res = await fetch(`https://control.msg91.com/api/v5/otp?${q}`, {
+    method: 'POST',
+    headers: { authkey: config.otp.authKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(10000),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.type === 'error') throw new Error(`MSG91: ${json.message || res.status}`);
+  return String(json.request_id || json.message || 'accepted');
+}
+
 // ---------- Sticker printing ----------
 // Builds ZPL (Zebra-compatible; most WiFi/LAN label printers accept it on TCP 9100).
 const ascii = (s, max) => String(s || '').replace(/[^\x20-\x7E]/g, '').replace(/[\^~]/g, ' ').slice(0, max);
@@ -72,4 +95,4 @@ async function deliverZpl(zpl, label) {
   throw new Error(`Unknown PRINTER_MODE: ${mode}`);
 }
 
-module.exports = { sendSms, buildStickerZpl, deliverZpl };
+module.exports = { sendSms, sendOtp, otpLive, buildStickerZpl, deliverZpl };

@@ -4,6 +4,7 @@ const config = require('../config');
 // Builds every download format from one normalised record per visit, so the Excel sheet, the
 // printable report and the folder of photos can never disagree with each other.
 
+const VERIFIED_LABEL = { otp: 'Verified by OTP', expected: 'Expected visitor', returning: 'Verified earlier', skipped: 'Skipped' };
 const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
 
 const STATUS_LABEL = {
@@ -44,6 +45,7 @@ function records(docs) {
       gender: GENDER_LABEL[v.gender] || '',
       mobile: localMobile(v.mobile),
       email: v.email || '',
+      verified: VERIFIED_LABEL[v.mobileVerified] || '',
       company: v.company || '',
       purpose: v.purpose || '',
       host: v.host?.fullName || '',
@@ -81,6 +83,7 @@ async function workbook(recs, { files = null, meta }) {
     { header: 'Gender', key: 'gender', width: 9 },
     { header: `Mobile (${config.defaultCountryCode})`, key: 'mobile', width: 14 },
     { header: 'Email', key: 'email', width: 24 },
+    { header: 'Number checked', key: 'verified', width: 17 },
     { header: 'Company', key: 'company', width: 22 },
     { header: 'Purpose', key: 'purpose', width: 15 },
     { header: 'Meeting', key: 'host', width: 20 },
@@ -160,6 +163,7 @@ function report(recs, { meta, aadhaar }) {
           ${r.gender ? `<dt>Gender</dt><dd>${esc(r.gender)}</dd>` : ''}
           <dt>Mobile</dt><dd>${esc(r.mobile)}</dd>
           ${r.email ? `<dt>Email</dt><dd>${esc(r.email)}</dd>` : ''}
+          ${r.verified ? `<dt>Number</dt><dd>${esc(r.verified)}</dd>` : ''}
           <dt>Meeting</dt><dd>${esc(r.host)}, ${esc(r.unit)}</dd>
           <dt>Status</dt><dd>${esc(r.status)}</dd>
           <dt>Arrived</dt><dd>${esc(human(r.arrived))}</dd>
@@ -221,4 +225,4 @@ function report(recs, { meta, aadhaar }) {
 </html>`;
 }
 
-module.exports = { records, workbook, report, STATUS_LABEL, GENDER_LABEL };
+module.exports = { records, workbook, report, STATUS_LABEL, GENDER_LABEL, VERIFIED_LABEL };

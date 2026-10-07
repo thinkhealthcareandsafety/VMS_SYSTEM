@@ -581,6 +581,10 @@ const ACTIONS = {
   'host.imported': ['Hosts imported', ''],
   'auth.login': ['Signed in', ''],
   'auth.password_changed': ['Changed their password', ''],
+  'otp.sent': ['Verification code sent', ''],
+  'otp.verified': ['Mobile number verified by OTP', 'ok'],
+  'otp.wrong': ['Wrong verification code entered', 'warn'],
+  'otp.failed': ['Verification SMS could not be sent', 'bad'],
   'visit.blocked_attempt': ['Blocked visitor tried to check in', 'bad'],
   'invite.created': ['Expected visitor added', ''],
   'invite.cancelled': ['Expected visitor cancelled', ''],
@@ -594,6 +598,7 @@ const ACTIONS = {
   'user.password_reset': ['Staff password reset', 'warn'],
   'auth.login_failed': ['Failed sign-in attempt', 'bad'],
 };
+const VERIFIED_LABEL = { otp: 'Verified by OTP', expected: 'Expected visitor, number from the host', returning: 'Verified earlier (within 90 days)', skipped: 'Not verified (skipped by the guard)' };
 const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
 const actionLabel = (a) => ACTIONS[a]?.[0] || a;
 const TL_ICON = { ok: CheckCircle2, bad: XCircle, warn: AlertTriangle };
@@ -665,6 +670,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
               {v.dailyNumber != null && <><dt>Pass number</dt><dd className="num">{v.dailyNumber} · {fmtDate(v.decidedAt)}</dd></>}
               <dt>Mobile</dt><dd className="num">{fmtMobile(v.mobile)}</dd>
               {v.email && <><dt>Email</dt><dd>{v.email}</dd></>}
+              {v.mobileVerified && <><dt>Number</dt><dd>{VERIFIED_LABEL[v.mobileVerified]}</dd></>}
               <dt>Gender</dt><dd>{GENDER_LABEL[v.gender] || <span className="faint">Not recorded</span>}</dd>
               <dt>Purpose</dt><dd>{v.purpose || <span className="faint">Not given</span>}</dd>
               <dt>Meeting</dt><dd>{v.host?.name}, {v.host?.unit}</dd>
@@ -1693,7 +1699,7 @@ function SettingsPage({ toast }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   useEffect(() => {
-    api('/api/admin/settings').then((d) => { setS(d); setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays }); }).catch((e) => setErr(e.message));
+    api('/api/admin/settings').then((d) => { setS(d); setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode }); }).catch((e) => setErr(e.message));
   }, []);
 
   if (!f) return err ? <div className="alert alert-bad"><AlertTriangle /><span className="grow">{err}</span></div> : <ListSkeleton />;
@@ -1736,6 +1742,24 @@ function SettingsPage({ toast }) {
             <span className="hint">Older images are deleted automatically and are then left out of downloads. Visitor photos are not affected.</span>
           </label>
           <div className="alert"><Info /><span className="grow">Under the DPDP Act, keep Aadhaar images only as long as you need them for security, and say so in the notice visitors see. Only masked images are ever stored: the first 8 digits are blacked out on the guard’s device.</span></div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Visitor mobile number</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Check that the number is real</span>
+            <select className="select" value={f.otpMode} onChange={(e) => setF({ ...f, otpMode: e.target.value })}>
+              <option value="off">Off: just take the number</option>
+              <option value="optional">Optional: guard can verify or skip</option>
+              <option value="required">Required: verify before every check-in</option>
+            </select>
+            <span className="hint">The visitor gets a 6-digit code by SMS and reads it out to the guard. Expected visitors and numbers verified in the last 90 days are not asked again. Only admins can skip when it is required.</span>
+          </label>
+          <div className={`alert ${ch.otp ? 'alert-ok' : 'alert-warn'}`}>
+            {ch.otp ? <CheckCircle2 /> : <AlertTriangle />}
+            <span className="grow">{ch.otp ? 'SMS provider connected: codes are texted to visitors.' : 'No SMS provider connected yet (MSG91 key and template are missing on the server). Codes are only written to the server log, so visitors would not receive them. Keep this Off until it is connected.'}</span>
+          </div>
         </div>
       </section>
 

@@ -7,6 +7,7 @@ const defaults = () => ({
   siteName: config.siteName,
   gateName: 'Main gate',
   idRetentionDays: Math.max(1, Math.round(config.idImageRetentionHours / 24)),
+  otpMode: 'off', // an admin switches mobile verification on in Settings once the SMS provider is ready
 });
 
 let cache = null;

@@ -14,6 +14,14 @@ Phones block the camera on plain HTTP. Put the app behind HTTPS (Nginx + Let's E
 - The approval message must match a TRAI DLT-registered template. Register the template text in `server/src/routes/visits.js` (`issueApprovalLink`) before go-live, or messages are blocked.
 - Failed SMS retry up to 5 times with backoff; failures show in the admin SMS and print outbox.
 
+## Mobile number verification (OTP)
+- Admin -> Settings -> **Visitor mobile number**: Off (default), Optional (guard verifies or skips) or Required (only admins can skip).
+- The guard taps **Send code** under the mobile field; MSG91 texts a 6-digit code to the visitor, who reads it out. Codes expire in 5 minutes, allow 3 tries, can be resent after 30 seconds, and are limited to 5 per number per hour and `OTP_DAILY_LIMIT` per day (a cap on SMS cost). Only a hash of the code is stored.
+- Not asked again: expected visitors (the host gave the number) and numbers verified within `OTP_VERIFIED_DAYS` (90). A "skipped" or failed SMS never blocks a visitor in Optional mode; it is recorded as not verified.
+- Set up: in MSG91 open **OTP**, add your DLT-approved OTP template, then in Render set `MSG91_AUTHKEY` and `MSG91_OTP_TEMPLATE_ID`. With no key the server runs in test mode and only writes the code to its log, so keep the setting Off until both are set.
+- An OTP proves the visitor holds that phone, not who they are; the face match and the host's approval cover that.
+- Privacy: MSG91 sees the visitor's mobile number and the code, nothing else. For a client that allows no outside call at all, keep this Off.
+
 ## Sticker printer
 - Most LAN label printers accept ZPL on TCP 9100. Set `PRINTER_MODE=tcp`, `PRINTER_HOST`, `PRINTER_PORT`.
 - Set `PRINTER_MODE=file` for testing; stickers are written to `print-out/`.
