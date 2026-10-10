@@ -652,14 +652,12 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
           <div className="wait-ring"><Avatar src={photo} name={name} size={84} /></div>
           <div>
             <h1>Waiting for {hostFirst}</h1>
-            <p className="lead" style={{ margin: '6px auto 0' }}>
-              {name} is asking for {visit.host?.name} ({visit.host?.unit}). You can check in the next visitor; you’ll hear a chime the moment {hostFirst} replies.
-            </p>
+            <p className="lead" style={{ margin: '6px auto 0' }}><strong>{name}</strong><br />{visit.host?.name} · {visit.host?.unit}</p>
           </div>
           <span className="timer"><Clock size={15} />Waiting {clock(secs)}</span>
           {visit.smsStatus === 'failed' && (
             <div className="alert alert-bad" role="alert" style={{ textAlign: 'left' }}>
-              <AlertTriangle /><span className="grow">The request to {hostFirst} could not be delivered. Call them, or try sending it again.</span>
+              <AlertTriangle /><span className="grow">Not delivered. Call {hostFirst} or resend.</span>
             </div>
           )}
           <div className="outcome-actions">
@@ -701,8 +699,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
             </div>
           </div>
           <p className="lead">
-            {visit.expected ? `Expected visitor for ${visit.host?.name}.` : `Approved by ${visit.host?.name}.`}{' '}
-            {visit.printStatus === 'off' ? 'Print the pass, hand it over and let the visitor in.' : 'Hand over the sticker and let the visitor in.'}
+            {visit.expected ? `Expected by ${visit.host?.name}` : `Approved by ${visit.host?.name}`}
           </p>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}><UserPlus />Next visitor</button>
         </>
@@ -711,7 +708,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
       {visit.status === 'rejected' && (
         <>
           <div className="state-icon bad"><XCircle /></div>
-          <div><h1>Entry declined</h1><p className="lead" style={{ margin: '6px auto 0' }}>{visit.host?.name} declined this visit. Do not let {visit.firstName} in.</p></div>
+          <div><h1>Declined</h1><p className="lead" style={{ margin: '6px auto 0' }}>Do not let {visit.firstName} in.</p></div>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}>Done</button>
         </>
       )}
@@ -719,7 +716,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
       {visit.status === 'expired' && (
         <>
           <div className="state-icon warn"><Clock /></div>
-          <div><h1>No reply from {hostFirst}</h1><p className="lead" style={{ margin: '6px auto 0' }}>The approval link expired. Send a fresh one, or ask {visit.firstName} to call {hostFirst}.</p></div>
+          <div><h1>No reply from {hostFirst}</h1></div>
           <div style={{ display: 'grid', gap: 8, width: '100%', maxWidth: 340 }}>
             <button className="btn btn-primary btn-xl" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>
             <button className="btn" onClick={onCancel}><X />Visitor left: cancel visit</button>
@@ -731,7 +728,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
       {visit.status === 'cancelled' && (
         <>
           <div className="state-icon"><X /></div>
-          <div><h1>Visit cancelled</h1><p className="lead" style={{ margin: '6px auto 0' }}>{name} was not let in. The host’s link no longer works.</p></div>
+          <div><h1>Cancelled</h1></div>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}>Done</button>
         </>
       )}
@@ -739,7 +736,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
       {['checked_out', 'force_checked_out'].includes(visit.status) && (
         <>
           <div className="state-icon ok"><CheckCircle2 /></div>
-          <div><h1>Visit over</h1><p className="lead" style={{ margin: '6px auto 0' }}>{name} has already checked out.</p></div>
+          <div><h1>Checked out</h1></div>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}>Done</button>
         </>
       )}
