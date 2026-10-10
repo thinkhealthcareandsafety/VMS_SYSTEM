@@ -20,7 +20,7 @@ async function processOutbox() {
   for (const job of jobs) {
     try {
       if (job.kind === 'sms') {
-        job.providerRef = await sendSms(job.to, job.body);
+        job.providerRef = await sendSms(job.to, job.body, job.vars || {});
       } else if (job.kind === 'telegram') {
         const token = /\/approve\/([\w-]+)/.exec(job.body)?.[1];
         if (!token) throw new Error('Approval link missing from message');

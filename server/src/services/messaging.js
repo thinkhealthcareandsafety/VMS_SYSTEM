@@ -6,10 +6,28 @@ const config = require('../config');
 // ---------- SMS ----------
 // console: logs the message (dev). http: POSTs to your gateway (MSG91 / Textlocal / Twilio / etc.).
 // India: SMS must use a TRAI DLT-registered template; the body must match the approved template text.
-async function sendSms(to, body) {
+async function sendSms(to, body, vars = {}) {
   if (config.sms.driver === 'console') {
     console.log(`[SMS -> ${to}] ${body}`);
     return 'console';
+  }
+  if (config.sms.driver === 'msg91') {
+    // MSG91 Flow API: the approval text is a DLT-approved template; only its variables travel.
+    if (!config.otp.authKey || !config.sms.msg91TemplateId) throw new Error('MSG91 approval template is not set up');
+    const [vName, vCompany, vLink] = config.sms.msg91Vars;
+    const res = await fetch('https://control.msg91.com/api/v5/flow', {
+      method: 'POST',
+      headers: { authkey: config.otp.authKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        template_id: config.sms.msg91TemplateId,
+        short_url: '0',
+        recipients: [{ mobiles: to.replace(/^\+/, ''), [vName]: vars.name || '', [vCompany]: vars.company || '', [vLink]: vars.link || '' }],
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.type === 'error') throw new Error(`MSG91: ${json.message || res.status}`);
+    return String(json.message || json.request_id || 'accepted');
   }
   if (config.sms.driver === 'http') {
     const res = await fetch(config.sms.httpUrl, {

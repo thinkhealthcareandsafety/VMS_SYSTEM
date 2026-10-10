@@ -35,8 +35,14 @@ module.exports = {
     dailyLimit: Number(env.OTP_DAILY_LIMIT || 300), // SMS sent per day across the site: a cap on cost if someone keeps pressing "send"
     verifiedDays: Number(env.OTP_VERIFIED_DAYS || 90), // a number verified within this many days is not asked again
   },
+  // How hosts get approval requests: auto = Telegram when the host connected it, else SMS; sms = always SMS.
+  approvalChannel: env.APPROVAL_CHANNEL || 'auto',
   sms: {
-    driver: env.SMS_DRIVER || 'console',   // console | http
+    driver: env.SMS_DRIVER || 'console',   // console | http | msg91
+    // msg91: approval text sent through a DLT-approved template. The template's variables, in order, receive
+    // MSG91_APPROVAL_VARS names mapped to [visitor name, company, approval link].
+    msg91TemplateId: env.MSG91_APPROVAL_TEMPLATE_ID || '',
+    msg91Vars: (env.MSG91_APPROVAL_VARS || 'var1,var2,var3').split(',').map((s) => s.trim()),
     httpUrl: env.SMS_HTTP_URL || '',
     httpAuth: env.SMS_HTTP_AUTH || '',     // full Authorization header value
     senderId: env.SMS_SENDER_ID || 'VMSITE',

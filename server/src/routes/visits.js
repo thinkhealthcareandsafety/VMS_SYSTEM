@@ -54,11 +54,11 @@ async function issueApprovalLink(visit, host, visitorName, company) {
   const link = `${config.appBaseUrl}/approve/${raw}`;
   const from = /^(personal|self|none|na|n\/a|-)$/i.test(company) ? '' : ` from ${company}`;
   const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${link} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
-  if (telegram.enabled() && host.telegramChatId) {
+  if (config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId) {
     const text = `🚪 ${visitorName}${from} is at the gate to meet you.\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.`;
     await Outbox.create({ kind: 'telegram', visit: visit._id, to: String(host.telegramChatId), body: text });
   } else {
-    await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body });
+    await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link, minutes: config.approvalTtlMinutes } });
   }
 }
 

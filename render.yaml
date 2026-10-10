@@ -43,5 +43,9 @@ services:
         sync: false
       - key: MSG91_OTP_TEMPLATE_ID  # MSG91 -> OTP -> your DLT-approved OTP template (its template id)
         sync: false
-      - key: SMS_DRIVER      # switch to http once an SMS provider is set up
-        value: console
+      - key: APPROVAL_CHANNEL        # sms = host approvals always by SMS; auto = Telegram when the host connected it
+        value: sms
+      - key: MSG91_APPROVAL_TEMPLATE_ID  # DLT-approved approval template in MSG91 (Flow). Until set, approvals are logged, not sent
+        sync: false
+      - key: SMS_DRIVER
+        value: msg91

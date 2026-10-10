@@ -83,6 +83,7 @@ const outboxSchema = new Schema({
   status: { type: String, enum: ['queued', 'sent', 'failed'], default: 'queued', index: true },
   to: { type: String },              // sms: mobile number; telegram: chat id
   body: { type: String },            // message text
+  vars: { type: Schema.Types.Mixed },  // sms: { name, company, link, minutes } for template-based gateways
   attempts: { type: Number, default: 0 },
   lastError: { type: String },
   nextAttemptAt: { type: Date, default: () => new Date() },
