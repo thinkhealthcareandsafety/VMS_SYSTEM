@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlertTriangle, Bell, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Printer, RotateCcw, ScanFace, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
@@ -566,7 +565,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
       </section>
 
       <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
-        <SectionHead id="sec-capture" n={3} title="Photo and Aadhaar" done={done('capture')} />
+        <SectionHead id="sec-capture" n={3} title="Photo and ID" done={done('capture')} />
         <div className="capture-grid">
           <div className="field">
             <span>Live photo <span className="faint">· no mask or cap</span></span>
@@ -599,29 +598,21 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
   );
 }
 
-// Live photo against the face on the Aadhaar card, compared on this device. Advice for the guard, never a decision.
-const MATCH_TEXT = {
-  strong: ['alert-ok', 'Looks like the same person.'],
-  possible: ['alert-warn', 'Could be the same person. Compare the photo and the card yourself.'],
-  weak: ['alert-bad', 'The faces do not look alike. Check the card and the person carefully.'],
-};
+// Live photo against the face on the Aadhaar card, compared on this device. Just the number: advice for the guard, never a decision.
 const MATCH_NOTE = {
-  no_card_face: ['alert-warn', 'No face found on the card. Check the card by eye, or scan it again, flat and in good light.'],
-  no_photo_face: ['alert-warn', 'No face found in the live photo. Retake it with the visitor facing the camera.'],
-  unavailable: ['', 'Face match is not available on this device. Check the card by eye.'],
+  no_card_face: 'No face found on the card',
+  no_photo_face: 'No face found in the photo',
+  unavailable: 'Face match not available',
 };
 function FaceMatch({ match }) {
   if (!match) return null;
-  if (match === 'working') return <div className="alert face-match" role="status"><Spinner /><span className="grow">Comparing the photo with the card…</span></div>;
-  const scored = match.status === 'scored';
-  const [tone, text] = scored ? MATCH_TEXT[bandOf(match.score)] : MATCH_NOTE[match.status];
+  if (match === 'working') return <div className="alert face-match" role="status"><Spinner /><span className="grow">Face match…</span></div>;
+  if (match.status !== 'scored') return <div className="alert face-match" role="status"><ScanFace /><span className="grow">{MATCH_NOTE[match.status]}</span></div>;
+  const tone = { strong: 'alert-ok', possible: 'alert-warn', weak: 'alert-bad' }[bandOf(match.score)];
   return (
-    <div className={`alert face-match ${tone}`} role="status">
-      {scored ? <span className="pct num">{match.score}%</span> : <ScanFace />}
-      <span className="grow">
-        {scored && <strong>Face match. </strong>}{text}
-        <span className="face-match-foot">Checked on this device. Only the score is saved, to help you, not to decide.</span>
-      </span>
+    <div className={`alert face-match ${tone}`} role="status" aria-label={`Face match ${match.score} percent`}>
+      <span className="pct num">{match.score}%</span>
+      <span className="grow"><strong>Face match</strong></span>
     </div>
   );
 }
@@ -765,48 +756,95 @@ function PrintStatus({ status }) {
 }
 
 // ---------------------------------------------------------------- Printable pass
-// Rendered only while printing. Sized for 80 mm receipt paper (Epson TM series and similar); on A4 it prints as a small slip.
-// Works with any printer installed on this computer. Hidden on screen, shown by @media print in styles.css.
+// Printed from a tiny hidden page of its own (80 mm receipt layout; on A4 it prints as a small slip), so the
+// print dialog opens at once on every computer, Macs included, instead of rendering the whole app first.
+const PASS_CSS = `
+@page { size: 80mm auto; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #fff; }
+body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/1.3 -apple-system, "Segoe UI", Arial, sans-serif; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.site { font-size: 11pt; font-weight: 600; letter-spacing: .04em; }
+.title { font-size: 9pt; letter-spacing: .22em; margin-top: 1mm; }
+.no { font-size: 64pt; font-weight: 700; line-height: 1; margin: 3mm 0 1mm; letter-spacing: -.03em; }
+.date { font-size: 10pt; margin-bottom: 3mm; }
+.photo { display: block; width: 30mm; height: 30mm; object-fit: cover; margin: 0 auto 3mm; filter: grayscale(1) contrast(1.15); border: .4mm solid #000; }
+.name { font-size: 15pt; font-weight: 700; line-height: 1.15; }
+.company { font-size: 10pt; margin-top: .5mm; }
+.rule { border-top: .35mm dashed #000; margin: 3mm 0; }
+.row { display: flex; justify-content: space-between; gap: 4mm; font-size: 10pt; text-align: left; padding: .6mm 0; }
+.row strong { text-align: right; font-weight: 600; }
+.foot { font-size: 8.5pt; }
+`;
+const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// The photo as a data URL, so the print page needs no further request. Never waits long: a pass without a photo still prints.
+async function photoData(id) {
+  try {
+    const res = await fetch(`/api/visits/${id}/photo`, { credentials: 'same-origin', signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return '';
+    const blob = await res.blob();
+    return await new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => resolve(''); r.readAsDataURL(blob); });
+  } catch { return ''; }
+}
+
+function passHtml(visit, siteName, photo) {
+  const name = `${visit.firstName} ${visit.lastName}`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
+<div class="site">${escHtml(siteName || 'Visitor Desk')}</div>
+<div class="title">VISITOR PASS</div>
+<div class="no">${escHtml(visit.dailyNumber)}</div>
+<div class="date">${escHtml(fmtDate(visit.decidedAt))} · ${escHtml(fmtTime(visit.decidedAt))}</div>
+${photo ? `<img class="photo" src="${photo}" alt="">` : ''}
+<div class="name">${escHtml(name)}</div>
+<div class="company">${escHtml(visit.company)}</div>
+<div class="rule"></div>
+<div class="row"><span>Meeting</span><strong>${escHtml(visit.host?.name)}</strong></div>
+<div class="row"><span>Flat / dept</span><strong>${escHtml(visit.host?.unit)}</strong></div>
+<div class="row"><span>Visitor ID</span><strong>${escHtml(visit.ref)}</strong></div>
+<div class="rule"></div>
+<div class="foot">Wear this pass. Return it when you leave.</div>
+</body></html>`;
+}
+
 function PrintSheet({ visit, siteName, onDone }) {
-  const [ready, setReady] = useState(false);
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
 
   useEffect(() => {
-    setReady(false);
     if (!visit) return undefined;
-    const t = setTimeout(() => setReady(true), 1800); // never wait forever for the photo
-    return () => clearTimeout(t);
+    let cancelled = false;
+    let frame = null;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      setTimeout(() => { frame?.remove(); }, 500);
+      if (!cancelled) doneRef.current();
+    };
+    (async () => {
+      const photo = await photoData(visit.id);
+      if (cancelled) return;
+      frame = document.createElement('iframe');
+      frame.setAttribute('aria-hidden', 'true');
+      frame.tabIndex = -1;
+      // Rendered but out of sight: some browsers will not print a frame that is display:none.
+      Object.assign(frame.style, { position: 'fixed', right: '0', bottom: '0', width: '1px', height: '1px', border: '0', opacity: '0', pointerEvents: 'none' });
+      frame.onload = () => {
+        const win = frame.contentWindow;
+        win.addEventListener('afterprint', finish, { once: true });
+        let printed = false;
+        const go = () => { if (printed) return; printed = true; try { win.focus(); win.print(); } catch { finish(); } };
+        const img = win.document.querySelector('img');
+        if (img && !img.complete) { img.onload = go; img.onerror = go; setTimeout(go, 1500); } else go();
+        setTimeout(finish, 5 * 60e3); // browsers that never report the end of printing
+      };
+      frame.srcdoc = passHtml(visit, siteName, photo);
+      document.body.appendChild(frame);
+    })();
+    return () => { cancelled = true; frame?.remove(); };
   }, [visit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!visit || !ready) return undefined;
-    const after = () => doneRef.current();
-    window.addEventListener('afterprint', after, { once: true });
-    const t = setTimeout(() => window.print(), 60);
-    return () => { clearTimeout(t); window.removeEventListener('afterprint', after); };
-  }, [visit?.id, ready]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!visit) return null;
-  const name = `${visit.firstName} ${visit.lastName}`;
-  return createPortal(
-    <div id="print-pass" aria-hidden="true">
-      <div className="pp-site">{siteName || 'Visitor Desk'}</div>
-      <div className="pp-title">VISITOR PASS</div>
-      <div className="pp-no">{visit.dailyNumber}</div>
-      <div className="pp-date">{fmtDate(visit.decidedAt)} · {fmtTime(visit.decidedAt)}</div>
-      <img className="pp-photo" src={`/api/visits/${visit.id}/photo`} alt="" onLoad={() => setReady(true)} onError={() => setReady(true)} />
-      <div className="pp-name">{name}</div>
-      <div className="pp-company">{visit.company}</div>
-      <div className="pp-rule" />
-      <div className="pp-row"><span>Meeting</span><strong>{visit.host?.name}</strong></div>
-      <div className="pp-row"><span>Flat / dept</span><strong>{visit.host?.unit}</strong></div>
-      <div className="pp-row"><span>Visitor ID</span><strong>{visit.ref}</strong></div>
-      <div className="pp-rule" />
-      <div className="pp-foot">Wear this pass. Return it when you leave.</div>
-    </div>,
-    document.body,
-  );
+  return null;
 }
 
 // ---------------------------------------------------------------- Waiting for host
