@@ -651,8 +651,8 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
         <>
           <div className="wait-ring"><Avatar src={photo} name={name} size={84} /></div>
           <div>
-            <h1>Waiting for {hostFirst}</h1>
-            <p className="lead" style={{ margin: '6px auto 0' }}><strong>{name}</strong><br />{visit.host?.name} · {visit.host?.unit}</p>
+            <h1>Waiting for {visit.host?.name || hostFirst}’s approval</h1>
+            <p className="lead" style={{ margin: '6px auto 0' }}><strong>{name}</strong> · {visit.host?.unit}</p>
           </div>
           <span className="timer"><Clock size={15} />Waiting {clock(secs)}</span>
           {visit.smsStatus === 'failed' && (
