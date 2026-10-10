@@ -43,9 +43,9 @@ services:
         sync: false
       - key: MSG91_OTP_TEMPLATE_ID  # MSG91 -> OTP -> your DLT-approved OTP template (its template id)
         sync: false
-      - key: APPROVAL_CHANNEL        # sms = host approvals always by SMS; auto = Telegram when the host connected it
-        value: sms
+      - key: APPROVAL_CHANNEL        # auto = Telegram when the host connected it, else SMS; set sms once the SMS approval template is approved
+        value: auto
       - key: MSG91_APPROVAL_TEMPLATE_ID  # DLT-approved approval template in MSG91 (Flow). Until set, approvals are logged, not sent
         sync: false
-      - key: SMS_DRIVER
-        value: msg91
+      - key: SMS_DRIVER      # console until the DLT approval template exists, then msg91
+        value: console
