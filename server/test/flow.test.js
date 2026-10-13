@@ -1019,3 +1019,202 @@ test('super admin: full Aadhaar is stored encrypted, shown only to a Super Admin
   assert.equal((await fetch(`${base}/api/visits/${v.body.id}/id-image-full`, { headers: { Cookie: chief } })).status, 404);
   assert.ok(settingsSvc);
 });
+
+test('groups: an Excel guest list, passes scanned at any gate, one tap per guest, walk-ins and check-out-all', async () => {
+  const ExcelJS = require('exceljs');
+  const { Visit, Guest } = require('../src/models');
+  const { siteDay } = require('../src/services/core');
+  const { addDays } = require('../src/services/passes');
+  const today = siteDay();
+
+  // Creating: a host is required, dates must make sense.
+  const make = (body) => call('POST', '/api/groups', { name: 'Sharma Wedding, Grand Ballroom', hostId: hostIds.asha, startDay: today, endDay: today, purpose: 'Wedding', ...body }, admin);
+  assert.equal((await make({ hostId: undefined })).status, 400);
+  assert.equal((await make({ endDay: addDays(today, -1) })).status, 400);
+  assert.equal((await make({ startDay: '2001-01-01', endDay: '2001-01-02' })).status, 400);
+  assert.equal((await call('POST', '/api/groups', { name: 'x' }, guard)).status, 403);
+  const grp = await make({});
+  assert.equal(grp.status, 201);
+  const gid = grp.body.id;
+
+  // An Excel sheet with its own headings, a bad number, a duplicate, a blocked person and an empty row.
+  await call('POST', '/api/admin/blocks', { mobile: '9822200009', reason: 'Banned' }, admin);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('List');
+  ws.addRow(['Sr', 'Guest Name', 'Phone No', 'Side']);
+  ws.addRow([1, 'ravi kumar', '98222 00001', 'Groom']);
+  ws.addRow([2, 'Anita Desai', '+91 9822200002', 'Bride']);
+  ws.addRow([3, 'Bad Number', '12345', 'Bride']);
+  ws.addRow([4, 'Ravi Again', '9822200001', 'Groom']);
+  ws.addRow([5, 'Banned Person', '9822200009', '']);
+  ws.addRow([6, 'Meena', '', 'Family']);
+  const file = Buffer.from(await wb.xlsx.writeBuffer()).toString('base64');
+  const up = await call('POST', `/api/groups/${gid}/guests`, { file, filename: 'guests.xlsx' }, admin);
+  assert.equal(up.status, 200);
+  assert.equal(up.body.added, 4, 'Ravi, Anita, Bad Number (without mobile), Meena');
+  assert.deepEqual(up.body.skipped.map((s) => s.reason).sort(), ['Already on the list (same mobile)', 'On the blocked list']);
+  assert.match(up.body.warnings[0].reason, /not a valid number/);
+  // Text pasted from Excel (tabs) or CSV with quotes works too.
+  const pasted = await call('POST', `/api/groups/${gid}/guests`, { text: 'Name,Mobile,Company\n"Raj Kapoor",9822200003,"Acme, Ltd"\nSonia Gill\t9822200004\tX' }, admin);
+  assert.equal(pasted.body.added, 2);
+
+  // The gate sees today's groups and counts; only the last 4 digits of numbers; no pass codes.
+  const todays = (await call('GET', '/api/groups?scope=today', null, guard)).body.rows;
+  assert.equal(todays.find((r) => r.id === gid).guests, 6);
+  assert.equal((await call('GET', '/api/groups', null, guard)).status, 403, 'all groups is for admins');
+  const found = (await call('GET', `/api/groups/${gid}/guests?q=0002`, null, guard)).body.rows;
+  assert.equal(found.length, 1);
+  assert.equal(found[0].firstName, 'Anita');
+  assert.equal(found[0].mobileEnd, '0002');
+  assert.equal(found[0].mobile, undefined);
+  assert.equal(found[0].code, undefined);
+
+  // Scanning a pass: the link from the QR, or the code typed any way.
+  const list = (await call('GET', `/api/groups/${gid}/guests`, null, admin)).body.rows;
+  const ravi = list.find((r) => r.firstName === 'Ravi');
+  assert.equal(ravi.lastName, 'Kumar', 'lowercase names are tidied');
+  const scan = (code, who = guard) => call('POST', '/api/groups/scan', { code }, who);
+  const first = await scan(ravi.link);
+  assert.equal(first.body.result, 'let_in');
+  assert.ok(first.body.visit.dailyNumber >= 1);
+  assert.equal((await scan(ravi.code.toLowerCase())).body.result, 'inside');
+  assert.equal((await scan('NOT-A-PASS')).status, 400);
+  assert.equal((await scan('ABCD-EFGH')).status, 404);
+  const rv = await Visit.findById(first.body.visit.id).lean();
+  assert.equal(rv.status, 'approved');
+  assert.equal(String(rv.group), gid);
+  assert.equal(rv.movements[0].kind, 'in');
+
+  // Two gates scanning the same pass at the same moment: one visit, not two.
+  const anita = list.find((r) => r.firstName === 'Anita');
+  const both = await Promise.all([scan(anita.code), scan(anita.code)]);
+  assert.deepEqual(both.map((r) => r.body.result).sort(), ['inside', 'let_in']);
+  const anitaGuest = await Guest.findById(anita.id).lean();
+  assert.equal(await Visit.countDocuments({ guest: anitaGuest._id }), 1);
+
+  // Several at once by tapping their names.
+  const rest = list.filter((r) => ['Meena', 'Raj'].includes(r.firstName)).map((r) => r.id);
+  const many = await call('POST', `/api/groups/${gid}/admit-many`, { ids: rest }, guard);
+  assert.equal(many.body.letIn, 2);
+
+  // The gate's inside list sums group guests up; the admin's full list names everyone.
+  const gateView = (await call('GET', '/api/visits/inside', null, guard)).body;
+  assert.ok(!gateView.visits.some((v) => v.groupId === gid));
+  assert.equal(gateView.groups.find((g) => g.id === gid).inside, 4);
+  const adminView = (await call('GET', '/api/visits/inside?all=1', null, admin)).body;
+  assert.equal(adminView.visits.filter((v) => v.groupId === gid).length, 4);
+
+  // Walk-ins only when the admin allows them.
+  assert.equal((await call('POST', `/api/groups/${gid}/walk-in`, { name: 'Uninvited Uncle' }, guard)).status, 403);
+  await call('PATCH', `/api/groups/${gid}`, { allowWalkIns: true }, admin);
+  const walk = await call('POST', `/api/groups/${gid}/walk-in`, { name: 'Invited Uncle', mobile: '9822200005' }, guard);
+  assert.equal(walk.status, 201);
+  assert.equal(walk.body.result, 'let_in');
+
+  // The guest's own pass page, without a login.
+  const page = await call('GET', `/api/passes/${ravi.code}`);
+  assert.equal(page.body.name, 'Ravi Kumar');
+  assert.equal(page.body.state, 'valid');
+  assert.equal((await call('GET', '/api/passes/ABCDEFGH')).status, 404);
+
+  // A guest taken off the list, a cancelled event, an event on another day: all refused, plainly.
+  const sonia = list.find((r) => r.firstName === 'Sonia');
+  await call('PATCH', `/api/groups/${gid}/guests/${sonia.id}`, { remove: true }, admin);
+  assert.equal((await scan(sonia.code)).body.result, 'removed');
+  const later = await make({ name: 'Conference next week', startDay: addDays(today, 7), endDay: addDays(today, 8) });
+  await call('POST', `/api/groups/${later.body.id}/guests`, { text: 'Name,Mobile\nEarly Bird,9822200006' }, admin);
+  const early = (await call('GET', `/api/groups/${later.body.id}/guests`, null, admin)).body.rows[0];
+  const tooEarly = await scan(early.code);
+  assert.equal(tooEarly.body.result, 'not_today');
+  assert.equal(tooEarly.body.ok, false);
+  await call('PATCH', `/api/groups/${later.body.id}`, { status: 'cancelled' }, admin);
+  assert.equal((await scan(early.code)).body.result, 'cancelled');
+
+  // A three-day conference: out and back in on the same pass.
+  const conf = await make({ name: 'Tech Summit', startDay: today, endDay: addDays(today, 2) });
+  await call('POST', `/api/groups/${conf.body.id}/guests`, { text: 'Name,Mobile\nDelegate One,9822200007' }, admin);
+  const del = (await call('GET', `/api/groups/${conf.body.id}/guests`, null, admin)).body.rows[0];
+  const inDel = await scan(del.code);
+  assert.equal((await call('POST', `/api/visits/${inDel.body.visit.id}/checkout`, {}, guard)).body.status, 'away');
+  assert.equal((await scan(del.code)).body.result, 'reentered');
+
+  // The list with pass links, in Excel.
+  const xl = await fetch(`${base}/api/groups/${gid}/guests.xlsx`, { headers: { Cookie: admin } });
+  assert.equal(xl.status, 200);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(Buffer.from(await xl.arrayBuffer()));
+  const sheet = book.getWorksheet('Guests');
+  assert.equal(sheet.getRow(1).getCell(5).text, 'Pass link');
+  assert.match(sheet.getRow(2).getCell(5).text, /\/g\/[A-Z0-9]{8}$/);
+
+  // End of the event: everyone still inside is checked out, with an exit recorded.
+  const done = await call('POST', `/api/groups/${gid}/checkout-all`, {}, admin);
+  assert.equal(done.body.checkedOut, 5);
+  assert.equal(await Visit.countDocuments({ group: gid, status: 'approved' }), 0);
+  const last = await Visit.findById(first.body.visit.id).lean();
+  assert.equal(last.movements.at(-1).kind, 'out');
+  const counts = (await call('GET', `/api/groups/${gid}`, null, admin)).body;
+  assert.deepEqual([counts.guests, counts.arrived, counts.inside], [6, 5, 0]);
+});
+
+test('group link: guests add themselves up to a limit, safely; an ended event signs its guests out', async () => {
+  const { Visit, Group } = require('../src/models');
+  const { closeEndedGroups } = require('../src/services/worker');
+  const { siteDay } = require('../src/services/core');
+  const today = siteDay();
+  const grp = await call('POST', '/api/groups', { name: 'Gupta Reception', hostId: hostIds.rahul, startDay: today, endDay: today }, admin);
+  const gid = grp.body.id;
+
+  // Opening the link needs a limit; the link is only shown to admins.
+  assert.equal((await call('PATCH', `/api/groups/${gid}`, { joinOpen: true }, admin)).status, 400);
+  const opened = await call('PATCH', `/api/groups/${gid}`, { joinOpen: true, joinLimit: 3 }, admin);
+  assert.equal(opened.body.joinOpen, true);
+  const code = opened.body.joinLink.split('/join/')[1];
+  assert.match(code, /^[A-Z0-9]{10}$/);
+  assert.equal((await call('GET', `/api/groups/${gid}`, null, guard)).body.joinLink, undefined);
+
+  const join = (body) => call('POST', `/api/passes/join/${code}`, body);
+  assert.equal((await call('GET', `/api/passes/join/${code}`)).body.state, 'open');
+  assert.equal((await join({ name: 'X', mobile: '9833300001' })).status, 400, 'a real name');
+  assert.equal((await join({ name: 'Neha Gupta', mobile: '123' })).status, 400, 'a real number');
+  const neha = await join({ name: 'Neha Gupta', mobile: '9833300001' });
+  assert.equal(neha.status, 201);
+  // The pass works at the gate like any other.
+  assert.equal((await call('POST', '/api/groups/scan', { code: neha.body.code }, guard)).body.result, 'let_in');
+  // Someone else typing Neha's number does not get her pass.
+  const copy = await join({ name: 'Imposter', mobile: '9833300001' });
+  assert.equal(copy.status, 409);
+  assert.equal(copy.body.code, undefined);
+  // A blocked number is refused without saying why.
+  await call('POST', '/api/admin/blocks', { mobile: '9833300009', reason: 'Trespass' }, admin);
+  const refused = await join({ name: 'Blocked Person', mobile: '9833300009' });
+  assert.equal(refused.status, 403);
+  assert.doesNotMatch(refused.body.error, /block/i);
+
+  // Many at once never go past the limit (2 places left, 6 people try together).
+  const burst = await Promise.all([2, 3, 4, 5, 6, 7].map((n) => join({ name: `Cousin ${'ABCDEF'[n - 2]}`, mobile: `983330001${n}` })));
+  assert.equal(burst.filter((r) => r.status === 201).length, 2);
+  assert.equal((await call('GET', `/api/passes/join/${code}`)).body.state, 'full');
+  assert.equal((await Group.findById(gid).lean()).joinCount, 3);
+  const listed = (await call('GET', `/api/groups/${gid}`, null, admin)).body;
+  assert.equal(listed.joined, 3);
+
+  // A new link stops the old one at once.
+  const fresh = await call('PATCH', `/api/groups/${gid}`, { newJoinLink: true }, admin);
+  assert.notEqual(fresh.body.joinLink.split('/join/')[1], code);
+  assert.equal((await call('GET', `/api/passes/join/${code}`)).status, 404);
+
+  // The event ends with guests still inside: they are signed out automatically, with the reason recorded.
+  await Visit.updateMany({ group: gid, status: 'approved' }, { validUntil: new Date(Date.now() - 60e3) });
+  await closeEndedGroups();
+  const v = await Visit.findOne({ group: gid }).lean();
+  assert.equal(v.status, 'checked_out');
+  assert.equal(v.movements.at(-1).gateName, 'Automatic: event ended');
+  // Ordinary visitors are never signed out by the system.
+  const lone = await Visit.findOne({ group: { $exists: false }, status: 'approved' }).lean();
+  if (lone) {
+    await Visit.updateOne({ _id: lone._id }, { validUntil: new Date(Date.now() - 60e3) });
+    await closeEndedGroups();
+    assert.equal((await Visit.findById(lone._id).lean()).status, 'approved');
+  }
+});

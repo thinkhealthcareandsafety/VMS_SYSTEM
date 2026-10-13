@@ -7,7 +7,8 @@ const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const config = require('./config');
 const worker = require('./services/worker');
-const { requireRole } = require('./middleware/auth');
+const jwt = require('jsonwebtoken');
+const { requireRole, COOKIE } = require('./middleware/auth');
 const { stream } = require('./services/events');
 const telegram = require('./services/telegram');
 
@@ -26,7 +27,21 @@ function createApp() {
   // WhatsApp webhook calls are signed over the exact bytes Meta sent, so keep them.
   app.use(express.json({ limit: '10mb', verify: (req, _res, buf) => { if (req.originalUrl.startsWith('/api/whatsapp')) req.rawBody = buf; } }));
   app.use(cookieParser());
-  app.use('/api', rateLimit({ windowMs: 60e3, limit: 300, standardHeaders: true, legacyHeaders: false }));
+  // Signed-in staff are limited per session, not per IP: every gate device in a hotel usually shares one public IP,
+  // and a busy event (hundreds of scans plus live updates on several desks) must never trip a shared limit.
+  // Anyone without a valid session is limited per IP, and public pages add their own stricter limits.
+  const sessionKey = (req) => {
+    const token = req.cookies?.[COOKIE];
+    if (!token) return null;
+    try { return `s:${jwt.verify(token, process.env.JWT_SECRET).sub}`; } catch { return null; }
+  };
+  app.use('/api', rateLimit({
+    windowMs: 60e3,
+    limit: (req) => (sessionKey(req) ? 1500 : 300),
+    keyGenerator: (req) => sessionKey(req) || req.ip,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }));
 
   // Public privacy policy, linked from the WhatsApp (Meta) app settings.
   app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'privacy.html')));
@@ -39,6 +54,8 @@ function createApp() {
   app.use('/api/admin', require('./routes/admin'));
   app.use('/api/telegram', require('./routes/telegram'));
   app.use('/api/whatsapp', require('./routes/whatsapp'));
+  app.use('/api/groups', require('./routes/groups').router);
+  app.use('/api/passes', require('./routes/groups').publicRouter);
 
   // Production: serve the built React app. Development: Vite serves it on :5173.
   const dist = path.resolve(__dirname, '../../client/dist');

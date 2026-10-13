@@ -5,7 +5,7 @@ const path = require('node:path');
 const mongoose = require('mongoose');
 const config = require('../config');
 const { requireRole, isAdmin } = require('../middleware/auth');
-const { Visit, Host, ApprovalToken, Outbox, Invite, Block, Otp } = require('../models');
+const { Visit, Host, ApprovalToken, Outbox, Invite, Block, Otp, Group } = require('../models');
 const settings = require('../services/settings');
 const messaging = require('../services/messaging');
 const { retireTelegram } = require('../services/notify');
@@ -48,6 +48,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   checkedOutAt: v.checkedOutAt,
   validity: passes.validityLabel(v.validity),
   validUntil: v.validUntil ?? null,
+  groupId: v.group ? String(v.group) : null,
   ...passes.entryExit(v),
   ...(withMobile ? { movements: (v.movements || []).map((m) => ({ kind: m.kind, at: m.at, gate: m.gateName, by: m.byName })) } : {}),
 });
@@ -308,7 +309,11 @@ router.get('/inside', requireRole('guard', 'admin'), async (req, res) => {
     Visit.find({ status: 'away', validUntil: { $gt: new Date(now) } }).sort({ validUntil: 1 }).limit(500).populate('host').lean(),
   ]);
   const admin = isAdmin(req.user);
-  const rows = visits.map((v) => {
+  const everyone = req.query.all === '1';
+  const groupsInside = new Map();
+  for (const v of visits) if (v.group) groupsInside.set(String(v.group), (groupsInside.get(String(v.group)) || 0) + 1);
+  const groupNames = groupsInside.size ? await Group.find({ _id: { $in: [...groupsInside.keys()] } }, 'name').lean() : [];
+  const rows = visits.filter((v) => everyone || !v.group).map((v) => {
     const since = passes.entryExit(v).lastIn?.at || v.decidedAt;
     return {
       ...publicVisit(v, v.host, admin),
@@ -316,7 +321,11 @@ router.get('/inside', requireRole('guard', 'admin'), async (req, res) => {
       passExpired: Boolean(v.validUntil) && new Date(v.validUntil).getTime() < now,
     };
   });
-  res.json({ count: rows.length, visits: rows, away: away.map((v) => publicVisit(v, v.host, admin)), staleAfterHours: config.maxInsideHours });
+  res.json({
+    count: visits.length, visits: rows, staleAfterHours: config.maxInsideHours,
+    away: away.filter((v) => everyone || !v.group).map((v) => publicVisit(v, v.host, admin)),
+    groups: groupNames.map((g) => ({ id: String(g._id), name: g.name, inside: groupsInside.get(String(g._id)) })),
+  });
 });
 
 // Returning visitor: last known name/company for a mobile number, to prefill check-in.

@@ -798,3 +798,97 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .badge.role-super, .badge.plain.role-super { background: #1c1f2a; color: #fff; }
 .full-id { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border-strong); }
 .full-id .section-title { display: flex; align-items: center; gap: 8px; }
+
+/* ---------- Groups and events ---------- */
+@media (max-width: 560px) { .hide-narrow { display: none; } }
+
+/* Pass scanner (guard) */
+.scanner { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; background: var(--surface); border-radius: 18px; box-shadow: var(--shadow-lg); display: grid; gap: 12px; padding: 14px; animation: pop 220ms var(--ease) both; }
+.scanner-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scanner-head strong { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; }
+.scanner-head strong svg { width: 18px; height: 18px; }
+.scan-stage { position: relative; aspect-ratio: 4 / 3; border-radius: 14px; overflow: hidden; background: #0d0f13; display: grid; place-items: center; }
+.scan-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scan-frame { position: absolute; width: 58%; aspect-ratio: 1; border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35); border: 3px solid rgba(255, 255, 255, 0.85); }
+.scan-idle { position: relative; display: grid; justify-items: center; gap: 10px; color: #cfd4dc; text-align: center; padding: 24px; font-size: 14px; }
+.scan-idle svg { width: 30px; height: 30px; }
+.scan-result { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 6px; padding: 20px; text-align: center; color: #fff; animation: pop 180ms var(--ease) both; }
+.scan-result svg { width: 54px; height: 54px; }
+.scan-result strong { font-size: 24px; line-height: 1.15; }
+.scan-group { font-size: 14px; opacity: 0.9; }
+.scan-pass { font-size: 20px; font-weight: 700; padding: 4px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.2); }
+.scan-msg { font-size: 15px; max-width: 34ch; }
+.scan-ok .scan-result { background: #0f7a55; }
+.scan-warn .scan-result { background: #a35c06; }
+.scan-bad .scan-result { background: #b8322b; }
+.scan-busy { position: absolute; top: 10px; right: 10px; padding: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.9); }
+.scan-type { display: flex; gap: 8px; }
+.scan-type .input { flex: 1; letter-spacing: 0.04em; }
+.scan-recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.scan-recent li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); }
+.scan-recent .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.scan-recent .ok .dot { background: var(--ok); }
+.scan-recent .warn .dot { background: var(--warn); }
+.scan-recent .bad .dot { background: var(--bad); }
+
+/* One group at the gate */
+.group-gate { display: grid; gap: 14px; padding-bottom: 80px; }
+.group-head { padding: 16px; display: grid; gap: 12px; }
+.group-head > .btn { justify-self: start; }
+.group-title h1 { font-size: 22px; letter-spacing: -0.02em; }
+.group-counts { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; color: var(--text-2); }
+.group-counts strong { font-size: 20px; color: var(--text); margin-right: 4px; }
+.group-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.group-list { padding: 14px; display: grid; gap: 12px; }
+.guest-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.guest-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.guest-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
+.guest-row.inside { background: var(--surface-2); }
+.guest-tick { color: var(--ok); display: grid; }
+.guest-tick svg { width: 20px; height: 20px; }
+.guest-who { display: grid; min-width: 0; }
+.guest-who .faint { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 480px) { .guest-row { grid-template-columns: auto 1fr auto; } .guest-row .badge { display: none; } }
+.pick-bar { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-radius: 999px; background: var(--ink); color: #fff; box-shadow: var(--shadow-lg); width: max-content; max-width: calc(100vw - 24px); }
+.pick-bar .btn-ghost { color: #fff; }
+@media (min-width: 900px) { .pick-bar { bottom: 24px; } }
+
+/* Today's groups and group chips (guard) */
+.todays-groups { display: grid; gap: 10px; margin-bottom: 18px; }
+.group-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-sm); }
+.group-card:hover { border-color: var(--border-strong); }
+.group-card.is-open { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 135, 106, 0.14); }
+.group-card > svg { width: 22px; height: 22px; color: var(--accent); flex: none; }
+.group-card .grow { display: grid; min-width: 0; }
+.group-card .faint { font-size: 12.5px; }
+.group-card-n { display: grid; justify-items: end; font-size: 13px; color: var(--text-2); }
+.group-card-n strong { font-size: 18px; color: var(--text); }
+.group-card-n small { font-size: 11.5px; color: var(--text-3); }
+.group-chips { display: grid; gap: 6px; }
+.group-chip { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; border: 1px dashed var(--border-strong); background: var(--surface-2); font: inherit; font-size: 13.5px; color: inherit; cursor: pointer; text-align: left; }
+.group-chip svg { width: 16px; height: 16px; color: var(--accent); }
+
+/* Admin group page */
+.group-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+.group-stats > div { background: var(--surface); padding: 14px 18px; display: grid; }
+.group-stats strong { font-size: 24px; letter-spacing: -0.02em; }
+.group-stats span { font-size: 12.5px; color: var(--text-3); }
+@media (max-width: 560px) { .group-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.group-tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 18px; align-items: center; }
+.join-panel { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.join-link { display: grid; gap: 8px; flex: 1 1 320px; min-width: 0; }
+.join-link code { display: block; padding: 8px 10px; border-radius: 8px; background: var(--sunken); font-size: 12.5px; overflow-wrap: anywhere; }
+.drop { display: grid; justify-items: center; gap: 6px; padding: 26px 16px; border: 1.5px dashed var(--border-strong); border-radius: 14px; background: var(--surface-2); cursor: pointer; text-align: center; }
+.drop:hover, .drop:focus-visible { border-color: var(--accent); outline: none; }
+.drop svg { width: 26px; height: 26px; color: var(--text-2); }
+.import-issues { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; font-size: 13px; }
+
+/* Guest's own pass */
+.guest-pass h1 { font-size: 26px; }
+.guest-pass-event { font-weight: 600; color: var(--accent-text); margin-top: 4px; }
+.guest-qr { justify-self: center; width: min(280px, 100%); padding: 14px; border-radius: 18px; background: #fff; border: 1px solid var(--border); }
+.guest-qr img { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.guest-code { display: grid; justify-items: center; gap: 2px; }
+.guest-code span { font-size: 12.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; }
+.guest-code strong { font-size: 26px; letter-spacing: 0.08em; }
+.guest-tip { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: var(--text-3); }

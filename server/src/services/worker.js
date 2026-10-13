@@ -84,6 +84,34 @@ async function closeExpiredPasses() {
   }
 }
 
+// Event guests rarely sign out: once the group's last day is over, anyone still inside is signed out
+// automatically, so the "on premises" and evacuation lists stay true. Ordinary visitors are never auto-signed-out.
+async function closeEndedGroups() {
+  const now = new Date();
+  const due = await Visit.find({ group: { $exists: true }, status: 'approved', validUntil: { $lte: now } }, '_id ref').limit(500).lean();
+  for (const v of due) {
+    const r = await Visit.updateOne(
+      { _id: v._id, status: 'approved' },
+      { $set: { status: 'checked_out', checkedOutAt: now }, $push: { movements: { kind: 'out', at: now, gateName: 'Automatic: event ended', byName: 'System' } } },
+    );
+    if (r.modifiedCount) audit({ label: 'system' }, 'visit.auto_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, why: 'event ended' } });
+  }
+}
+
+// Event guests rarely sign out: once the group's last day is over, anyone still inside is signed out
+// automatically, so the "on premises" and evacuation lists stay true. Ordinary visitors are never auto-signed-out.
+async function closeEndedGroups() {
+  const now = new Date();
+  const due = await Visit.find({ group: { $exists: true }, status: 'approved', validUntil: { $lte: now } }, '_id ref').limit(500).lean();
+  for (const v of due) {
+    const r = await Visit.updateOne(
+      { _id: v._id, status: 'approved' },
+      { $set: { status: 'checked_out', checkedOutAt: now }, $push: { movements: { kind: 'out', at: now, gateName: 'Automatic: event ended', byName: 'System' } } },
+    );
+    if (r.modifiedCount) audit({ label: 'system' }, 'visit.auto_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, why: 'event ended' } });
+  }
+}
+
 // DPDP data minimisation: masked ID images are deleted after the retention window.
 async function purgeIdImages() {
   const { idRetentionDays } = await settings.get();
@@ -106,6 +134,8 @@ function start() {
       await processOutbox();
       await expireStaleApprovals();
       await closeExpiredPasses();
+      await closeEndedGroups();
+      await closeEndedGroups();
       await purgeIdImages();
     } catch (err) {
       console.error('[worker]', err.message);
@@ -118,4 +148,4 @@ function start() {
   return tick;
 }
 
-module.exports = { start, processOutbox, expireStaleApprovals, closeExpiredPasses, purgeIdImages };
+module.exports = { start, processOutbox, expireStaleApprovals, closeExpiredPasses, closeEndedGroups, purgeIdImages };

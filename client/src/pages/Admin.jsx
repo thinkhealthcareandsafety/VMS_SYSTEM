@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
@@ -12,6 +12,8 @@ import HostPicker from '../components/HostPicker.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
 import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
+import { printEvacuation } from '../lib/evacuation.js';
+import GroupsPage from './Groups.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
@@ -20,6 +22,7 @@ const NAV = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'inside', label: 'On premises', icon: Users },
     { id: 'expected', label: 'Expected visitors', icon: CalendarCheck },
+    { id: 'groups', label: 'Groups and events', icon: PartyPopper },
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
@@ -42,6 +45,7 @@ const TITLES = {
   hosts: ['Hosts', 'Residents and staff who can approve visitors'],
   staff: ['Staff accounts', 'Who can sign in to the guard desk and this console'],
   expected: ['Expected visitors', 'Let in on arrival, without waiting for the host'],
+  groups: ['Groups and events', 'Weddings, banquets, conferences: one guest list, a pass for every guest, any gate'],
   blocked: ['Blocked visitors', 'People the guard must not let in'],
   settings: ['Settings', 'Site details, privacy and notifications'],
 };
@@ -129,6 +133,7 @@ export default function Admin({ user, onLogout }) {
           {section === 'hosts' && <HostsPage {...page} />}
           {section === 'staff' && <StaffPage {...page} user={user} />}
           {section === 'expected' && <ExpectedPage {...page} />}
+          {section === 'groups' && <GroupsPage {...page} />}
           {section === 'blocked' && <BlockedPage {...page} />}
           {section === 'settings' && <SettingsPage {...page} superAdmin={user.role === 'superadmin'} />}
         </div>
@@ -333,12 +338,12 @@ function useWidth() {
 }
 
 // ================================================================= On premises
-function InsidePage({ tick, openVisit, refresh }) {
+function InsidePage({ tick, openVisit, refresh, toast }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [force, setForce] = useState(null);
   useTick(30000);
-  useEffect(() => { api('/api/visits/inside').then(setData).catch(() => {}); }, [tick]);
+  useEffect(() => { api('/api/visits/inside?all=1').then(setData).catch(() => {}); }, [tick]);
 
   const term = q.trim().toLowerCase();
   const rows = (data?.visits || []).filter((v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref} ${v.mobile}`.toLowerCase().includes(term));
@@ -352,8 +357,10 @@ function InsidePage({ tick, openVisit, refresh }) {
           <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, flat, mobile" aria-label="Search on premises" />
         </div>
         <span className="muted num" style={{ alignSelf: 'center' }}>
-          {data ? `${data.count} inside${long ? ` · ${long} long stay` : ''}` : ''}
+          {data ? `${data.count} inside${long ? ` · ${long} long stay` : ''}${data.groups?.length ? ` · ${data.groups.reduce((n, g) => n + g.inside, 0)} event guests` : ''}` : ''}
         </span>
+        <span className="spacer-x" />
+        <button className="btn btn-sm btn-danger-outline" onClick={() => printEvacuation({ onError: (m) => toast(m, 'bad') })}><Siren />Evacuation list</button>
       </div>
       {!data ? <ListSkeleton /> : rows.length === 0 ? (
         <Empty icon={data.count ? Search : ShieldCheck} title={data.count ? 'No match' : 'Nobody inside'}>

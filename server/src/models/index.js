@@ -45,8 +45,8 @@ hostSchema.index({ fullName: 'text', unit: 'text' });
 const visitSchema = new Schema({
   ref: { type: String, required: true, unique: true },      // permanent visitor ID, e.g. V-000123
   firstName: { type: String, required: true, trim: true },
-  lastName: { type: String, required: true, trim: true },
-  mobile: { type: String, required: true },
+  lastName: { type: String, required() { return !this.group; }, trim: true, default: '' },  // group guests may have one name
+  mobile: { type: String, required() { return !this.group; } },  // group guests may come without a number
   email: { type: String, trim: true, lowercase: true },           // optional
   gender: { type: String, enum: ['male', 'female', 'other'] },  // chosen by the guard; absent on visits from before the field existed
   company: { type: String, required: true, trim: true },
@@ -82,6 +82,9 @@ const visitSchema = new Schema({
   validUntil: { type: Date },
   arrival: { gate: { type: Schema.Types.ObjectId, ref: 'Gate' }, gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String },
   movements: { type: [movementSchema], default: undefined },
+  // Let in as a guest of a group (event, wedding, conference): no host request, no photo or ID by default.
+  group: { type: Schema.Types.ObjectId, ref: 'Group', index: true },
+  guest: { type: Schema.Types.ObjectId, ref: 'Guest' },
 }, opts);
 // one pass number per day
 visitSchema.index({ dailyDay: 1, dailyNumber: 1 }, { unique: true, partialFilterExpression: { dailyNumber: { $exists: true } } });
@@ -126,6 +129,48 @@ const settingSchema = new Schema({
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
   fullIdCapture: { type: Boolean },           // keep the full Aadhaar (encrypted) for the Super Admin; only a Super Admin changes it
 }, { versionKey: false, timestamps: true });
+
+// A group of expected guests (wedding, banquet, conference). Creating it is the approval: each guest on the list
+// is let in at any gate by scanning their pass or by name, between the first and the last day.
+const groupSchema = new Schema({
+  name: { type: String, required: true, trim: true },
+  host: { type: Schema.Types.ObjectId, ref: 'Host', required: true },   // the person responsible
+  purpose: { type: String, trim: true, default: '' },
+  note: { type: String, trim: true, default: '' },                      // shown to the guard at the gate
+  startDay: { type: String, required: true, index: true },              // YYYY-MM-DD, site time
+  endDay: { type: String, required: true, index: true },
+  allowWalkIns: { type: Boolean, default: false },                      // the guard may add someone not on the list
+  // One link the host shares (a family WhatsApp group, an email): guests add themselves and get their own pass.
+  joinCode: { type: String, unique: true, sparse: true },
+  joinOpen: { type: Boolean, default: false },
+  joinLimit: { type: Number, default: 0 },                              // most guests who may add themselves
+  joinCount: { type: Number, default: 0 },                              // places taken through the link (reserved atomically)
+  // One link the host shares (a family WhatsApp group, an email): guests add themselves and get their own pass.
+  joinCode: { type: String, unique: true, sparse: true },
+  joinOpen: { type: Boolean, default: false },
+  joinLimit: { type: Number, default: 0 },                              // most guests who may add themselves
+  joinCount: { type: Number, default: 0 },                              // places taken through the link (reserved atomically)
+  status: { type: String, enum: ['active', 'cancelled'], default: 'active', index: true },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+}, opts);
+
+// One person on a group's list. `code` is their pass (QR and typed); `visit` is their latest visit.
+const guestSchema = new Schema({
+  group: { type: Schema.Types.ObjectId, ref: 'Group', required: true, index: true },
+  firstName: { type: String, required: true, trim: true },
+  lastName: { type: String, trim: true, default: '' },
+  mobile: { type: String },
+  company: { type: String, trim: true, default: '' },
+  code: { type: String, required: true, unique: true },
+  visit: { type: Schema.Types.ObjectId, ref: 'Visit' },
+  arrivedAt: { type: Date },                       // first time let in
+  addedAtGate: { type: Boolean, default: false },  // walk-in added by a guard
+  selfRegistered: { type: Boolean, default: false }, // added themselves through the group's link
+  selfRegistered: { type: Boolean, default: false }, // added themselves through the group's link
+  removedAt: { type: Date },                       // taken off the list: the pass no longer works
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+}, opts);
+guestSchema.index({ group: 1, mobile: 1 });
 
 // A visitor the admin expects: at the gate they are let in without waiting for the host.
 const inviteSchema = new Schema({
@@ -178,6 +223,8 @@ const auditSchema = new Schema({
 module.exports = {
   User: mongoose.model('User', userSchema),
   Gate: mongoose.model('Gate', gateSchema),
+  Group: mongoose.model('Group', groupSchema),
+  Guest: mongoose.model('Guest', guestSchema),
   Host: mongoose.model('Host', hostSchema),
   Visit: mongoose.model('Visit', visitSchema),
   ApprovalToken: mongoose.model('ApprovalToken', approvalTokenSchema),

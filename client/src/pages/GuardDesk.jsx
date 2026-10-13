@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, BadgeCheck, Bell, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
-  Printer, RotateCcw, ScanFace, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
+  PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
 import { cue } from '../lib/notify.js';
+import { printEvacuation } from '../lib/evacuation.js';
 import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials } from '../components/ui.jsx';
 import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
 import MobileVerify from '../components/MobileVerify.jsx';
 import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
+import PassScanner from '../components/PassScanner.jsx';
+import GroupGate from '../components/GroupGate.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 
@@ -70,13 +73,19 @@ export default function GuardDesk({ user, onLogout }) {
   const openRef = useRef(null);
   openRef.current = open;
   const [printing, setPrinting] = useState(null); // visit whose pass is being printed
+  const [groupId, setGroupId] = useState(null);    // a guest group open in the main column
+  const [scanning, setScanning] = useState(false); // the pass scanner
+  const [groups, setGroups] = useState([]);        // groups that can be let in today
   const [autoPrint, setAutoPrint] = useState(() => { try { return localStorage.getItem(AUTOPRINT_KEY) === '1'; } catch { return false; } });
   const printingRef = useRef(null);
   printingRef.current = printing;
   const autoPrintRef = useRef(autoPrint);
   autoPrintRef.current = autoPrint;
 
-  const refreshInside = useCallback(() => api('/api/visits/inside').then(setInside).catch(() => {}), []);
+  const refreshInside = useCallback(() => {
+    api('/api/visits/inside').then(setInside).catch(() => {});
+    api('/api/groups?scope=today').then((r) => setGroups(r.rows)).catch(() => {});
+  }, []);
   const refreshQueue = useCallback(() => api('/api/visits/queue').then((d) => setQueue(d.rows)).catch(() => {}), []);
   const refreshOpen = useCallback(async (id) => {
     try {
@@ -85,12 +94,14 @@ export default function GuardDesk({ user, onLogout }) {
     } catch { /* keep last known state */ }
   }, []);
 
+  // Events come in bursts (an event's guests scanned at several gates): lists reload once per burst. The open
+  // visit still updates at once, so a host's decision lands on screen without delay.
+  const burst = useRef(null);
   const connected = useLive((evt) => {
-    setLiveTick((t) => t + 1);
-    refreshInside();
-    refreshQueue();
     const cur = openRef.current;
     if (cur && (!evt.visitId || evt.visitId === cur.id)) refreshOpen(cur.id);
+    clearTimeout(burst.current);
+    burst.current = setTimeout(() => { setLiveTick((t) => t + 1); refreshInside(); refreshQueue(); }, 300);
   });
 
   useEffect(() => { refreshInside(); refreshQueue(); }, [refreshInside, refreshQueue]);
@@ -216,13 +227,18 @@ export default function GuardDesk({ user, onLogout }) {
             </small>
           </div>
         </div>
-        <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {groups.length > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)}><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
+          <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
+        </div>
       </header>
 
       <main className="guard-main">
         <div className="guard-split">
           <section className={tab === 'checkin' ? '' : 'hide-mobile'} aria-label="Check in">
-            {open ? (
+            {groupId ? (
+              <GroupGate groupId={groupId} liveTick={liveTick} onBack={() => setGroupId(null)} onScan={() => setScanning(true)} />
+            ) : open ? (
               <Outcome
                 visit={open}
                 sentAt={sentAt[open.id]}
@@ -259,12 +275,14 @@ export default function GuardDesk({ user, onLogout }) {
               <WaitingTray rows={tray} loaded={Boolean(queue)} sentAt={sentAt} openId={open?.id} onOpen={openVisit} act={act} onDismiss={dismiss} onPrint={printPass} />
             </div>
             <div className={tab === 'inside' ? '' : 'hide-mobile'}>
-              <InsideList data={inside} onChanged={refreshInside} onPrint={printPass} />
+              {groups.length > 0 && <TodaysGroups groups={groups} openId={groupId} onOpen={(id) => { setGroupId(id); setTab('checkin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} onScan={() => setScanning(true)} />}
+              <InsideList data={inside} onChanged={refreshInside} onPrint={printPass} onOpenGroup={(id) => { setGroupId(id); setTab('checkin'); }} />
             </div>
           </aside>
         </div>
       </main>
 
+      <PassScanner open={scanning} onClose={() => setScanning(false)} onChanged={refreshInside} />
       <nav className="tabbar" role="tablist" aria-label="Guard views">
         <button role="tab" aria-selected={tab === 'checkin'} onClick={() => setTab('checkin')}><UserPlus />Check in</button>
         <button role="tab" aria-selected={tab === 'waiting'} onClick={() => setTab('waiting')}>
@@ -992,7 +1010,7 @@ function TrayState({ v }) {
 }
 
 // ---------------------------------------------------------------- On premises
-function InsideList({ data, onChanged, onPrint }) {
+function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
   const toast = useToast();
   useTick(30000);
   const [q, setQ] = useState('');
@@ -1033,9 +1051,19 @@ function InsideList({ data, onChanged, onPrint }) {
       <div className="list-head">
         <div>
           <h1>On premises</h1>
-          <p className="muted">{data ? `${data.count} ${data.count === 1 ? 'visitor' : 'visitors'} inside${data.away?.length ? ` · ${data.away.length} pass ${data.away.length === 1 ? 'holder' : 'holders'} out` : ''}` : 'Loading…'}</p>
+          <p className="muted">{data ? `${data.count} ${data.count === 1 ? 'person' : 'people'} inside${data.away?.length ? ` · ${data.away.length} pass ${data.away.length === 1 ? 'holder' : 'holders'} out` : ''}` : 'Loading…'}</p>
         </div>
+        <button type="button" className="btn btn-sm btn-danger-outline" onClick={() => printEvacuation({ onError: (m) => toast(m, 'bad') })} title="Print everyone on the premises"><Siren /><span className="hide-narrow">Evacuation list</span></button>
       </div>
+      {data?.groups?.length > 0 && (
+        <div className="group-chips">
+          {data.groups.map((g) => (
+            <button type="button" key={g.id} className="group-chip" onClick={() => onOpenGroup?.(g.id)}>
+              <PartyPopper /><span className="grow">{g.name}</span><strong className="num">{g.inside}</strong><span className="faint">inside</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="input-group">
         <Search />
         <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, flat" aria-label="Search visitors" />
@@ -1044,8 +1072,8 @@ function InsideList({ data, onChanged, onPrint }) {
         {!data && [0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 74, borderRadius: 16 }} />)}
         {data && rows.length === 0 && (
           <div className="panel">
-            <Empty icon={data.count === 0 ? ShieldCheck : Search} title={data.count === 0 ? 'Nobody inside' : 'No match'}>
-              {data.count === 0 ? 'Approved visitors appear here until they leave.' : 'Try a pass number or flat.'}
+            <Empty icon={data.count === 0 ? ShieldCheck : Search} title={data.count === 0 ? 'Nobody inside' : (data.visits || []).length === 0 ? 'Only group guests inside' : 'No match'}>
+              {data.count === 0 ? 'Approved visitors appear here until they leave.' : (data.visits || []).length === 0 ? 'Open a group above to see its guests.' : 'Try a pass number or flat.'}
             </Empty>
           </div>
         )}
@@ -1111,6 +1139,33 @@ function InsideList({ data, onChanged, onPrint }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Groups that can be let in today
+function TodaysGroups({ groups, openId, onOpen, onScan }) {
+  return (
+    <div className="todays-groups">
+      <div className="list-head">
+        <div>
+          <h2 style={{ fontSize: 18, margin: 0 }}>Today’s groups</h2>
+          <p className="muted">Guests on a list: scan their pass, or find them by name.</p>
+        </div>
+        <button type="button" className="btn btn-sm btn-primary" onClick={onScan}><ScanLine />Scan</button>
+      </div>
+      <div className="visitor-list">
+        {groups.map((g) => (
+          <button type="button" key={g.id} className={`group-card${openId === g.id ? ' is-open' : ''}`} onClick={() => onOpen(g.id)}>
+            <PartyPopper />
+            <span className="grow">
+              <strong>{g.name}</strong>
+              <span className="faint">{g.days}{g.host ? ` · ${g.host.name}` : ''}</span>
+            </span>
+            <span className="group-card-n"><strong className="num">{g.arrived}</strong>/{g.guests}<small>arrived</small></span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
