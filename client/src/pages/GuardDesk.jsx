@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Bell, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
+  AlertTriangle, Bell, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Printer, RotateCcw, ScanFace, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, minutesSince, passLabel, secondsSince } from '../api.js';
@@ -49,6 +49,7 @@ export default function GuardDesk({ user, onLogout }) {
   const [dismissed, setDismissed] = useState(dismissedStore.load);
   const [open, setOpen] = useState(null); // visit shown in the main column; null = check-in form
   const [sentAt, setSentAt] = useState({}); // visit id -> when this device last sent its request
+  const [whatsapp, setWhatsapp] = useState({}); // visit id -> wa.me link with the latest approval request typed in
   const [liveTick, setLiveTick] = useState(0); // bumps on every server event
   const openRef = useRef(null);
   openRef.current = open;
@@ -137,8 +138,9 @@ export default function GuardDesk({ user, onLogout }) {
   const act = {
     resend: async (v) => {
       try {
-        await api(`/api/visits/${v.id}/resend`, { method: 'POST' });
+        const res = await api(`/api/visits/${v.id}/resend`, { method: 'POST' });
         setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
+        setWhatsapp((m) => ({ ...m, [v.id]: res.whatsapp || null }));
         toast(`New request sent to ${v.host?.name}.`);
         refreshQueue();
         if (openRef.current?.id === v.id) refreshOpen(v.id);
@@ -200,6 +202,7 @@ export default function GuardDesk({ user, onLogout }) {
               <Outcome
                 visit={open}
                 sentAt={sentAt[open.id]}
+                whatsapp={whatsapp[open.id]}
                 onNext={closeOpen}
                 onResend={() => act.resend(open)}
                 onCancel={() => act.cancel(open)}
@@ -213,6 +216,7 @@ export default function GuardDesk({ user, onLogout }) {
                 onOpenActive={openVisit}
                 onSubmitted={(v) => {
                   setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
+                  if (v.whatsapp) setWhatsapp((m) => ({ ...m, [v.id]: v.whatsapp }));
                   if (v.status === 'approved') {
                     cue.approved();
                     toast(`Expected visitor: ${v.firstName} ${v.lastName} let in · Pass ${v.dailyNumber}`, 'ok');
@@ -457,7 +461,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
       });
       store.clear();
       onSubmitted({
-        id: res.id, ref: res.ref, status: res.status, firstName: form.firstName.trim(), lastName: form.lastName.trim(),
+        id: res.id, ref: res.ref, status: res.status, whatsapp: res.whatsapp || null, firstName: form.firstName.trim(), lastName: form.lastName.trim(),
         company: form.company.trim(), host: { name: host.name, unit: host.unit }, photo, createdAt: new Date().toISOString(),
         ...(res.status === 'approved' ? { dailyNumber: res.dailyNumber, decidedAt: new Date().toISOString(), expected: true } : {}),
       });
@@ -636,7 +640,7 @@ function CamTile({ icon: Icon, label, onClick }) {
 }
 
 // ---------------------------------------------------------------- One visit, after sending
-function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint }) {
+function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprint, onPrint }) {
   useTick(1000);
   const name = `${visit.firstName} ${visit.lastName}`;
   const hostFirst = visit.host?.name?.split(' ')[0] || 'the host';
@@ -661,6 +665,7 @@ function Outcome({ visit, sentAt, onNext, onResend, onCancel, onReprint, onPrint
             </div>
           )}
           <div className="outcome-actions">
+            {whatsapp && <a className="btn btn-whatsapp btn-lg" href={whatsapp} target="_blank" rel="noopener noreferrer"><MessageCircle />Send to {hostFirst} on WhatsApp</a>}
             <button className="btn btn-primary btn-lg" onClick={onNext}><UserPlus />Check in next visitor</button>
             <div className="row">
               <button className="btn" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>

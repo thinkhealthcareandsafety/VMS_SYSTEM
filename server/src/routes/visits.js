@@ -10,6 +10,7 @@ const settings = require('../services/settings');
 const messaging = require('../services/messaging');
 const { retireTelegram } = require('../services/notify');
 const telegram = require('../services/telegram');
+const whatsapp = require('../services/whatsapp');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
@@ -55,12 +56,27 @@ async function issueApprovalLink(visit, host, visitorName, company) {
   const smsLink = `${config.appBaseUrl}/approve?${raw}`;        // SMS: operators need the changing part right after a "?"
   const from = /^(personal|self|none|na|n\/a|-)$/i.test(company) ? '' : ` from ${company}`;
   const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${smsLink} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
-  if (config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId) {
-    const text = `🚪 ${visitorName}${from} is at the gate to meet you.\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.`;
-    await Outbox.create({ kind: 'telegram', visit: visit._id, to: String(host.telegramChatId), body: text });
-  } else {
-    await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, minutes: config.approvalTtlMinutes } });
+  const tg = config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId
+    ? { kind: 'telegram', to: String(host.telegramChatId), body: `🚪 ${visitorName}${from} is at the gate to meet you.\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.` }
+    : null;
+  const sms = { kind: 'sms', to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, minutes: config.approvalTtlMinutes } };
+  if (config.approvalChannel !== 'sms' && whatsapp.enabled() && host.mobile) {
+    // If WhatsApp can't deliver, the request goes by Telegram, or by SMS once a real SMS gateway is on.
+    const fallback = tg || (config.sms.driver !== 'console' ? sms : null);
+    const purpose = visit.purpose ? `\nPurpose: ${visit.purpose}` : '';
+    const text = `🚪 *${visitorName}*${from} is at the gate to meet you.${purpose}\n\nTap a button below, or see their details: ${link}`;
+    await Outbox.create({ kind: 'whatsapp', visit: visit._id, to: host.mobile, body: text, vars: { fallback } });
+    return null;
   }
+  await Outbox.create({ ...(tg || sms), visit: visit._id });
+  return whatsappShare(host, `${visitorName}${from}`, link);
+}
+
+// A wa.me link that opens WhatsApp on the gate device with the host's number and the request already typed.
+function whatsappShare(host, who, link) {
+  if (!config.approvalWhatsapp || !host.mobile) return null;
+  const text = `🚪 *Visitor at the gate*\n\n${who} is at the gate to meet you.\n\nSee their photo and approve or decline:\n${link}\n\nValid for ${config.approvalTtlMinutes} min.`;
+  return `https://wa.me/${host.mobile.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 }
 
 async function saveFile(folder, buf) {
@@ -86,11 +102,11 @@ const blockMessage = (b) => `Do not admit${b.name ? ` ${b.name}` : ''}. This num
 // An expected visitor for today: let in without waiting for the host.
 const inviteFor = (mobile) => Invite.findOne({ mobile, day: siteDay(), status: 'expected' }).sort({ createdAt: -1 }).populate('host').lean();
 
-// Latest message status per visit (SMS or Telegram), in one query.
+// Latest message status per visit (SMS, Telegram or WhatsApp), in one query.
 async function smsStatusFor(visitIds) {
   if (!visitIds.length) return new Map();
   const rows = await Outbox.aggregate([
-    { $match: { kind: { $in: ['sms', 'telegram'] }, visit: { $in: visitIds } } },
+    { $match: { kind: { $in: ['sms', 'telegram', 'whatsapp'] }, visit: { $in: visitIds } } },
     { $sort: { _id: -1 } },
     { $group: { _id: '$visit', status: { $first: '$status' } } },
   ]);
@@ -249,8 +265,8 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
         return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number });
       }
     }
-    await issueApprovalLink(visit, host, visitorName, company);
-    res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status });
+    const share = await issueApprovalLink(visit, host, visitorName, company);
+    res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, whatsapp: share });
   } catch (err) {
     await Promise.all([photoPath, idPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
     console.error('check-in failed', err);
@@ -352,7 +368,7 @@ router.post('/:id/resend', requireRole('guard', 'admin'), async (req, res) => {
     const why = { approved: 'This visitor is already approved', rejected: 'The host declined this visit', cancelled: 'This visit was cancelled' }[v.status] || 'This visit is already closed';
     return res.status(409).json({ error: why });
   }
-  const last = await Outbox.findOne({ kind: { $in: ['sms', 'telegram'] }, visit: v._id }).sort({ _id: -1 }).lean();
+  const last = await Outbox.findOne({ kind: { $in: ['sms', 'telegram', 'whatsapp'] }, visit: v._id }).sort({ _id: -1 }).lean();
   if (last && Date.now() - new Date(last.createdAt).getTime() < 30e3) {
     return res.status(429).json({ error: 'A request was just sent. Give the host a few seconds before sending another.' });
   }
@@ -360,9 +376,9 @@ router.post('/:id/resend', requireRole('guard', 'admin'), async (req, res) => {
   v.status = 'pending';
   v.decidedAt = undefined;
   await v.save();
-  await issueApprovalLink(v, v.host, `${v.firstName} ${v.lastName}`, v.company);
+  const share = await issueApprovalLink(v, v.host, `${v.firstName} ${v.lastName}`, v.company);
   audit(req.user, 'visit.resent', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
-  res.json({ ok: true, status: v.status });
+  res.json({ ok: true, status: v.status, whatsapp: share });
 });
 
 // The guard printed the pass (browser print, any printer). Recorded for the audit trail; it is also the handover.

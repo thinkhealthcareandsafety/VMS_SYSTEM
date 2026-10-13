@@ -3,10 +3,11 @@ const config = require('../config');
 const { Visit, Outbox, ApprovalToken } = require('../models');
 const { sendSms, buildStickerZpl, deliverZpl } = require('./messaging');
 const telegram = require('./telegram');
+const whatsapp = require('./whatsapp');
 const { audit } = require('./core');
 const { publish } = require('./events');
 const settings = require('./settings');
-const { retireTelegram } = require('./notify');
+const { retireTelegram, whatsappFallback } = require('./notify');
 
 const backoffMs = (attempts) => Math.min(60000, 2 ** attempts * 1000);
 
@@ -25,6 +26,11 @@ async function processOutbox() {
         const token = /\/approve\/([\w-]+)/.exec(job.body)?.[1];
         if (!token) throw new Error('Approval link missing from message');
         job.providerRef = await telegram.sendApproval(job.to, job.body, token);
+      } else if (job.kind === 'whatsapp') {
+        const token = /\/approve\/([\w-]+)/.exec(job.body)?.[1];
+        if (!token) throw new Error('Approval link missing from message');
+        const visit = await Visit.findById(job.visit, 'photoPath').lean();
+        job.providerRef = await whatsapp.sendApproval(job.to, job.body, token, visit?.photoPath);
       } else if (job.kind === 'print') {
         const visit = await Visit.findById(job.visit).populate('host').lean();
         if (!visit) throw new Error('Visit not found');
@@ -39,13 +45,14 @@ async function processOutbox() {
       job.lastError = undefined;
       publish(`${job.kind}.sent`, { visitId: String(job.visit) });
     } catch (err) {
-      job.attempts += 1;
+      job.attempts = err.permanent ? config.worker.maxAttempts : job.attempts + 1;
       job.lastError = String(err.message || err).slice(0, 300);
       job.status = job.attempts >= config.worker.maxAttempts ? 'failed' : 'queued';
       job.nextAttemptAt = new Date(Date.now() + backoffMs(job.attempts));
       if (job.status === 'failed') audit({ label: 'system' }, `${job.kind}.failed`, { entity: 'Visit', entityId: job.visit, details: { error: job.lastError } });
     }
     await job.save();
+    if (job.kind === 'whatsapp' && job.status === 'failed') await whatsappFallback(job).catch((e) => console.error('[whatsapp] fallback failed:', e.message));
   }
 }
 

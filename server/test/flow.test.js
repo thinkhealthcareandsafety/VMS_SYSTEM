@@ -711,3 +711,104 @@ test('anyone can change their own password; other devices are signed out, this o
   assert.equal((await call('GET', '/api/visits/inside', null, fresh)).status, 200);
   assert.equal((await call('GET', '/api/visits/inside', null, otherDevice)).status, 401);
 });
+
+test('WhatsApp: request with photo and buttons goes to the chosen host; only their tap decides; undeliverable falls back', async () => {
+  const http = require('node:http');
+  const config = require('../src/config');
+  const { Host, Outbox, Audit } = require('../src/models');
+  const { processOutbox } = require('../src/services/worker');
+  const calls = [];
+  const fake = await new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json');
+        if (req.url.endsWith('/media')) { calls.push({ path: 'media', auth: req.headers.authorization }); return res.end(JSON.stringify({ id: 'media-1' })); }
+        const payload = JSON.parse(raw);
+        calls.push({ path: 'messages', payload });
+        if (payload.to === '919000000002') { res.statusCode = 400; return res.end(JSON.stringify({ error: { code: 131030, message: 'Recipient phone number not in allowed list' } })); }
+        res.end(JSON.stringify({ messages: [{ id: `wamid.out${calls.length}` }] }));
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => resolve(srv));
+  });
+  guard = await login('guard1', 'new-guard-pass-456'); // the password test before this one signed other sessions out
+  const saved = { ...config.whatsapp };
+  Object.assign(config.whatsapp, { token: 'wa-token', phoneId: 'PH1', verifyToken: 'gate-verify', apiBase: `http://127.0.0.1:${fake.address().port}/v23.0` });
+  const hook = (messages, statuses) => fetch(base + '/api/whatsapp/webhook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ object: 'whatsapp_business_account', entry: [{ changes: [{ field: 'messages', value: { ...(messages ? { messages } : {}), ...(statuses ? { statuses } : {}) } }] }] }),
+  });
+  const tap = (from, id) => hook([{ from, id: `wamid.in${Math.random()}`, type: 'interactive', interactive: { type: 'button_reply', button_reply: { id, title: 'x' } } }]);
+  const replies = (since) => calls.slice(since).filter((c) => c.path === 'messages' && c.payload.type === 'text').map((c) => c.payload.text.body);
+  try {
+    // Meta checks the webhook address with the verify phrase.
+    assert.equal(await (await fetch(`${base}/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=gate-verify&hub.challenge=42`)).text(), '42');
+    assert.equal((await fetch(`${base}/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=nope&hub.challenge=42`)).status, 403);
+
+    // The host's "Hi" is answered by name.
+    let mark = calls.length;
+    await hook([{ from: '919000000001', id: 'wamid.hi', type: 'text', text: { body: 'Hi' } }]);
+    assert.match(replies(mark)[0], /Hi Asha/);
+
+    // 1. Check-in goes to the chosen host's WhatsApp, with the visitor's photo and two buttons.
+    const v = await checkIn('Tara', hostIds.asha, '9773330001');
+    assert.equal(v.status, 201);
+    assert.equal(v.body.whatsapp, null, 'no manual share button when the server sends it');
+    const job = await Outbox.findOne({ visit: v.body.id }).lean();
+    assert.equal(job.kind, 'whatsapp');
+    assert.equal(job.to, '+919000000001');
+    mark = calls.length;
+    await processOutbox();
+    assert.equal(calls[mark].path, 'media');
+    assert.equal(calls[mark].auth, 'Bearer wa-token');
+    const req = calls[mark + 1].payload;
+    assert.equal(req.to, '919000000001');
+    assert.equal(req.interactive.header.image.id, 'media-1');
+    assert.match(req.interactive.body.text, /Tara Sharma\* from Acme Ltd is at the gate/);
+    const [yes, no] = req.interactive.action.buttons.map((b) => b.reply.id);
+    assert.match(yes, /^a:[\w-]{20,}$/);
+    assert.match(no, /^r:/);
+
+    // 2. A tap from another number decides nothing.
+    mark = calls.length;
+    await tap('919111111111', yes);
+    assert.match(replies(mark)[0], /not sent to you/);
+    assert.equal((await call('GET', `/api/visits/${v.body.id}`, null, guard)).body.status, 'pending');
+
+    // 3. The host's tap approves, and they are told; a second tap is told it is done.
+    mark = calls.length;
+    await tap('919000000001', yes);
+    const after = (await call('GET', `/api/visits/${v.body.id}`, null, guard)).body;
+    assert.equal(after.status, 'approved');
+    assert.ok(after.dailyNumber >= 1);
+    assert.match(replies(mark)[0], /You let Tara Sharma in/);
+    mark = calls.length;
+    await tap('919000000001', no);
+    assert.match(replies(mark)[0], /already approved/);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(await Audit.exists({ action: 'visit.approved', entityId: v.body.id, 'details.via': 'whatsapp' }));
+
+    // 4. A host WhatsApp can't reach falls back to Telegram straight away when they connected it.
+    await Host.updateOne({ _id: hostIds.rahul }, { mobile: '+919000000002', telegramChatId: '7771' });
+    const w = await checkIn('Uma', hostIds.rahul, '9773330002');
+    await processOutbox();
+    const failed = await Outbox.findOne({ visit: w.body.id, kind: 'whatsapp' }).lean();
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.lastError, /131030/);
+    assert.equal((await Outbox.findOne({ visit: w.body.id, kind: 'telegram' }).lean())?.to, '7771');
+
+    // 5. A message Meta accepted but later could not deliver (host outside the 24-hour window) is shown as failed.
+    await Host.updateOne({ _id: hostIds.rahul }, { $unset: { telegramChatId: 1 } });
+    const x = await checkIn('Vik', hostIds.asha, '9773330003');
+    await processOutbox();
+    const sent = await Outbox.findOne({ visit: x.body.id, kind: 'whatsapp' }).lean();
+    assert.equal(sent.status, 'sent');
+    await hook(null, [{ id: sent.providerRef, status: 'failed', errors: [{ code: 131047, title: 'Re-engagement message' }] }]);
+    assert.equal((await call('GET', `/api/visits/${x.body.id}`, null, guard)).body.smsStatus, 'failed');
+  } finally {
+    Object.assign(config.whatsapp, saved);
+    fake.close();
+  }
+});

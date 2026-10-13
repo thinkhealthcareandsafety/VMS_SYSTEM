@@ -1,4 +1,4 @@
-const { Outbox } = require('../models');
+const { Outbox, Visit } = require('../models');
 const telegram = require('./telegram');
 
 // When a request ends some other way (the guard cancels, it expires, a newer one is sent, or the host
@@ -12,4 +12,15 @@ async function retireTelegram(visitId, text) {
   }
 }
 
-module.exports = { retireTelegram };
+// WhatsApp could not deliver (host not on the allowed list, or hasn't messaged the business number in 24 hours):
+// send the same request the way it would have gone without WhatsApp, unless the visit moved on meanwhile.
+async function whatsappFallback(job) {
+  const fallback = job.vars?.fallback;
+  if (!fallback) return;
+  const visit = await Visit.findById(job.visit, 'status').lean();
+  if (visit?.status !== 'pending') return;
+  if (await Outbox.exists({ visit: job.visit, kind: { $in: ['sms', 'telegram', 'whatsapp'] }, _id: { $gt: job._id } })) return;
+  await Outbox.create({ ...fallback, visit: job.visit });
+}
+
+module.exports = { retireTelegram, whatsappFallback };

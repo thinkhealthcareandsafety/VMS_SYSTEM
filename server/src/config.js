@@ -35,8 +35,20 @@ module.exports = {
     dailyLimit: Number(env.OTP_DAILY_LIMIT || 300), // SMS sent per day across the site: a cap on cost if someone keeps pressing "send"
     verifiedDays: Number(env.OTP_VERIFIED_DAYS || 90), // a number verified within this many days is not asked again
   },
-  // How hosts get approval requests: auto = Telegram when the host connected it, else SMS; sms = always SMS.
+  // How hosts get approval requests. auto = WhatsApp when it is set up, else Telegram when the host connected
+  // it, else SMS; sms = always SMS.
   approvalChannel: env.APPROVAL_CHANNEL || 'auto',
+  // WhatsApp Cloud API (Meta -> your app -> WhatsApp -> API Setup). Empty token = WhatsApp off.
+  whatsapp: {
+    token: env.WHATSAPP_TOKEN || '',
+    phoneId: env.WHATSAPP_PHONE_ID || '',          // the sending number's "Phone number ID", not the number itself
+    verifyToken: env.WHATSAPP_VERIFY_TOKEN || '',  // any phrase; type the same one in Meta when saving the webhook
+    appSecret: env.WHATSAPP_APP_SECRET || '',      // optional: Meta app -> Settings -> Basic; checks each webhook call is from Meta
+    apiBase: env.WHATSAPP_API_BASE || 'https://graph.facebook.com/v25.0',
+  },
+  // on = the guard's waiting screen also offers "Send on WhatsApp": it opens WhatsApp on the gate device with the
+  // host's number and the approval link filled in, and the guard presses send. No WhatsApp API or template needed.
+  approvalWhatsapp: env.APPROVAL_WHATSAPP === 'on',
   sms: {
     driver: env.SMS_DRIVER || 'console',   // console | http | msg91
     // msg91: approval text sent through a DLT-approved template. The template's variables, in order, receive

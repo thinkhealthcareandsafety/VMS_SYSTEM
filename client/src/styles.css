@@ -90,6 +90,8 @@ button { font: inherit; color: inherit; }
 .btn-primary:hover:not(:disabled) { background: var(--ink-hover); border-color: var(--ink-hover); }
 .btn-success { background: var(--ok); border-color: var(--ok); color: #fff; }
 .btn-success:hover:not(:disabled) { background: #0e5f43; border-color: #0e5f43; }
+.btn-whatsapp { background: #1fa855; border-color: #1fa855; color: #fff; text-decoration: none; }
+.btn-whatsapp:hover:not(:disabled) { background: #178c46; border-color: #178c46; color: #fff; }
 .btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 .btn-danger:hover:not(:disabled) { background: #9c2a24; border-color: #9c2a24; }
 .btn-danger-outline { color: var(--bad); border-color: #efc4c1; }
