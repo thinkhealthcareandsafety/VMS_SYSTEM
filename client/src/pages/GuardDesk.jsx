@@ -236,7 +236,8 @@ export default function GuardDesk({ user, onLogout }) {
             ) : (
               <CheckInForm
                 liveTick={liveTick}
-                isAdmin={user.role === 'admin'}
+                isAdmin={user.role === 'admin' || user.role === 'superadmin'}
+                keepFullId={Boolean(user.fullId)}
                 onOpenActive={openVisit}
                 onSubmitted={(v) => {
                   setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
@@ -301,7 +302,7 @@ function UserMenu({ user, onLogout, autoPrint, onToggleAutoPrint }) {
       </button>
       {open && (
         <div className="menu-pop" role="menu">
-          <div className="who"><strong>{user.fullName}</strong><small>{user.role === 'admin' ? 'Administrator' : 'Security guard'} · {user.username}</small></div>
+          <div className="who"><strong>{user.fullName}</strong><small>{user.role === 'superadmin' ? 'Super Admin' : user.role === 'admin' ? 'Administrator' : 'Security guard'} · {user.username}</small></div>
           <button role="menuitemcheckbox" aria-checked={autoPrint} onClick={onToggleAutoPrint}>
             <Printer />Print pass when approved<span className={`menu-state ${autoPrint ? 'on' : ''}`}>{autoPrint ? 'On' : 'Off'}</span>
           </button>
@@ -315,7 +316,7 @@ function UserMenu({ user, onLogout, autoPrint, onToggleAutoPrint }) {
 }
 
 // ---------------------------------------------------------------- Check-in (single page)
-function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
+function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId }) {
   const [form, setForm] = useState(store.load);
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
@@ -497,7 +498,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
       const res = await api('/api/visits', {
         method: 'POST',
         body: {
-          ...form, mobile: digits, hostId: host.id, photo, idImage,
+          ...form, mobile: digits, hostId: host.id, photo, idImage, ...(keepFullId && idInfo?.full ? { idImageFull: idInfo.full } : {}),
           ...(verify === 'skipped' ? { otpSkip: true } : {}),
           ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}),
           validity: form.validity || '8h', ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}) },
@@ -645,7 +646,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
           <div className="field">
             <span>Aadhaar card <span className="faint">· first 8 digits blacked out</span></span>
             {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
+              ? <Camera mode="aadhaar" keepFull={keepFullId} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
               : <CamTile icon={CreditCard} label="Scan Aadhaar" onClick={() => setCam('aadhaar')} />}
           </div>
         </div>

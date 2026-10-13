@@ -8,6 +8,7 @@ const defaults = () => ({
   gateName: 'Main gate',
   idRetentionDays: Math.max(1, Math.round(config.idImageRetentionHours / 24)),
   otpMode: 'off', // an admin switches mobile verification on in Settings once the SMS provider is ready
+  fullIdCapture: true, // the full Aadhaar is kept, encrypted, for the Super Admin
 });
 
 let cache = null;

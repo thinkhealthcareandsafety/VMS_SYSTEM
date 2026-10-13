@@ -106,7 +106,7 @@ export default function Admin({ user, onLogout }) {
         <span className="spacer" />
         <div className="me">
           <Avatar name={user.fullName} size={32} />
-          <span className="grow"><strong>{user.fullName}</strong><small>Administrator</small></span>
+          <span className="grow"><strong>{user.fullName}</strong><small>{user.role === 'superadmin' ? 'Super Admin' : 'Administrator'}</small></span>
           <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setPwOpen(true)} aria-label="Change password" title="Change password"><KeyRound /></button>
           <button className="btn btn-ghost btn-sm btn-icon" onClick={onLogout} aria-label="Sign out" title="Sign out"><LogOut /></button>
         </div>
@@ -130,11 +130,11 @@ export default function Admin({ user, onLogout }) {
           {section === 'staff' && <StaffPage {...page} user={user} />}
           {section === 'expected' && <ExpectedPage {...page} />}
           {section === 'blocked' && <BlockedPage {...page} />}
-          {section === 'settings' && <SettingsPage {...page} />}
+          {section === 'settings' && <SettingsPage {...page} superAdmin={user.role === 'superadmin'} />}
         </div>
       </main>
 
-      <VisitDrawer id={visitId} tick={tick} onClose={() => setVisitId(null)} onChanged={refresh} />
+      <VisitDrawer id={visitId} tick={tick} superAdmin={user.role === 'superadmin'} onClose={() => setVisitId(null)} onChanged={refresh} />
       <ExportDialog opts={exportOpts} onClose={() => setExportOpts(null)} />
       <PasswordDialog open={pwOpen} onClose={() => setPwOpen(false)} />
     </div>
@@ -630,7 +630,7 @@ const maskNote = (m) => {
   return manual ? `${base}. The guard blacked out more by hand.` : `${base}.`;
 };
 
-function VisitDrawer({ id, tick, onClose, onChanged }) {
+function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
   const toast = useToast();
   const [v, setV] = useState(null);
   const [timeline, setTimeline] = useState(null);
@@ -653,7 +653,21 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
     return () => { alive = false; if (url) URL.revokeObjectURL(url); setIdUrl(null); };
   }, [showId, id]);
 
-  useEffect(() => { setV(null); setTimeline(null); setShowId(false); }, [id]);
+  // The full Aadhaar: Super Admin only, fetched on request (an audited view), held in memory only while shown.
+  const [fullUrl, setFullUrl] = useState(null);
+  const [showFull, setShowFull] = useState(false);
+  useEffect(() => {
+    if (!showFull || !id) return undefined;
+    let url = null;
+    let alive = true;
+    fetch(`/api/visits/${id}/id-image-full`, { credentials: 'same-origin', cache: 'no-store' })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('Not available'))))
+      .then((b) => { if (alive) { url = URL.createObjectURL(b); setFullUrl(url); } })
+      .catch(() => alive && setFullUrl('error'));
+    return () => { alive = false; if (url) URL.revokeObjectURL(url); setFullUrl(null); };
+  }, [showFull, id]);
+
+  useEffect(() => { setV(null); setTimeline(null); setShowId(false); setShowFull(false); }, [id]);
   useEffect(() => {
     if (!id) return;
     api(`/api/visits/${id}`).then(setV).catch((e) => toast(e.message, 'bad'));
@@ -735,6 +749,27 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
                 <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
                   <button className="btn btn-sm" onClick={() => setShowId(true)}><Eye />Show masked Aadhaar</button>
                   <span className="faint" style={{ fontSize: 12.5 }}>Each view is recorded in the audit log.</span>
+                </div>
+              )}
+              {superAdmin && v.hasFullId && (
+                <div className="full-id">
+                  <h3 className="section-title">Full Aadhaar <span className="badge role-super">Super Admin only</span></h3>
+                  {!showFull ? (
+                    <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
+                      <button className="btn btn-sm" onClick={() => setShowFull(true)}><Eye />Show full Aadhaar</button>
+                      <span className="faint" style={{ fontSize: 12.5 }}>Unmasked. Each view is recorded in the audit log with your name.</span>
+                    </div>
+                  ) : fullUrl === 'error' ? <p className="muted">The image could not be loaded.</p>
+                    : !fullUrl ? <div className="skeleton" style={{ height: 160, borderRadius: 12 }} />
+                      : (
+                        <>
+                          <button type="button" className="id-frame id-open" onClick={() => setZoomed({ src: fullUrl, title: `${name} · full Aadhaar (Super Admin)` })} aria-label="Open the full Aadhaar full size">
+                            <img src={fullUrl} alt="Full Aadhaar card" />
+                            <span className="shot-zoom"><Maximize2 />Open full size</span>
+                          </button>
+                          <button className="btn btn-sm btn-ghost" style={{ marginTop: 8 }} onClick={() => setShowFull(false)}><X />Hide</button>
+                        </>
+                      )}
                 </div>
               )}
               {v.idMaskMethod && <p className="faint" style={{ fontSize: 12.5, marginTop: 8 }}>{maskNote(v.idMaskMethod)}</p>}
@@ -1182,6 +1217,7 @@ function ExportDialog({ opts, onClose }) {
 const ROLE_INFO = {
   guard: ['Guard', 'Checks visitors in and out at the gate'],
   admin: ['Admin', 'Everything a guard can do, plus this console'],
+  superadmin: ['Super Admin', 'Everything an admin can do, plus the full Aadhaar'],
 };
 const ago = (iso) => {
   if (!iso) return 'Never';
@@ -1219,7 +1255,8 @@ function StaffPage({ toast, user }) {
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
-  const load = useCallback(() => api('/api/admin/users').then((d) => setRows(d.rows)).catch(() => setRows([])), []);
+  const [canSuper, setCanSuper] = useState(false);
+  const load = useCallback(() => api('/api/admin/users').then((d) => { setRows(d.rows); setCanSuper(Boolean(d.canAppointSuper)); }).catch(() => setRows([])), []);
   useEffect(() => { load(); }, [load]);
 
   const toggle = async (u) => {
@@ -1238,7 +1275,7 @@ function StaffPage({ toast, user }) {
     <section className="panel">
       <div className="toolbar">
         <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or username" aria-label="Search staff" /></div>
-        <span className="muted num" style={{ alignSelf: 'center' }}>{rows ? `${counts.guard || 0} ${counts.guard === 1 ? 'guard' : 'guards'} · ${counts.admin || 0} ${counts.admin === 1 ? 'admin' : 'admins'}` : ''}</span>
+        <span className="muted num" style={{ alignSelf: 'center' }}>{rows ? `${counts.guard || 0} ${counts.guard === 1 ? 'guard' : 'guards'} · ${(counts.admin || 0) + (counts.superadmin || 0)} ${(counts.admin || 0) + (counts.superadmin || 0) === 1 ? 'admin' : 'admins'}` : ''}</span>
         <span className="spacer-x" />
         <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><UserPlus />Add staff</button>
       </div>
@@ -1262,14 +1299,14 @@ function StaffPage({ toast, user }) {
                         </div>
                       </div>
                     </td>
-                    <td><span className={`badge plain ${u.role === 'admin' ? 'role-admin' : ''}`}>{ROLE_INFO[u.role][0]}</span></td>
+                    <td><span className={`badge plain ${u.role === 'superadmin' ? 'role-super' : u.role === 'admin' ? 'role-admin' : ''}`}>{ROLE_INFO[u.role]?.[0] || u.role}</span></td>
                     <td>{u.gate ? <>{u.gate.name}{!u.gate.active && <span className="badge badge-warn" style={{ marginLeft: 6 }}>Closed</span>}</> : <span className="faint">{u.role === 'guard' ? 'Not fixed' : '—'}</span>}</td>
                     <td className="num">{ago(u.lastLoginAt)}</td>
                     <td className="r">
-                      <button className="switch" role="switch" aria-checked={u.active} disabled={self}
+                      <button className="switch" role="switch" aria-checked={u.active} disabled={self || (u.role === 'superadmin' && user.role !== 'superadmin')}
                         aria-label={`${u.fullName} can sign in`} title={self ? 'You cannot switch off your own account' : undefined} onClick={() => toggle(u)} />
                     </td>
-                    <td className="r"><button className="btn btn-sm" onClick={() => setEditing(u)}>Manage</button></td>
+                    <td className="r"><button className="btn btn-sm" disabled={u.role === 'superadmin' && user.role !== 'superadmin'} title={u.role === 'superadmin' && user.role !== 'superadmin' ? 'Only a Super Admin can change a Super Admin' : undefined} onClick={() => setEditing(u)}>Manage</button></td>
                   </tr>
                 );
               })}
@@ -1277,25 +1314,25 @@ function StaffPage({ toast, user }) {
           </table>
         </div>
       )}
-      <AddStaffDialog open={adding} gates={gates} onClose={() => setAdding(false)} onDone={load} />
-      <EditStaffDialog member={editing} gates={gates} self={editing?.id === user.id} onClose={() => setEditing(null)} onDone={load} />
+      <AddStaffDialog open={adding} gates={gates} canSuper={canSuper} onClose={() => setAdding(false)} onDone={load} />
+      <EditStaffDialog member={editing} gates={gates} canSuper={canSuper} self={editing?.id === user.id} onClose={() => setEditing(null)} onDone={load} />
     </section>
   );
 }
 
-function RolePicker({ value, onChange, disabled }) {
+function RolePicker({ value, onChange, disabled, canSuper }) {
   return (
     <div className="export-opts" role="radiogroup" aria-label="Role">
-      {Object.entries(ROLE_INFO).map(([id, [label, desc]]) => (
+      {Object.entries(ROLE_INFO).filter(([id]) => id !== 'superadmin' || canSuper || value === 'superadmin').map(([id, [label, desc]]) => (
         <button type="button" key={id} role="radio" aria-checked={value === id} className="export-opt" disabled={disabled} onClick={() => onChange(id)}>
-          {id === 'admin' ? <ShieldCheck /> : <Users />}<span><strong>{label}</strong><small>{desc}</small></span>
+          {id === 'guard' ? <Users /> : <ShieldCheck />}<span><strong>{label}</strong><small>{desc}</small></span>
         </button>
       ))}
     </div>
   );
 }
 
-function AddStaffDialog({ open, gates, onClose, onDone }) {
+function AddStaffDialog({ open, gates, canSuper, onClose, onDone }) {
   const blank = { fullName: '', username: '', role: 'guard', password: '', gateId: '' };
   const [f, setF] = useState(blank);
   const [ownPassword, setOwnPassword] = useState(false);
@@ -1343,7 +1380,7 @@ function AddStaffDialog({ open, gates, onClose, onDone }) {
             <input className="input mono" required value={f.username} onChange={(e) => { setUserEdited(true); setF({ ...f, username: e.target.value.toLowerCase().replace(/\s/g, '') }); }} autoCapitalize="none" spellCheck="false" />
             <span className="hint">What they type to sign in. Lowercase letters, numbers, dot or dash.</span>
           </label>
-          <div className="field"><span>Role</span><RolePicker value={f.role} onChange={(role) => setF({ ...f, role })} /></div>
+          <div className="field"><span>Role</span><RolePicker value={f.role} canSuper={canSuper} onChange={(role) => setF({ ...f, role })} /></div>
           {f.role === 'guard' && <GatePicker value={f.gateId} gates={gates} onChange={(gateId) => setF({ ...f, gateId })} />}
           <label className="checkbox" style={{ fontSize: 13.5 }}>
             <input type="checkbox" checked={ownPassword} onChange={(e) => setOwnPassword(e.target.checked)} />
@@ -1366,7 +1403,7 @@ function AddStaffDialog({ open, gates, onClose, onDone }) {
   );
 }
 
-function EditStaffDialog({ member, gates, self, onClose, onDone }) {
+function EditStaffDialog({ member, gates, canSuper, self, onClose, onDone }) {
   const toast = useToast();
   const [f, setF] = useState({ fullName: '', role: 'guard', gateId: '' });
   const [busy, setBusy] = useState(false);
@@ -1412,7 +1449,7 @@ function EditStaffDialog({ member, gates, self, onClose, onDone }) {
             <label className="field"><span>Full name</span><input className="input" value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} /></label>
             <div className="field">
               <span>Role {self && <span className="faint">· you cannot change your own role</span>}</span>
-              <RolePicker value={f.role} onChange={(role) => setF({ ...f, role })} disabled={self} />
+              <RolePicker value={f.role} canSuper={canSuper} onChange={(role) => setF({ ...f, role })} disabled={self} />
             </div>
             {f.role === 'guard' && <GatePicker value={f.gateId} gates={gates} onChange={(gateId) => setF({ ...f, gateId })} />}
             <div className="field">
@@ -1817,13 +1854,13 @@ function GatesManager() {
   );
 }
 
-function SettingsPage({ toast }) {
+function SettingsPage({ toast, superAdmin }) {
   const [s, setS] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   useEffect(() => {
-    api('/api/admin/settings').then((d) => { setS(d); setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode }); }).catch((e) => setErr(e.message));
+    api('/api/admin/settings').then((d) => { setS(d); setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) }); }).catch((e) => setErr(e.message));
   }, []);
 
   if (!f) return err ? <div className="alert alert-bad"><AlertTriangle /><span className="grow">{err}</span></div> : <ListSkeleton />;
@@ -1862,7 +1899,19 @@ function SettingsPage({ toast }) {
             </select>
             <span className="hint">Older images are deleted automatically and are then left out of downloads. Visitor photos are not affected.</span>
           </label>
-          <div className="alert"><Info /><span className="grow">Under the DPDP Act, keep Aadhaar images only as long as you need them for security, and say so in the notice visitors see. Only masked images are ever stored: the first 8 digits are blacked out on the guard’s device.</span></div>
+          <div className="field">
+            <span>Full Aadhaar for the Super Admin</span>
+            {superAdmin ? (
+              <label className="checkbox" style={{ fontSize: 14 }}>
+                <input type="checkbox" checked={f.fullIdCapture} onChange={(e) => setF({ ...f, fullIdCapture: e.target.checked })} />
+                <span>Keep the full card, encrypted, alongside the masked one</span>
+              </label>
+            ) : (
+              <span className="muted" style={{ fontSize: 14 }}>{s.fullIdCapture ? 'On' : 'Off'} · only a Super Admin can change this</span>
+            )}
+            <span className="hint">Only a Super Admin can open it; every view is recorded with their name. It is deleted with the masked image after the period above.</span>
+          </div>
+          <div className="alert"><Info /><span className="grow">Under the DPDP Act, keep Aadhaar images only as long as you need them for security, and say so in the notice visitors see. Guards and admins only ever see the masked card: the first 8 digits are blacked out on the guard’s device.</span></div>
         </div>
       </section>
 

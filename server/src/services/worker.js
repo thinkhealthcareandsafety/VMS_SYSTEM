@@ -88,10 +88,12 @@ async function closeExpiredPasses() {
 async function purgeIdImages() {
   const { idRetentionDays } = await settings.get();
   const cutoff = new Date(Date.now() - idRetentionDays * 86400e3);
-  const due = await Visit.find({ idImagePath: { $exists: true }, idImagePurgedAt: { $exists: false }, createdAt: { $lt: cutoff } }, '_id idImagePath').limit(100);
+  const due = await Visit.find({
+    $or: [{ idImagePath: { $exists: true } }, { idFullPath: { $exists: true } }], idImagePurgedAt: { $exists: false }, createdAt: { $lt: cutoff },
+  }, '_id idImagePath idFullPath').limit(100);
   for (const v of due) {
-    await fs.rm(v.idImagePath, { force: true });
-    await Visit.updateOne({ _id: v._id }, { $set: { idImagePurgedAt: new Date() }, $unset: { idImagePath: 1 } });
+    await Promise.all([v.idImagePath, v.idFullPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
+    await Visit.updateOne({ _id: v._id }, { $set: { idImagePurgedAt: new Date() }, $unset: { idImagePath: 1, idFullPath: 1 } });
   }
 }
 

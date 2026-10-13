@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const mongoose = require('mongoose');
 const config = require('../config');
-const { requireRole } = require('../middleware/auth');
+const { requireRole, isAdmin } = require('../middleware/auth');
 const { Visit, Host, ApprovalToken, Outbox, Invite, Block, Otp } = require('../models');
 const settings = require('../services/settings');
 const messaging = require('../services/messaging');
@@ -12,6 +12,7 @@ const { retireTelegram } = require('../services/notify');
 const telegram = require('../services/telegram');
 const whatsapp = require('../services/whatsapp');
 const passes = require('../services/passes');
+const vault = require('../services/vault');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
@@ -42,7 +43,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   dailyNumber: v.dailyNumber ?? null,
   dailyDay: v.dailyDay ?? null,
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
-  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
+  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), hasFullId: Boolean(v.idFullPath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
   decidedAt: v.decidedAt,
   checkedOutAt: v.checkedOutAt,
   validity: passes.validityLabel(v.validity),
@@ -241,7 +242,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   if (otpMode !== 'off') {
     const via = await verifiedVia(mobile, invite);
     if (via) mobileCheck = { mobileVerified: via, mobileVerifiedAt: new Date() };
-    else if (b.otpSkip === true && (otpMode === 'optional' || req.user.role === 'admin')) mobileCheck = { mobileVerified: 'skipped', mobileVerifiedAt: new Date() };
+    else if (b.otpSkip === true && (otpMode === 'optional' || isAdmin(req.user))) mobileCheck = { mobileVerified: 'skipped', mobileVerifiedAt: new Date() };
     else if (otpMode === 'required') return res.status(409).json({ code: 'verify_required', error: 'Verify the visitor’s mobile number with the code first.' });
   }
 
@@ -250,11 +251,14 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   const idImage = decodeJpeg(b.idImage, MAX_ID);
   if (!idImage) return res.status(400).json({ error: 'Aadhaar image is required' });
   const idMaskMethod = ['auto', 'already', 'guide'].some((m) => b.idMask === m || b.idMask === `${m}+manual`) ? b.idMask : undefined;
+  // The full card, for the Super Admin only. Optional: older screens do not send it, and it never blocks a visitor.
+  const idFull = (await settings.get()).fullIdCapture && b.idImageFull ? decodeJpeg(b.idImageFull, MAX_ID) : null;
 
-  let photoPath, idPath;
+  let photoPath, idPath, idFullPath;
   try {
     photoPath = await saveFile('photos', photo);
     idPath = await saveFile('id-masked', idImage);
+    if (idFull) idFullPath = await vault.store(idFull);
     const visitorName = `${firstName} ${lastName}`;
     const gate = await passes.gateOf(req.user.id);
     const visit = await Visit.create({
@@ -263,7 +267,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       host: host._id,
       status: 'pending',
       visitDay: siteDay(),
-      photoPath, idImagePath: idPath, idMaskMethod,
+      photoPath, idImagePath: idPath, idFullPath, idMaskMethod,
       ...faceMatchFrom(b), ...mobileCheck,
       validity: pass.validity,
       arrival: { gate: gate.id || undefined, gateName: gate.name, by: req.user.id, byName: req.user.fullName },
@@ -290,7 +294,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     const share = await issueApprovalLink(visit, host, visitorName, company);
     res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, whatsapp: share });
   } catch (err) {
-    await Promise.all([photoPath, idPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
+    await Promise.all([photoPath, idPath, idFullPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
     console.error('check-in failed', err);
     res.status(500).json({ error: 'Could not register visitor. Please retry.' });
   }
@@ -303,7 +307,7 @@ router.get('/inside', requireRole('guard', 'admin'), async (req, res) => {
     Visit.find({ status: 'approved' }).sort({ decidedAt: 1 }).populate('host').lean(),
     Visit.find({ status: 'away', validUntil: { $gt: new Date(now) } }).sort({ validUntil: 1 }).limit(500).populate('host').lean(),
   ]);
-  const admin = req.user.role === 'admin';
+  const admin = isAdmin(req.user);
   const rows = visits.map((v) => {
     const since = passes.entryExit(v).lastIn?.at || v.decidedAt;
     return {
@@ -365,7 +369,7 @@ router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
   const print = await Outbox.findOne({ kind: 'print', visit: v._id }).sort({ _id: -1 }).lean();
   const sms = (await smsStatusFor([v._id])).get(String(v._id));
   res.json({
-    ...publicVisit(v, v.host, req.user.role === 'admin'),
+    ...publicVisit(v, v.host, isAdmin(req.user)),
     createdAt: v.createdAt,
     printStatus: config.printer.mode === 'off' ? 'off' : print ? print.status : null,
     printError: print?.status === 'failed' ? print.lastError : undefined,
@@ -387,6 +391,17 @@ router.get('/:id/id-image', requireRole('admin'), async (req, res) => {
   if (!v?.idImagePath) return res.status(404).json({ error: 'ID image not available (purged or never captured)' });
   audit(req.user, 'id_image.viewed', { entity: 'Visit', entityId: req.params.id, details: { ref: v.ref }, ip: req.ip });
   res.type('jpeg').sendFile(path.resolve(v.idImagePath));
+});
+
+// The full Aadhaar: Super Admin only, decrypted for this response alone, never cached; every view is audited.
+router.get('/:id/id-image-full', requireRole('superadmin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).end();
+  const v = await Visit.findById(req.params.id, 'idFullPath ref').lean();
+  if (!v?.idFullPath) return res.status(404).json({ error: 'No full Aadhaar kept for this visit (not captured, or deleted after retention)' });
+  let img;
+  try { img = await vault.read(v.idFullPath); } catch { return res.status(410).json({ error: 'The full Aadhaar could not be opened' }); }
+  audit(req.user, 'id_image_full.viewed', { entity: 'Visit', entityId: req.params.id, details: { ref: v.ref }, ip: req.ip });
+  res.set('Cache-Control', 'no-store').type('jpeg').send(img);
 });
 
 // Re-sends the approval SMS (host missed it, or link expired).

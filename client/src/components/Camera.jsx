@@ -6,8 +6,9 @@ import { Spinner } from './ui.jsx';
 import ImageViewer from './ImageViewer.jsx';
 
 // mode="face": live photo. mode="aadhaar": the card is read on this device, the number is found and
-// painted out, and only the masked image is handed back (onCapture(dataUrl, info)).
-export default function Camera({ mode, onCapture, captured, onRetake, info, onEdit }) {
+// painted out, and the masked image is handed back (onCapture(dataUrl, info)). With `keepFull`, info.full
+// also carries the unmasked card, which the server stores encrypted for the Super Admin only.
+export default function Camera({ mode, onCapture, captured, onRetake, info, onEdit, keepFull = false }) {
   const videoRef = useRef(null);
   const boxRef = useRef(null);
   const [error, setError] = useState('');
@@ -59,9 +60,10 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
         copy.width = card.width;
         copy.height = card.height;
         copy.getContext('2d').drawImage(card, 0, 0);
+        const full = keepFull ? copy.toDataURL('image/jpeg', 0.82) : undefined;
         const face = describeCard(copy).catch(() => 'unavailable');
-        const result = await maskCard(card); // the unmasked card never leaves this function
-        onCapture(result.dataUrl, { ...result, face: await face });
+        const result = await maskCard(card);
+        onCapture(result.dataUrl, { ...result, face: await face, ...(full ? { full } : {}) });
       } finally {
         setBusy(false);
       }

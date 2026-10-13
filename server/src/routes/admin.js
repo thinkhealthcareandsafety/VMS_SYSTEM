@@ -7,7 +7,7 @@ const path = require('node:path');
 const mongoose = require('mongoose');
 const archiver = require('archiver');
 const config = require('../config');
-const { requireRole } = require('../middleware/auth');
+const { requireRole, isAdmin } = require('../middleware/auth');
 const telegram = require('../services/telegram');
 const messaging = require('../services/messaging');
 const exporter = require('../services/export');
@@ -311,9 +311,13 @@ const staffRow = (u) => ({
   lastLoginAt: u.lastLoginAt || null, createdAt: u.createdAt || null,
 });
 
+// A Super Admin is made by a Super Admin. The very first one can be made by any admin, once.
+const ROLES = ['guard', 'admin', 'superadmin'];
+const mayAppointSuper = async (actor) => actor.role === 'superadmin' || !(await User.exists({ role: 'superadmin', active: true }));
+
 router.get('/users', requireRole('admin'), async (req, res) => {
   const users = await User.find().sort({ active: -1, role: 1, fullName: 1 }).populate('gate', 'name active').lean();
-  res.json({ rows: users.map(staffRow) });
+  res.json({ rows: users.map(staffRow), canAppointSuper: await mayAppointSuper(req.user) });
 });
 
 router.post('/users', requireRole('admin'), async (req, res) => {
@@ -322,7 +326,8 @@ router.post('/users', requireRole('admin'), async (req, res) => {
   const { role } = req.body || {};
   if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Username: 3 to 30 lowercase letters or numbers (dot, dash and underscore allowed)' });
   if (fullName.length < 2) return res.status(400).json({ error: "Enter the person's full name" });
-  if (!['guard', 'admin'].includes(role)) return res.status(400).json({ error: 'Choose guard or admin' });
+  if (!ROLES.includes(role)) return res.status(400).json({ error: 'Choose guard, admin or super admin' });
+  if (role === 'superadmin' && !(await mayAppointSuper(req.user))) return res.status(403).json({ error: 'Only a Super Admin can make another Super Admin' });
   if (await User.exists({ username })) return res.status(409).json({ error: `The username "${username}" is already taken` });
   const typed = typeof req.body?.password === 'string' && req.body.password.length > 0;
   const password = typed ? req.body.password : genPassword();
@@ -344,6 +349,7 @@ router.patch('/users/:id', requireRole('admin'), async (req, res) => {
   const self = String(user._id) === req.user.id;
   const b = req.body || {};
   const changes = {};
+  if (user.role === 'superadmin' && req.user.role !== 'superadmin') return res.status(403).json({ error: 'Only a Super Admin can change a Super Admin account' });
 
   if (b.fullName !== undefined) {
     const fullName = cleanText(b.fullName, 80);
@@ -351,8 +357,15 @@ router.patch('/users/:id', requireRole('admin'), async (req, res) => {
     changes.fullName = fullName;
   }
   if (b.role !== undefined) {
-    if (!['guard', 'admin'].includes(b.role)) return res.status(400).json({ error: 'Choose guard or admin' });
-    if (self && b.role !== 'admin') return res.status(400).json({ error: 'You cannot remove your own admin access' });
+    if (!ROLES.includes(b.role)) return res.status(400).json({ error: 'Choose guard, admin or super admin' });
+    if (b.role === 'superadmin' && user.role !== 'superadmin' && !(await mayAppointSuper(req.user))) {
+      return res.status(403).json({ error: 'Only a Super Admin can make another Super Admin' });
+    }
+    if (self && !isAdmin({ role: b.role })) return res.status(400).json({ error: 'You cannot remove your own admin access' });
+    if (self && user.role === 'superadmin' && b.role !== 'superadmin'
+      && !(await User.exists({ role: 'superadmin', active: true, _id: { $ne: user._id } }))) {
+      return res.status(400).json({ error: 'Make someone else Super Admin before giving this up' });
+    }
     changes.role = b.role;
   }
   if (b.gateId !== undefined) {
@@ -366,8 +379,8 @@ router.patch('/users/:id', requireRole('admin'), async (req, res) => {
     changes.active = b.active;
   }
   // Never leave the site without an active admin.
-  const losesAdmin = user.role === 'admin' && user.active && (changes.role === 'guard' || changes.active === false);
-  if (losesAdmin && (await User.countDocuments({ role: 'admin', active: true, _id: { $ne: user._id } })) === 0) {
+  const losesAdmin = isAdmin(user) && user.active && (changes.role === 'guard' || changes.active === false);
+  if (losesAdmin && (await User.countDocuments({ role: { $in: ['admin', 'superadmin'] }, active: true, _id: { $ne: user._id } })) === 0) {
     return res.status(400).json({ error: 'Keep at least one active admin' });
   }
 
@@ -476,6 +489,11 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
   if (b.otpMode !== undefined) {
     if (!['off', 'optional', 'required'].includes(b.otpMode)) return res.status(400).json({ error: 'Pick off, optional or required' });
     patch.otpMode = b.otpMode;
+  }
+  if (b.fullIdCapture !== undefined) {
+    if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'Only a Super Admin can change this' });
+    if (typeof b.fullIdCapture !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
+    patch.fullIdCapture = b.fullIdCapture;
   }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
   const before = await settings.get();

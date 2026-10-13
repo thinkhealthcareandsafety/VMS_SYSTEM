@@ -24,7 +24,7 @@ function createApp() {
     },
   }));
   // WhatsApp webhook calls are signed over the exact bytes Meta sent, so keep them.
-  app.use(express.json({ limit: '6mb', verify: (req, _res, buf) => { if (req.originalUrl.startsWith('/api/whatsapp')) req.rawBody = buf; } }));
+  app.use(express.json({ limit: '10mb', verify: (req, _res, buf) => { if (req.originalUrl.startsWith('/api/whatsapp')) req.rawBody = buf; } }));
   app.use(cookieParser());
   app.use('/api', rateLimit({ windowMs: 60e3, limit: 300, standardHeaders: true, legacyHeaders: false }));
 

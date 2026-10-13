@@ -7,7 +7,8 @@ import GuardDesk from './pages/GuardDesk.jsx';
 import Admin from './pages/Admin.jsx';
 import Approve from './pages/Approve.jsx';
 
-const home = (user) => (user?.role === 'admin' ? '/admin' : '/guard');
+const isAdmin = (user) => user?.role === 'admin' || user?.role === 'superadmin';
+const home = (user) => (isAdmin(user) ? '/admin' : '/guard');
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = loading
@@ -44,7 +45,7 @@ export default function App() {
       <Route path="/approve" element={<Approve />} />
       <Route path="/login" element={user ? <Navigate to={home(user)} replace /> : <Login onLogin={setUser} />} />
       <Route path="/guard" element={user ? <GuardDesk user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />
-      <Route path="/admin" element={user?.role === 'admin' ? <Admin user={user} onLogout={logout} /> : <Navigate to={user ? '/guard' : '/login'} replace />} />
+      <Route path="/admin" element={isAdmin(user) ? <Admin user={user} onLogout={logout} /> : <Navigate to={user ? '/guard' : '/login'} replace />} />
       <Route path="*" element={<Navigate to={user ? home(user) : '/login'} replace />} />
     </Routes>
   );

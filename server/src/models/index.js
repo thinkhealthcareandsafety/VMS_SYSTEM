@@ -7,7 +7,7 @@ const userSchema = new Schema({
   username: { type: String, required: true, unique: true, lowercase: true, trim: true },
   fullName: { type: String, required: true, trim: true },
   passwordHash: { type: String, required: true, select: false },
-  role: { type: String, enum: ['guard', 'admin'], required: true },
+  role: { type: String, enum: ['guard', 'admin', 'superadmin'], required: true }, // superadmin = admin + the full (unmasked) Aadhaar
   gate: { type: Schema.Types.ObjectId, ref: 'Gate' },  // where this person checks visitors in and out; none = the site's first gate
   active: { type: Boolean, default: true },
   sessionVersion: { type: Number, default: 0 },   // bumped on password change: signs out every other device
@@ -64,6 +64,7 @@ const visitSchema = new Schema({
   idImagePath: { type: String },                             // MASKED Aadhaar image only
   idMaskMethod: { type: String },                            // auto | already | guide, + "+manual" if the guard blacked out more
   idImagePurgedAt: { type: Date },
+  idFullPath: { type: String },                             // FULL Aadhaar image, AES-256-GCM encrypted (services/vault); Super Admin only
   // Live photo vs the face on the Aadhaar card, compared on the guard's device. Only the score is kept, never a face template.
   // Advisory: it helps the guard look twice, it never admits or refuses anyone.
   mobileVerified: { type: String, enum: ['otp', 'expected', 'returning', 'skipped'] }, // how the number was checked; absent = not checked
@@ -123,6 +124,7 @@ const settingSchema = new Schema({
   gateName: { type: String, trim: true },     // shown on the guard desk
   idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
+  fullIdCapture: { type: Boolean },           // keep the full Aadhaar (encrypted) for the Super Admin; only a Super Admin changes it
 }, { versionKey: false, timestamps: true });
 
 // A visitor the admin expects: at the gate they are let in without waiting for the host.

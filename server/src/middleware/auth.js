@@ -37,10 +37,13 @@ function requireRole(...roles) {
   return async (req, res, next) => {
     const user = await loadUser(req);
     if (!user) return res.status(401).json({ error: 'Your session has ended. Sign in again.', code: 'session_expired' });
-    if (roles.length && !roles.includes(user.role)) return res.status(403).json({ error: 'Not allowed for this role' });
+    const allowed = !roles.length || roles.includes(user.role) || (user.role === 'superadmin' && roles.includes('admin'));
+    if (!allowed) return res.status(403).json({ error: 'Not allowed for this role' });
     req.user = user;
     next();
   };
 }
 
-module.exports = { COOKIE, signSession, setSessionCookie, requireRole, loadUser };
+const isAdmin = (user) => user?.role === 'admin' || user?.role === 'superadmin';
+
+module.exports = { COOKIE, signSession, setSessionCookie, requireRole, loadUser, isAdmin };

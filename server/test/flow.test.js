@@ -954,3 +954,68 @@ test('pass validity: multi-day passes let the holder out and back in at any gate
   }, guard);
   assert.equal((await call('GET', `/api/visits/${y.body.id}`, null, guard)).body.validity, '8 hours');
 });
+
+test('super admin: full Aadhaar is stored encrypted, shown only to a Super Admin, audited, and deleted at retention', async () => {
+  const fsp = require('node:fs');
+  const { Visit, Audit } = require('../src/models');
+  const { purgeIdImages } = require('../src/services/worker');
+  const settingsSvc = require('../src/services/settings');
+
+  // The first Super Admin can be made by an admin, once; after that only a Super Admin can make one.
+  const users = await call('GET', '/api/admin/users', null, admin);
+  assert.equal(users.body.canAppointSuper, true);
+  const sa = await call('POST', '/api/admin/users', { username: 'chief', fullName: 'Chief Security', role: 'superadmin' }, admin);
+  assert.equal(sa.status, 201);
+  assert.equal((await call('POST', '/api/admin/users', { username: 'chief2', fullName: 'Second Chief', role: 'superadmin' }, admin)).status, 403);
+  assert.equal((await call('GET', '/api/admin/users', null, admin)).body.canAppointSuper, false);
+  const chief = await login('chief', sa.body.password);
+  // An admin cannot change, switch off or reset a Super Admin.
+  assert.equal((await call('PATCH', `/api/admin/users/${sa.body.id}`, { active: false }, admin)).status, 403);
+  assert.equal((await call('PATCH', `/api/admin/users/${sa.body.id}`, { resetPassword: true }, admin)).status, 403);
+  // A Super Admin does everything an admin does.
+  assert.equal((await call('GET', '/api/admin/stats', null, chief)).status, 200);
+  assert.equal((await call('GET', '/api/auth/me', null, guard)).body.fullId, true, 'the guard screen is told to send the full card');
+
+  // Check-in with both images: the masked one as before, the full one kept encrypted.
+  const full = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.from('FULL AADHAAR 1234 5678 9012'), Buffer.alloc(300, 9)]);
+  const fullUrl = `data:image/jpeg;base64,${full.toString('base64')}`;
+  const v = await call('POST', '/api/visits', {
+    firstName: 'Nisha', lastName: 'Full', gender: 'female', mobile: '9811100005', company: 'Audit Co', hostId: hostIds.asha,
+    photo: jpeg(), idImage: jpeg(), idImageFull: fullUrl,
+  }, guard);
+  assert.equal(v.status, 201);
+  const doc = await Visit.findById(v.body.id).lean();
+  assert.ok(doc.idFullPath);
+  const onDisk = fsp.readFileSync(doc.idFullPath);
+  assert.notEqual(onDisk[0], 0xff, 'not a readable JPEG on disk');
+  assert.ok(!onDisk.includes(Buffer.from('1234 5678 9012')), 'the number is not in the file');
+
+  // Only the Super Admin can open it; admins and guards cannot; each view is audited.
+  assert.equal((await call('GET', `/api/visits/${v.body.id}`, null, admin)).body.hasFullId, true);
+  assert.equal((await fetch(`${base}/api/visits/${v.body.id}/id-image-full`, { headers: { Cookie: admin } })).status, 403);
+  assert.equal((await fetch(`${base}/api/visits/${v.body.id}/id-image-full`, { headers: { Cookie: guard } })).status, 403);
+  const res = await fetch(`${base}/api/visits/${v.body.id}/id-image-full`, { headers: { Cookie: chief } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.ok(Buffer.from(await res.arrayBuffer()).equals(full), 'the Super Admin sees exactly the card that was captured');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(await Audit.exists({ action: 'id_image_full.viewed', entityId: v.body.id, actor: 'chief' }));
+
+  // Only the Super Admin can switch capture off; then the full card is not kept.
+  assert.equal((await call('PATCH', '/api/admin/settings', { fullIdCapture: false }, admin)).status, 403);
+  assert.equal((await call('PATCH', '/api/admin/settings', { fullIdCapture: false }, chief)).status, 200);
+  const w = await call('POST', '/api/visits', {
+    firstName: 'Omkar', lastName: 'Off', gender: 'male', mobile: '9811100006', company: 'Audit Co', hostId: hostIds.asha,
+    photo: jpeg(), idImage: jpeg(), idImageFull: fullUrl,
+  }, guard);
+  assert.equal((await Visit.findById(w.body.id).lean()).idFullPath, undefined);
+  await call('PATCH', '/api/admin/settings', { fullIdCapture: true }, chief);
+
+  // Retention deletes the full card with the masked one.
+  await Visit.collection.updateOne({ _id: new mongoose.Types.ObjectId(v.body.id) }, { $set: { createdAt: new Date(Date.now() - 400 * 86400e3) } });
+  await purgeIdImages();
+  assert.equal(fsp.existsSync(doc.idFullPath), false);
+  assert.equal((await Visit.findById(v.body.id).lean()).idFullPath, undefined);
+  assert.equal((await fetch(`${base}/api/visits/${v.body.id}/id-image-full`, { headers: { Cookie: chief } })).status, 404);
+  assert.ok(settingsSvc);
+});

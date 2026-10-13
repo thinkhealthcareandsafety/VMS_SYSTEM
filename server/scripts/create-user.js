@@ -6,7 +6,7 @@ const { User } = require('../src/models');
 
 (async () => {
   const [username, fullName, role, password] = process.argv.slice(2);
-  if (!username || !fullName || !['guard', 'admin'].includes(role) || !password || password.length < 10) {
+  if (!username || !fullName || !['guard', 'admin', 'superadmin'].includes(role) || !password || password.length < 10) {
     console.error('Usage: user:create -- <username> "<Full Name>" <guard|admin> <password (10+ chars)>');
     process.exit(1);
   }

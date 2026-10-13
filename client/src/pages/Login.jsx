@@ -31,7 +31,7 @@ export default function Login({ onLogin }) {
   const expired = useLocation().state?.expired;
   useTitle('Sign in');
 
-  if (done) return <Navigate to={done.role === 'admin' ? '/admin' : '/guard'} replace />;
+  if (done) return <Navigate to={done.role === 'admin' || done.role === 'superadmin' ? '/admin' : '/guard'} replace />;
 
   const submit = async (e) => {
     e.preventDefault();
