@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Bell, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
+  AlertTriangle, BadgeCheck, Bell, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Printer, RotateCcw, ScanFace, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
-import { api, clock, fmtDate, fmtTime, fmtDuration, minutesSince, passLabel, secondsSince } from '../api.js';
+import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
 import { cue } from '../lib/notify.js';
 import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials } from '../components/ui.jsx';
@@ -18,7 +18,22 @@ import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/fa
 const DRAFT_KEY = 'vms-guard-draft';
 const DISMISS_KEY = 'vms-guard-dismissed';
 const AUTOPRINT_KEY = 'vms-guard-autoprint';
-const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '' };
+const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '', validity: '8h', validUntilDay: '' };
+// How long a pass lasts. Hours count from when the host lets the visitor in; days run to 11:59 pm on the last day.
+const VALIDITY = [['2h', '2 hours'], ['4h', '4 hours'], ['8h', '8 hours'], ['today', 'Today'], ['3d', '3 days'], ['7d', '7 days'], ['10d', '10 days'], ['20d', '20 days'], ['30d', '30 days'], ['date', 'Pick a date']];
+const VALIDITY_HOURS = { '2h': 2, '4h': 4, '8h': 8 };
+const VALIDITY_DAYS = { today: 1, '3d': 3, '7d': 7, '10d': 10, '20d': 20, '30d': 30 };
+const MAX_PASS_DAYS = 90;
+const addDays = (ymd, n) => { const t = new Date(`${ymd}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+const dayLabel = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+// What the guard sees under the choices, before anyone approves.
+function validityPreview(v, day) {
+  if (VALIDITY_HOURS[v]) return `For ${VALIDITY_HOURS[v]} hours from when the host lets them in.`;
+  if (v === 'today') return 'Until 11:59 pm today.';
+  if (VALIDITY_DAYS[v]) return `Until ${dayLabel(addDays(today(), VALIDITY_DAYS[v] - 1))}, 11:59 pm. They can leave and come back on the same pass.`;
+  if (v === 'date') return day ? `Until ${dayLabel(day)}, 11:59 pm.${day > today() ? ' They can leave and come back on the same pass.' : ''}` : 'Pick the last day of the pass.';
+  return '';
+}
 const GENDERS = [['male', 'Male'], ['female', 'Female'], ['other', 'Other']];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
@@ -437,6 +452,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
     ['visitor', form.company.trim().length > 0, 'company'],
     ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)'],
     ['host', Boolean(host), 'whom to meet'],
+    ['host', (form.validity || '8h') !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass'],
     ['capture', Boolean(photo), 'photo'],
     ['capture', Boolean(idImage), 'Aadhaar'],
   ];
@@ -449,6 +465,23 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
     setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null); setPhotoFace(null); setMatch(null); setVerify(null);
     setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // A pass holder came back while the pass is valid: in again, no approval, straight to their pass.
+  const reenter = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const v = await api(`/api/visits/${active.id}/reenter`, { method: 'POST' });
+      store.clear();
+      reset();
+      onOpenActive(v);
+    } catch (e) {
+      if (e.status === 403 && e.data?.code === 'blocked') setBlocked({ message: e.message });
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submit = async () => {
@@ -466,7 +499,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
         body: {
           ...form, mobile: digits, hostId: host.id, photo, idImage,
           ...(verify === 'skipped' ? { otpSkip: true } : {}),
-          ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}) },
+          ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}),
+          validity: form.validity || '8h', ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}) },
       });
       store.clear();
       onSubmitted({
@@ -511,7 +545,14 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
         {mobileOk && otp.mode !== 'off' && !active && !blocked && !otp.verified && (
           <MobileVerify mobile={digits} mode={otp.mode} canSkip={otp.mode === 'optional' || isAdmin} value={verify} onChange={setVerify} />
         )}
-        {active && (
+        {active && active.status === 'away' && (
+          <div className="alert alert-ok" role="alert">
+            <BadgeCheck />
+            <span className="grow">{active.message}</span>
+            <button type="button" className="btn btn-sm btn-success" disabled={busy} onClick={reenter}>{busy ? <Spinner /> : <><LogIn />Let in again</>}</button>
+          </div>
+        )}
+        {active && active.status !== 'away' && (
           <div className="alert alert-warn" role="alert">
             <AlertTriangle />
             <span className="grow">{active.message}</span>
@@ -574,6 +615,22 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
       <section className={flag('host')} ref={sec.host} aria-labelledby="sec-host">
         <SectionHead id="sec-host" n={2} title="Whom to meet" done={done('host')} />
         <HostPicker value={host} onChange={setHost} />
+        <div className="field">
+          <span id="lbl-validity">Pass valid for</span>
+          <div className="chips" role="radiogroup" aria-labelledby="lbl-validity">
+            {VALIDITY.map(([key, label]) => (
+              <button type="button" role="radio" key={key} className="chip" aria-checked={(form.validity || '8h') === key} aria-pressed={(form.validity || '8h') === key}
+                onClick={() => update({ validity: key, ...(key === 'date' && !form.validUntilDay ? { validUntilDay: addDays(today(), 1) } : {}) })}>{label}</button>
+            ))}
+          </div>
+          {form.validity === 'date' && (
+            <input className="input" type="date" style={{ maxWidth: 220 }} aria-label="Last day of the pass"
+              min={today()} max={addDays(today(), MAX_PASS_DAYS)} value={form.validUntilDay || ''}
+              aria-invalid={tried && !/^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || '')}
+              onChange={(e) => update({ validUntilDay: e.target.value })} />
+          )}
+          <span className="hint">{validityPreview(form.validity || '8h', form.validUntilDay)}</span>
+        </div>
       </section>
 
       <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
@@ -701,6 +758,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
                 <div><small>Entry</small><span className="num">{fmtTime(visit.decidedAt)}</span></div>
                 <div><small>Visitor ID</small><span className="mono">{visit.ref}</span></div>
               </div>
+              {visit.validUntil && <div className="pass-valid"><Clock size={14} />Valid till <strong>{fmtUntil(visit.validUntil)}</strong></div>}
             </div>
             <div className="pass-perf" />
             <div className="pass-foot">
@@ -784,6 +842,8 @@ body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/
 .row { display: flex; justify-content: space-between; gap: 4mm; font-size: 10pt; text-align: left; padding: .6mm 0; }
 .row strong { text-align: right; font-weight: 600; }
 .foot { font-size: 8.5pt; }
+.valid { border: .5mm solid #000; padding: 1.5mm 2mm; margin: 0 0 3mm; font-size: 9pt; letter-spacing: .06em; }
+.valid strong { display: block; font-size: 13pt; letter-spacing: 0; margin-top: .5mm; }
 `;
 const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -815,6 +875,7 @@ function passHtml(visit, siteName, photo) {
 <div class="title">VISITOR PASS</div>
 <div class="no">${escHtml(visit.dailyNumber)}</div>
 <div class="date">${escHtml(fmtDate(visit.decidedAt))} · ${escHtml(fmtTime(visit.decidedAt))}</div>
+${visit.validUntil ? `<div class="valid">VALID TILL<strong>${escHtml(fmtUntil(visit.validUntil))}</strong></div>` : ''}
 ${photo ? `<img class="photo" src="${photo}" alt="">` : ''}
 <div class="name">${escHtml(name)}</div>
 <div class="company">${escHtml(visit.company)}</div>
@@ -823,7 +884,7 @@ ${photo ? `<img class="photo" src="${photo}" alt="">` : ''}
 <div class="row"><span>Flat / dept</span><strong>${escHtml(visit.host?.unit)}</strong></div>
 <div class="row"><span>Visitor ID</span><strong>${escHtml(visit.ref)}</strong></div>
 <div class="rule"></div>
-<div class="foot">Wear this pass. Return it when you leave.</div>
+<div class="foot">${visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3 ? 'Show this pass at any gate each time you enter.' : 'Wear this pass. Return it when you leave.'}</div>
 </body></html>`;
 }
 
@@ -938,17 +999,17 @@ function InsideList({ data, onChanged, onPrint }) {
   const [busyId, setBusyId] = useState(null);
 
   const term = q.trim().toLowerCase();
-  const rows = (data?.visits || [])
-    .filter((v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref}`.toLowerCase().includes(term))
-    .slice()
-    .reverse();
+  const match = (v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref}`.toLowerCase().includes(term);
+  const rows = (data?.visits || []).filter(match).slice().reverse();
+  const away = (data?.away || []).filter(match);
 
-  const checkout = async (v) => {
-    if (confirmId !== v.id) return setConfirmId(v.id);
+  // Two taps for anything that changes a visit: the first arms the button, the second does it.
+  const run = async (v, key, path, done) => {
+    if (confirmId !== `${key}:${v.id}`) return setConfirmId(`${key}:${v.id}`);
     setBusyId(v.id);
     try {
-      await api(`/api/visits/${v.id}/checkout`, { method: 'POST' });
-      toast(`${v.firstName} ${v.lastName} checked out.`);
+      const r = await api(`/api/visits/${v.id}/${path}`, { method: 'POST' });
+      done(r);
       setConfirmId(null);
       onChanged();
     } catch (e) {
@@ -957,13 +1018,21 @@ function InsideList({ data, onChanged, onPrint }) {
       setBusyId(null);
     }
   };
+  const name = (v) => `${v.firstName} ${v.lastName}`;
+  const checkout = (v) => run(v, 'out', 'checkout', (r) => toast(r.status === 'away'
+    ? `${name(v)} is out. The pass stays valid till ${fmtUntil(r.validUntil)}, so they can come back on it.`
+    : `${name(v)} checked out.`));
+  const letIn = (v) => run(v, 'in', 'reenter', () => toast(`${name(v)} let in again on pass ${v.dailyNumber}.`, 'ok'));
+  const endPass = (v) => run(v, 'end', 'end-pass', () => toast(`${name(v)}’s pass has ended. It can no longer be used.`));
+  const armed = (key, v) => confirmId === `${key}:${v.id}`;
+  const disarm = (key, v) => setConfirmId((c) => (c === `${key}:${v.id}` ? null : c));
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div className="list-head">
         <div>
           <h1>On premises</h1>
-          <p className="muted">{data ? `${data.count} ${data.count === 1 ? 'visitor' : 'visitors'} inside` : 'Loading…'}</p>
+          <p className="muted">{data ? `${data.count} ${data.count === 1 ? 'visitor' : 'visitors'} inside${data.away?.length ? ` · ${data.away.length} pass ${data.away.length === 1 ? 'holder' : 'holders'} out` : ''}` : 'Loading…'}</p>
         </div>
       </div>
       <div className="input-group">
@@ -980,33 +1049,67 @@ function InsideList({ data, onChanged, onPrint }) {
           </div>
         )}
         {rows.map((v) => {
-          const mins = minutesSince(v.decidedAt);
-          const long = mins >= data.staleAfterHours * 60;
-          const confirming = confirmId === v.id;
+          const since = v.lastIn?.at || v.decidedAt;
+          const mins = minutesSince(since);
+          const long = !v.validUntil && mins >= data.staleAfterHours * 60;
           return (
-            <div className="visitor-item" key={v.id}>
-              <Avatar src={`/api/visits/${v.id}/photo`} name={`${v.firstName} ${v.lastName}`} size={48} square />
+            <div className={`visitor-item${v.passExpired ? ' is-expired' : ''}`} key={v.id}>
+              <Avatar src={`/api/visits/${v.id}/photo`} name={name(v)} size={48} square />
               <div style={{ minWidth: 0 }}>
-                <div className="top"><span className="pass-chip">{passLabel(v)}</span><span className="name">{v.firstName} {v.lastName}</span></div>
+                <div className="top"><span className="pass-chip">{passLabel(v)}</span><span className="name">{name(v)}</span></div>
                 <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
-                <div className="time">In {fmtTime(v.decidedAt)} · {fmtDuration(mins)}{long && <span className="badge badge-warn">Long stay</span>}</div>
+                <div className="time">
+                  In {fmtTime(since)}{v.lastIn?.gate ? ` · ${v.lastIn.gate}` : ''} · {fmtDuration(mins)}
+                  {v.passExpired
+                    ? <span className="badge badge-bad">Pass expired</span>
+                    : v.validUntil && <span className="badge">Till {fmtUntil(v.validUntil)}</span>}
+                  {long && <span className="badge badge-warn">Long stay</span>}
+                </div>
               </div>
               <div className="row-actions">
-              <button type="button" className="btn btn-sm btn-icon" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber}`} title="Print pass"><Printer /></button>
-              <button
-                type="button"
-                className={`btn btn-sm ${confirming ? 'btn-danger' : ''}`}
-                disabled={busyId === v.id}
-                onClick={() => checkout(v)}
-                onBlur={() => setConfirmId((c) => (c === v.id ? null : c))}
-              >
-                {busyId === v.id ? <Spinner /> : confirming ? <><CheckCircle2 />Confirm</> : <><LogOut />Check out</>}
-              </button>
+                <button type="button" className="btn btn-sm btn-icon" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber}`} title="Print pass"><Printer /></button>
+                <button type="button" className={`btn btn-sm ${armed('out', v) ? 'btn-danger' : ''}`} disabled={busyId === v.id} onClick={() => checkout(v)} onBlur={() => disarm('out', v)}>
+                  {busyId === v.id ? <Spinner /> : armed('out', v) ? <><CheckCircle2 />Confirm</> : <><LogOut />Check out</>}
+                </button>
               </div>
             </div>
           );
         })}
       </div>
+
+      {data && away.length > 0 && (
+        <>
+          <div className="list-head" style={{ marginTop: 8 }}>
+            <div>
+              <h2 style={{ fontSize: 18, margin: 0 }}>Pass holders outside</h2>
+              <p className="muted">Multi-day passes. Let them in again without a new approval.</p>
+            </div>
+          </div>
+          <div className="visitor-list">
+            {away.map((v) => (
+              <div className="visitor-item is-away" key={v.id}>
+                <Avatar src={`/api/visits/${v.id}/photo`} name={name(v)} size={48} square />
+                <div style={{ minWidth: 0 }}>
+                  <div className="top"><span className="pass-chip">{passLabel(v)}</span><span className="name">{name(v)}</span></div>
+                  <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
+                  <div className="time">
+                    {v.exit ? `Out ${fmtDate(v.exit.at)}, ${fmtTime(v.exit.at)}${v.exit.gate ? ` · ${v.exit.gate}` : ''}` : 'Outside'}
+                    <span className="badge badge-ok">Valid till {fmtUntil(v.validUntil)}</span>
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button type="button" className={`btn btn-sm ${armed('end', v) ? 'btn-danger' : 'btn-ghost'}`} disabled={busyId === v.id} onClick={() => endPass(v)} onBlur={() => disarm('end', v)}>
+                    {armed('end', v) ? <><CheckCircle2 />End pass?</> : <><X />End pass</>}
+                  </button>
+                  <button type="button" className={`btn btn-sm ${armed('in', v) ? 'btn-success' : 'btn-primary'}`} disabled={busyId === v.id} onClick={() => letIn(v)} onBlur={() => disarm('in', v)}>
+                    {busyId === v.id ? <Spinner /> : armed('in', v) ? <><CheckCircle2 />Confirm</> : <><LogIn />Let in</>}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

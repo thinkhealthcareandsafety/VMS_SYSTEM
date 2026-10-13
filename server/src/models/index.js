@@ -8,10 +8,27 @@ const userSchema = new Schema({
   fullName: { type: String, required: true, trim: true },
   passwordHash: { type: String, required: true, select: false },
   role: { type: String, enum: ['guard', 'admin'], required: true },
+  gate: { type: Schema.Types.ObjectId, ref: 'Gate' },  // where this person checks visitors in and out; none = the site's first gate
   active: { type: Boolean, default: true },
   sessionVersion: { type: Number, default: 0 },   // bumped on password change: signs out every other device
   lastLoginAt: { type: Date },
 }, opts);
+
+// An entry point: main entrance, staff entrance, receiving gate... Switched off, never deleted, so history keeps its name.
+const gateSchema = new Schema({
+  name: { type: String, required: true, trim: true },
+  active: { type: Boolean, default: true },
+}, opts);
+
+// One entry or exit. Gate and guard names are copied in, so renaming either later never rewrites history.
+const movementSchema = new Schema({
+  kind: { type: String, enum: ['in', 'out'], required: true },
+  at: { type: Date, required: true },
+  gate: { type: Schema.Types.ObjectId, ref: 'Gate' },
+  gateName: { type: String, default: '' },
+  by: { type: Schema.Types.ObjectId, ref: 'User' },
+  byName: { type: String, default: '' },
+}, { _id: false });
 
 const hostSchema = new Schema({
   fullName: { type: String, required: true, trim: true, index: true },
@@ -37,7 +54,8 @@ const visitSchema = new Schema({
   host: { type: Schema.Types.ObjectId, ref: 'Host', required: true },
   status: {
     type: String, required: true, index: true,
-    enum: ['pending', 'approved', 'rejected', 'expired', 'cancelled', 'checked_out', 'force_checked_out'],
+    // approved = inside. away = left on a pass that is still valid (multi-day): any gate can let them in again.
+    enum: ['pending', 'approved', 'away', 'rejected', 'expired', 'cancelled', 'checked_out', 'force_checked_out'],
   },
   visitDay: { type: String, required: true, index: true },  // YYYY-MM-DD, site timezone
   dailyDay: { type: String },                                // day the pass number belongs to
@@ -58,11 +76,17 @@ const visitSchema = new Schema({
   checkedOutAt: { type: Date },
   checkedOutBy: { type: Schema.Types.ObjectId, ref: 'User' },
   forceReason: { type: String, trim: true },
+  // How long the pass lasts ('8h', '10d', 'date:2026-10-30'); validUntil is fixed when the visitor is let in.
+  validity: { type: String },
+  validUntil: { type: Date },
+  arrival: { gate: { type: Schema.Types.ObjectId, ref: 'Gate' }, gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String },
+  movements: { type: [movementSchema], default: undefined },
 }, opts);
 // one pass number per day
 visitSchema.index({ dailyDay: 1, dailyNumber: 1 }, { unique: true, partialFilterExpression: { dailyNumber: { $exists: true } } });
 visitSchema.index({ status: 1, checkedOutAt: 1 });
 visitSchema.index({ mobile: 1, status: 1 }); // duplicate check-in guard
+visitSchema.index({ status: 1, validUntil: 1 }); // passes that expire while the holder is away
 
 const approvalTokenSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true, index: true },
@@ -151,6 +175,7 @@ const auditSchema = new Schema({
 
 module.exports = {
   User: mongoose.model('User', userSchema),
+  Gate: mongoose.model('Gate', gateSchema),
   Host: mongoose.model('Host', hostSchema),
   Visit: mongoose.model('Visit', visitSchema),
   ApprovalToken: mongoose.model('ApprovalToken', approvalTokenSchema),

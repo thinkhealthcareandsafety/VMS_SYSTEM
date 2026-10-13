@@ -2,6 +2,7 @@ const config = require('../config');
 const { Visit, ApprovalToken, Outbox } = require('../models');
 const { nextDailyNumber, audit, sha256 } = require('./core');
 const { retireTelegram } = require('./notify');
+const passes = require('./passes');
 
 // One place decides what a host's tap does, whether it came from the web link or a Telegram button.
 // The single-use token is the only credential.
@@ -44,9 +45,14 @@ async function decide(raw, decision, { ip, via = 'link' } = {}) {
 
   if (decision === 'approve') {
     const { day, number } = await nextDailyNumber();
+    const now = new Date();
     claimed.dailyDay = day;
     claimed.dailyNumber = number;
-    claimed.checkedInAt = new Date();
+    claimed.checkedInAt = now;
+    // The pass starts now; the visitor walks in at the gate where they were checked in.
+    claimed.validUntil = passes.validUntil(claimed.validity, now);
+    const a = claimed.arrival || {};
+    claimed.movements = [passes.movement('in', { id: a.gate, name: a.gateName }, { id: a.by, fullName: a.byName }, now)];
     await claimed.save();
     if (config.printer.mode !== 'off') await Outbox.create({ kind: 'print', visit: claimed._id });
   }

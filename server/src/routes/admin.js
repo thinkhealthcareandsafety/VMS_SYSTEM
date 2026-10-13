@@ -11,7 +11,8 @@ const { requireRole } = require('../middleware/auth');
 const telegram = require('../services/telegram');
 const messaging = require('../services/messaging');
 const exporter = require('../services/export');
-const { Visit, Host, Outbox, Audit, User, Invite, Block } = require('../models');
+const { Visit, Host, Outbox, Audit, User, Invite, Block, Gate } = require('../models');
+const passes = require('../services/passes');
 const settings = require('../services/settings');
 const { siteDay, audit, normalizeMobile, cleanText, passwordProblem, sha256 } = require('../services/core');
 
@@ -27,6 +28,7 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
   if (from.success && from.data) q.visitDay = { ...(q.visitDay || {}), $gte: from.data };
   if (to.success && to.data) q.visitDay = { ...(q.visitDay || {}), $lte: to.data };
   if (query.status) q.status = String(query.status);
+  if (query.gate && mongoose.isValidObjectId(query.gate)) q['movements.gate'] = new mongoose.Types.ObjectId(String(query.gate));
   if (query.company) q.company = new RegExp(esc(cleanText(query.company, 100)), 'i');
   if (query.name) {
     const re = new RegExp(esc(cleanText(query.name, 100)), 'i');
@@ -49,6 +51,7 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
       dailyNumber: v.dailyNumber ?? null, dailyDay: v.dailyDay ?? null, visitDay: v.visitDay,
       createdAt: v.createdAt, decidedAt: v.decidedAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason,
       hasIdImage: Boolean(v.idImagePath),
+      validity: passes.validityLabel(v.validity), validUntil: v.validUntil ?? null, ...passes.entryExit(v),
     })),
   };
 }
@@ -64,7 +67,7 @@ router.get('/visits', requireRole('admin'), async (req, res) => {
 const EXPORT_LIMIT = 50000;
 const STATUS_LABEL = {
   pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'No response',
-  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Force checked out',
+  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Force checked out', away: 'Out on pass',
 };
 const localStamp = (d) => (d ? new Intl.DateTimeFormat('en-GB', {
   timeZone: config.timezone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
@@ -80,14 +83,17 @@ const sheetCell = (v) => csvCell(/^[=+\-@\t\r]/.test(String(v ?? '')) ? `'${v}` 
 // Excel reads UTF-8 CSV correctly only with a BOM; CRLF keeps Excel and Notepad happy.
 function visitsSheet(docs) {
   const header = ['Visitor ID', 'Date', 'Pass no', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Number checked', 'Company', 'Purpose', 'Host', 'Flat / dept',
-    'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Force checkout reason', 'Face match %', 'Photo file'];
+    'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Entry gate', 'Let in by', 'Exit gate', 'Checked out by', 'Entries', 'Pass for', 'Pass valid till',
+    'Force checkout reason', 'Face match %', 'Photo file'];
   const lines = docs.map((v) => {
-    const admitted = ['approved', 'checked_out', 'force_checked_out'].includes(v.status);
-    const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : null;
+    const admitted = ['approved', 'away', 'checked_out', 'force_checked_out'].includes(v.status);
+    const moves = passes.entryExit(v);
+    const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : moves.exit ? new Date(moves.exit.at) : null;
     const mins = admitted && v.decidedAt && end ? Math.round((end - new Date(v.decidedAt)) / 60000) : '';
     return [v.ref, v.visitDay, v.dailyNumber ?? '', v.firstName, v.lastName, exporter.GENDER_LABEL[v.gender] || '', sheetMobile(v.mobile), v.email, exporter.VERIFIED_LABEL[v.mobileVerified] || '', v.company, v.purpose, v.host?.fullName, v.host?.unit,
-      STATUS_LABEL[v.status] || v.status, localStamp(v.createdAt), admitted ? localStamp(v.decidedAt) : '', localStamp(v.checkedOutAt),
-      mins, v.forceReason, v.faceMatchScore ?? '', v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
+      STATUS_LABEL[v.status] || v.status, localStamp(v.createdAt), admitted ? localStamp(v.decidedAt) : '', localStamp(v.checkedOutAt || moves.exit?.at),
+      mins, moves.entry?.gate || '', moves.entry?.by || '', moves.exit?.gate || '', moves.exit?.by || '', moves.entries || '',
+      v.validity ? passes.validityLabel(v.validity) : '', localStamp(v.validUntil), v.forceReason, v.faceMatchScore ?? '', v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
   });
   return `﻿${[header.map(sheetCell).join(','), ...lines].join('\r\n')}\r\n`;
 }
@@ -301,11 +307,12 @@ const PW_ALPHABET = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const genPassword = () => Array.from(crypto.randomBytes(14)).map((b) => PW_ALPHABET[b % PW_ALPHABET.length]).join('');
 const staffRow = (u) => ({
   id: String(u._id), username: u.username, fullName: u.fullName, role: u.role, active: u.active,
+  gate: u.gate && u.gate.name ? { id: String(u.gate._id), name: u.gate.name, active: u.gate.active } : null,
   lastLoginAt: u.lastLoginAt || null, createdAt: u.createdAt || null,
 });
 
 router.get('/users', requireRole('admin'), async (req, res) => {
-  const users = await User.find().sort({ active: -1, role: 1, fullName: 1 }).lean();
+  const users = await User.find().sort({ active: -1, role: 1, fullName: 1 }).populate('gate', 'name active').lean();
   res.json({ rows: users.map(staffRow) });
 });
 
@@ -321,9 +328,12 @@ router.post('/users', requireRole('admin'), async (req, res) => {
   const password = typed ? req.body.password : genPassword();
   const problem = passwordProblem(password);
   if (problem) return res.status(400).json({ error: problem });
-  const user = await User.create({ username, fullName, role, passwordHash: await bcrypt.hash(password, 12) });
-  audit(req.user, 'user.created', { entity: 'User', entityId: user._id, details: { username, role }, ip: req.ip });
-  res.status(201).json({ ...staffRow(user.toObject()), password: typed ? undefined : password });
+  const gate = await gateChoice(req.body?.gateId);
+  if (gate === false) return res.status(400).json({ error: 'Pick one of the active gates' });
+  const user = await User.create({ username, fullName, role, gate: gate || undefined, passwordHash: await bcrypt.hash(password, 12) });
+  audit(req.user, 'user.created', { entity: 'User', entityId: user._id, details: { username, role, ...(gate ? { gate: gate.name } : {}) }, ip: req.ip });
+  const saved = await User.findById(user._id).populate('gate', 'name active').lean();
+  res.status(201).json({ ...staffRow(saved), password: typed ? undefined : password });
 });
 
 // Edit name/role, switch access on or off, or issue a new password. A reset signs the person out everywhere.
@@ -344,6 +354,11 @@ router.patch('/users/:id', requireRole('admin'), async (req, res) => {
     if (!['guard', 'admin'].includes(b.role)) return res.status(400).json({ error: 'Choose guard or admin' });
     if (self && b.role !== 'admin') return res.status(400).json({ error: 'You cannot remove your own admin access' });
     changes.role = b.role;
+  }
+  if (b.gateId !== undefined) {
+    const gate = await gateChoice(b.gateId);
+    if (gate === false) return res.status(400).json({ error: 'Pick one of the active gates' });
+    changes.gate = gate ? gate._id : null;
   }
   if (b.active !== undefined) {
     if (typeof b.active !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
@@ -366,7 +381,63 @@ router.patch('/users/:id', requireRole('admin'), async (req, res) => {
   await user.save();
   const logged = Object.keys(changes).filter((k) => k !== 'passwordHash' && k !== 'sessionVersion');
   audit(req.user, password ? 'user.password_reset' : 'user.updated', { entity: 'User', entityId: user._id, details: { username: user.username, ...(logged.length ? { changed: logged.join(', ') } : {}) }, ip: req.ip });
-  res.json({ ...staffRow(user.toObject()), password });
+  res.json({ ...staffRow(await User.findById(user._id).populate('gate', 'name active').lean()), password });
+});
+
+// ----- Gates (entry points). Switched off, never deleted: past entries keep their gate. -----
+// '' or null = no fixed gate (the site's first gate is used); an id must be an active gate; anything else is refused (false).
+async function gateChoice(id) {
+  if (id === undefined || id === null || id === '') return null;
+  if (!mongoose.isValidObjectId(id)) return false;
+  return (await Gate.findOne({ _id: id, active: true }).lean()) || false;
+}
+const gateRow = (g, staff = 0) => ({ id: String(g._id), name: g.name, active: g.active, staff });
+
+router.get('/gates', requireRole('admin'), async (req, res) => {
+  await passes.ensureDefaultGate();
+  const [gates, counts] = await Promise.all([
+    Gate.find().sort({ active: -1, createdAt: 1 }).lean(),
+    User.aggregate([{ $match: { active: true, gate: { $ne: null } } }, { $group: { _id: '$gate', n: { $sum: 1 } } }]),
+  ]);
+  const staff = new Map(counts.map((c) => [String(c._id), c.n]));
+  res.json({ rows: gates.map((g) => gateRow(g, staff.get(String(g._id)) || 0)) });
+});
+
+const sameName = (name) => ({ name: new RegExp(`^${esc(name)}$`, 'i') });
+router.post('/gates', requireRole('admin'), async (req, res) => {
+  const name = cleanText(req.body?.name, 40);
+  if (name.length < 2) return res.status(400).json({ error: 'Enter the gate name (at least 2 characters)' });
+  await passes.ensureDefaultGate();
+  if (await Gate.exists(sameName(name))) return res.status(409).json({ error: `There is already a gate called "${name}"` });
+  if ((await Gate.countDocuments({ active: true })) >= 20) return res.status(400).json({ error: 'A site can have up to 20 active gates' });
+  const gate = await Gate.create({ name });
+  audit(req.user, 'gate.created', { entity: 'Gate', entityId: gate._id, details: { name }, ip: req.ip });
+  res.status(201).json(gateRow(gate.toObject()));
+});
+
+router.patch('/gates/:id', requireRole('admin'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const gate = await Gate.findById(req.params.id);
+  if (!gate) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const before = gate.name;
+  if (b.name !== undefined) {
+    const name = cleanText(b.name, 40);
+    if (name.length < 2) return res.status(400).json({ error: 'Enter the gate name (at least 2 characters)' });
+    if (await Gate.exists({ ...sameName(name), _id: { $ne: gate._id } })) return res.status(409).json({ error: `There is already a gate called "${name}"` });
+    gate.name = name;
+  }
+  if (b.active !== undefined) {
+    if (typeof b.active !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
+    if (!b.active && gate.active && (await Gate.countDocuments({ active: true, _id: { $ne: gate._id } })) === 0) {
+      return res.status(400).json({ error: 'Keep at least one gate open' });
+    }
+    gate.active = b.active;
+  }
+  await gate.save();
+  // Guards at a closed gate fall back to the site's first gate until the admin moves them.
+  audit(req.user, 'gate.updated', { entity: 'Gate', entityId: gate._id, details: { name: gate.name, ...(before !== gate.name ? { renamed: `${before} → ${gate.name}` } : {}), active: gate.active }, ip: req.ip });
+  res.json(gateRow(gate.toObject()));
 });
 
 // ----- Site settings -----

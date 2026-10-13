@@ -3,6 +3,7 @@ const path = require('node:path');
 const rateLimit = require('express-rate-limit');
 const { findByToken, decide } = require('../services/decision');
 const settings = require('../services/settings');
+const passes = require('../services/passes');
 
 // Hosts open this from an SMS link. No login: the single-use token is the credential.
 const router = express.Router();
@@ -27,6 +28,7 @@ router.get('/:token', async (req, res) => {
     expiresAt: token.expiresAt,
     arrivedAt: visit.createdAt,
     hostUnit: visit.host.unit,
+    passFor: passes.validityLabel(visit.validity),
     photoUrl: `/api/approvals/${req.params.token}/photo`,
     siteName: (await settings.get()).siteName,
   });

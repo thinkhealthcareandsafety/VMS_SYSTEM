@@ -1,5 +1,6 @@
 const ExcelJS = require('exceljs');
 const config = require('../config');
+const passes = require('./passes');
 
 // Builds every download format from one normalised record per visit, so the Excel sheet, the
 // printable report and the folder of photos can never disagree with each other.
@@ -9,7 +10,7 @@ const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
 
 const STATUS_LABEL = {
   pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'No response',
-  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Checked out by admin',
+  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Checked out by admin', away: 'Out on pass',
 };
 
 // Wall-clock time at the site, as a Date whose UTC fields hold the local time. Excel has no time
@@ -34,8 +35,9 @@ const localMobile = (m = '') => (m.startsWith(config.defaultCountryCode)
 
 function records(docs) {
   return docs.map((v) => {
-    const admitted = ['approved', 'checked_out', 'force_checked_out'].includes(v.status);
-    const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : null;
+    const admitted = ['approved', 'away', 'checked_out', 'force_checked_out'].includes(v.status);
+    const moves = passes.entryExit(v);
+    const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : moves.exit ? new Date(moves.exit.at) : null;
     const minutes = admitted && v.decidedAt && end ? Math.max(0, Math.round((end - new Date(v.decidedAt)) / 60000)) : null;
     return {
       ref: v.ref,
@@ -54,8 +56,15 @@ function records(docs) {
       statusKey: v.status,
       arrived: v.createdAt || null,
       letIn: admitted ? v.decidedAt || null : null,
-      left: v.checkedOutAt || null,
+      left: v.checkedOutAt || moves.exit?.at || null,
       minutes,
+      validUntil: v.validUntil || null,
+      passFor: v.validity ? passes.validityLabel(v.validity) : '',
+      entryGate: moves.entry?.gate || '',
+      entryBy: moves.entry?.by || '',
+      exitGate: moves.exit?.gate || '',
+      exitBy: moves.exit?.by || '',
+      entries: moves.entries || 0,
       note: v.forceReason || '',
       faceMatch: v.faceMatchScore ?? null,
       folder: `${v.visitDay}/${v.ref} ${safe(`${v.firstName} ${v.lastName}`)}`,
@@ -93,6 +102,13 @@ async function workbook(recs, { files = null, meta }) {
     { header: 'Let in', key: 'letIn', width: 18, style: when },
     { header: 'Left', key: 'left', width: 18, style: when },
     { header: 'Time inside', key: 'inside', width: 13 },
+    { header: 'Entry gate', key: 'entryGate', width: 16 },
+    { header: 'Let in by', key: 'entryBy', width: 18 },
+    { header: 'Exit gate', key: 'exitGate', width: 16 },
+    { header: 'Checked out by', key: 'exitBy', width: 18 },
+    { header: 'Entries', key: 'entries', width: 9 },
+    { header: 'Pass for', key: 'passFor', width: 12 },
+    { header: 'Pass valid till', key: 'validUntil', width: 18, style: when },
     { header: 'Checkout note', key: 'note', width: 30 },
     { header: 'Face match %', key: 'faceMatch', width: 13 },
     ...(files ? [{ header: 'Photo', key: 'photo', width: 10 }, { header: 'Aadhaar (masked)', key: 'aadhaar', width: 18 }] : []),
@@ -102,7 +118,7 @@ async function workbook(recs, { files = null, meta }) {
   const link = (text, target) => ({ text, hyperlink: target });
   for (const r of recs) {
     const row = ws.addRow({
-      ...r, day: dayDate(r.day), arrived: wall(r.arrived), letIn: wall(r.letIn), left: wall(r.left), inside: duration(r.minutes),
+      ...r, day: dayDate(r.day), arrived: wall(r.arrived), letIn: wall(r.letIn), left: wall(r.left), inside: duration(r.minutes), validUntil: wall(r.validUntil),
     });
     if (files) {
       row.getCell('photo').value = r.hasPhoto ? link('Open', `${r.folder}/photo.jpg`) : '—';
@@ -167,8 +183,9 @@ function report(recs, { meta, aadhaar }) {
           <dt>Meeting</dt><dd>${esc(r.host)}, ${esc(r.unit)}</dd>
           <dt>Status</dt><dd>${esc(r.status)}</dd>
           <dt>Arrived</dt><dd>${esc(human(r.arrived))}</dd>
-          ${r.letIn ? `<dt>Let in</dt><dd>${esc(human(r.letIn))}</dd>` : ''}
-          ${r.left ? `<dt>Left</dt><dd>${esc(human(r.left))}${r.minutes != null ? ` (${duration(r.minutes)} inside)` : ''}</dd>` : ''}
+          ${r.letIn ? `<dt>Let in</dt><dd>${esc(human(r.letIn))}${r.entryGate ? ` · ${esc(r.entryGate)}${r.entryBy ? `, ${esc(r.entryBy)}` : ''}` : ''}</dd>` : ''}
+          ${r.left ? `<dt>Left</dt><dd>${esc(human(r.left))}${r.exitGate ? ` · ${esc(r.exitGate)}${r.exitBy ? `, ${esc(r.exitBy)}` : ''}` : ''}${r.minutes != null ? ` (${duration(r.minutes)} inside)` : ''}</dd>` : ''}
+          ${r.validUntil ? `<dt>Pass</dt><dd>${esc(r.passFor)}, valid till ${esc(human(r.validUntil))}${r.entries > 1 ? ` · ${r.entries} entries` : ''}</dd>` : ''}
           ${r.faceMatch != null ? `<dt>Face match</dt><dd>${r.faceMatch}% (photo vs Aadhaar card)</dd>` : ''}
           ${r.note ? `<dt>Note</dt><dd>${esc(r.note)}</dd>` : ''}
         </dl>

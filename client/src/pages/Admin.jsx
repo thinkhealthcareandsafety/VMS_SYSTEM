@@ -6,7 +6,7 @@ import {
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
   CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2,
 } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, minutesSince, passLabel } from '../api.js';
+import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
 import HostPicker from '../components/HostPicker.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
@@ -378,14 +378,15 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
       <table className="table">
         <thead>
           <tr>
-            <th>Pass</th><th>Visitor</th><th>Meeting</th><th>Let in</th><th>Inside for</th>
+            <th>Pass</th><th>Visitor</th><th>Meeting</th><th>Let in</th><th>Inside for</th><th>Pass valid till</th>
             {!compact && <th className="r"><span className="sr-only">Actions</span></th>}
           </tr>
         </thead>
         <tbody>
           {rows.map((v) => {
-            const mins = minutesSince(v.decidedAt);
-            const isLong = mins >= staleAfter * 60;
+            const since = v.lastIn?.at || v.decidedAt;
+            const mins = minutesSince(since);
+            const isLong = !v.validUntil && mins >= staleAfter * 60;
             return (
               <tr key={v.id} className="clickable" onClick={() => openVisit(v.id)}>
                 <td><span className="pass-chip">{passLabel(v)}</span></td>
@@ -396,10 +397,14 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
                   </div>
                 </td>
                 <td>{v.host?.name}<div className="meta-line">{v.host?.unit}</div></td>
-                <td className="num">{fmtTime(v.decidedAt)}</td>
+                <td className="num">{fmtTime(since)}{v.lastIn?.gate && <div className="meta-line">{v.lastIn.gate}{v.lastIn.by ? ` · ${v.lastIn.by}` : ''}</div>}</td>
                 <td className="num">
                   <span className={isLong ? 'row-flag' : ''}>{fmtDuration(mins)}</span>
                   {isLong && <div><span className="badge badge-warn">Long stay</span></div>}
+                </td>
+                <td className="num">
+                  {v.passExpired ? <span className="badge badge-bad">Expired {fmtUntil(v.validUntil)}</span> : v.validUntil ? fmtUntil(v.validUntil) : <span className="faint">—</span>}
+                  {v.validity && <div className="meta-line">{v.validity}</div>}
                 </td>
                 {!compact && (
                   <td>
@@ -472,7 +477,9 @@ const RANGES = [
   { id: 'all', label: 'All', from: () => '', to: () => '' },
 ];
 function HistoryPage({ tick, openVisit, openExport }) {
-  const [f, setF] = useState({ name: '', host: '', company: '', status: '', from: daysAgo(6), to: '' });
+  const [f, setF] = useState({ name: '', host: '', company: '', status: '', gate: '', from: daysAgo(6), to: '' });
+  const [gates, setGates] = useState([]);
+  useEffect(() => { api('/api/admin/gates').then((r) => setGates(r.rows)).catch(() => {}); }, []);
   const [applied, setApplied] = useState(f);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState(null);
@@ -504,6 +511,14 @@ function HistoryPage({ tick, openVisit, openExport }) {
             {Object.entries(STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </label>
+        {gates.length > 1 && (
+          <label className="field"><span>Gate</span>
+            <select className="select" value={f.gate} onChange={set('gate')}>
+              <option value="">Any gate</option>
+              {gates.map((g) => <option key={g.id} value={g.id}>{g.name}{g.active ? '' : ' (closed)'}</option>)}
+            </select>
+          </label>
+        )}
       </div>
       <div className="toolbar">
         <div className="seg" role="group" aria-label="Date range">
@@ -534,8 +549,14 @@ function HistoryPage({ tick, openVisit, openExport }) {
                   <td>{r.host}<div className="meta-line">{r.unit}</div></td>
                   <td className="num">{fmtDate(r.createdAt)}{r.dailyNumber != null && <div className="meta-line">Pass {r.dailyNumber}</div>}</td>
                   <td className="num">
-                    {['approved', 'checked_out', 'force_checked_out'].includes(r.status) ? (
-                      <>{fmtTime(r.decidedAt)}<div className="meta-line">{r.checkedOutAt ? `to ${fmtTime(r.checkedOutAt)}` : 'still inside'}</div></>
+                    {['approved', 'away', 'checked_out', 'force_checked_out'].includes(r.status) ? (
+                      <>
+                        {fmtTime(r.decidedAt)}{r.entry?.gate && <span className="meta-line"> · {r.entry.gate}</span>}
+                        <div className="meta-line">
+                          {r.status === 'approved' ? 'still inside' : r.exit ? `to ${fmtTime(r.exit.at)}${r.exit.gate ? ` · ${r.exit.gate}` : ''}` : r.checkedOutAt ? `to ${fmtTime(r.checkedOutAt)}` : ''}
+                          {r.entries > 1 ? ` · ${r.entries} entries` : ''}
+                        </div>
+                      </>
                     ) : <span className="faint">—</span>}
                   </td>
                   <td><StatusBadge status={r.status} /></td>
@@ -642,7 +663,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
   const act = async (path, msg) => {
     try { await api(`/api/visits/${id}/${path}`, { method: 'POST' }); toast(msg); onChanged(); } catch (e) { toast(e.message, 'bad'); }
   };
-  const admitted = v && ['approved', 'checked_out', 'force_checked_out'].includes(v.status);
+  const admitted = v && ['approved', 'away', 'checked_out', 'force_checked_out'].includes(v.status);
   const name = v ? `${v.firstName} ${v.lastName}` : '';
 
   return (
@@ -677,9 +698,25 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
               <dt>Arrived</dt><dd className="num">{fmtDateTime(v.createdAt)}</dd>
               {admitted && <><dt>Let in</dt><dd className="num">{fmtDateTime(v.decidedAt)}</dd></>}
               {v.checkedOutAt && <><dt>Left</dt><dd className="num">{fmtDateTime(v.checkedOutAt)} · {fmtDuration(Math.round((new Date(v.checkedOutAt) - new Date(v.decidedAt)) / 60000))} inside</dd></>}
+              {v.validUntil && <><dt>Pass</dt><dd>{v.validity} · valid till {fmtDateTime(v.validUntil)}</dd></>}
               {v.forceReason && <><dt>Checkout reason</dt><dd>{v.forceReason}</dd></>}
               {v.printStatus && <><dt>Sticker</dt><dd>{v.printStatus === 'off' ? 'No printer connected' : v.printStatus === 'sent' ? 'Printed' : v.printStatus === 'failed' ? `Failed${v.printError ? `: ${v.printError}` : ''}` : 'In the print queue'}</dd></>}
             </dl>
+
+            {v.movements?.length > 0 && (
+              <div>
+                <h3 className="section-title">Entries and exits</h3>
+                <ol className="moves">
+                  {v.movements.map((m, i) => (
+                    <li key={i} className={`move move-${m.kind}`}>
+                      <span className="move-kind">{m.kind === 'in' ? <LogIn /> : <LogOut />}{m.kind === 'in' ? 'In' : 'Out'}</span>
+                      <span className="move-where"><strong>{m.gate || 'Gate not recorded'}</strong>{m.by && <span className="faint"> · {m.by}</span>}</span>
+                      <span className="num move-when">{fmtDateTime(m.at)}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
 
             <div>
               <h3 className="section-title">Aadhaar card (masked)</h3>
@@ -739,7 +776,7 @@ function VisitDrawer({ id, tick, onClose, onChanged }) {
           {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New request sent to the host.')}><RotateCcw />Resend request</button>}
           {admitted && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
           <button className="btn btn-ghost" onClick={() => setBlocking({ mobile: v.mobile, name: `${v.firstName} ${v.lastName}` })}><Ban />Block</button>
-          {v.status === 'approved' && <button className="btn btn-danger-outline" onClick={() => setForce(v)}><LogOut />Check out</button>}
+          {['approved', 'away'].includes(v.status) && <button className="btn btn-danger-outline" onClick={() => setForce(v)}><LogOut />{v.status === 'away' ? 'End pass' : 'Check out'}</button>}
         </div>
       )}
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={onChanged} />
@@ -1156,7 +1193,28 @@ const ago = (iso) => {
 };
 const suggestUsername = (name) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s]/g, '').trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.').slice(0, 30);
 
+// Gates for pickers. Closed gates stay listed so a guard still assigned to one shows it.
+function useGates() {
+  const [gates, setGates] = useState([]);
+  useEffect(() => { api('/api/admin/gates').then((r) => setGates(r.rows)).catch(() => {}); }, []);
+  return gates;
+}
+
+function GatePicker({ value, onChange, gates }) {
+  const open = gates.filter((g) => g.active || g.id === value);
+  return (
+    <label className="field"><span>Gate</span>
+      <select className="select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{open.length > 1 ? 'Not fixed (uses the first gate)' : 'Main gate'}</option>
+        {open.map((g) => <option key={g.id} value={g.id}>{g.name}{g.active ? '' : ' (closed)'}</option>)}
+      </select>
+      <span className="hint">Where they check visitors in and out. Every entry and exit records this gate.</span>
+    </label>
+  );
+}
+
 function StaffPage({ toast, user }) {
+  const gates = useGates();
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
@@ -1189,7 +1247,7 @@ function StaffPage({ toast, user }) {
       ) : (
         <div className="table-scroll">
           <table className="table">
-            <thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th className="r">Can sign in</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th>Person</th><th>Role</th><th>Gate</th><th>Last sign-in</th><th className="r">Can sign in</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {shown.map((u) => {
                 const self = u.id === user.id;
@@ -1205,6 +1263,7 @@ function StaffPage({ toast, user }) {
                       </div>
                     </td>
                     <td><span className={`badge plain ${u.role === 'admin' ? 'role-admin' : ''}`}>{ROLE_INFO[u.role][0]}</span></td>
+                    <td>{u.gate ? <>{u.gate.name}{!u.gate.active && <span className="badge badge-warn" style={{ marginLeft: 6 }}>Closed</span>}</> : <span className="faint">{u.role === 'guard' ? 'Not fixed' : '—'}</span>}</td>
                     <td className="num">{ago(u.lastLoginAt)}</td>
                     <td className="r">
                       <button className="switch" role="switch" aria-checked={u.active} disabled={self}
@@ -1218,8 +1277,8 @@ function StaffPage({ toast, user }) {
           </table>
         </div>
       )}
-      <AddStaffDialog open={adding} onClose={() => setAdding(false)} onDone={load} />
-      <EditStaffDialog member={editing} self={editing?.id === user.id} onClose={() => setEditing(null)} onDone={load} />
+      <AddStaffDialog open={adding} gates={gates} onClose={() => setAdding(false)} onDone={load} />
+      <EditStaffDialog member={editing} gates={gates} self={editing?.id === user.id} onClose={() => setEditing(null)} onDone={load} />
     </section>
   );
 }
@@ -1236,8 +1295,8 @@ function RolePicker({ value, onChange, disabled }) {
   );
 }
 
-function AddStaffDialog({ open, onClose, onDone }) {
-  const blank = { fullName: '', username: '', role: 'guard', password: '' };
+function AddStaffDialog({ open, gates, onClose, onDone }) {
+  const blank = { fullName: '', username: '', role: 'guard', password: '', gateId: '' };
   const [f, setF] = useState(blank);
   const [ownPassword, setOwnPassword] = useState(false);
   const [userEdited, setUserEdited] = useState(false);
@@ -1251,7 +1310,7 @@ function AddStaffDialog({ open, onClose, onDone }) {
     e.preventDefault();
     setBusy(true); setErr('');
     try {
-      const res = await api('/api/admin/users', { method: 'POST', body: { fullName: f.fullName, username: f.username, role: f.role, ...(ownPassword ? { password: f.password } : {}) } });
+      const res = await api('/api/admin/users', { method: 'POST', body: { fullName: f.fullName, username: f.username, role: f.role, gateId: f.gateId || null, ...(ownPassword ? { password: f.password } : {}) } });
       onDone();
       setCreated({ ...res, password: res.password || null });
     } catch (x) { setErr(x.message); } finally { setBusy(false); }
@@ -1285,6 +1344,7 @@ function AddStaffDialog({ open, onClose, onDone }) {
             <span className="hint">What they type to sign in. Lowercase letters, numbers, dot or dash.</span>
           </label>
           <div className="field"><span>Role</span><RolePicker value={f.role} onChange={(role) => setF({ ...f, role })} /></div>
+          {f.role === 'guard' && <GatePicker value={f.gateId} gates={gates} onChange={(gateId) => setF({ ...f, gateId })} />}
           <label className="checkbox" style={{ fontSize: 13.5 }}>
             <input type="checkbox" checked={ownPassword} onChange={(e) => setOwnPassword(e.target.checked)} />
             <span>I will set the password myself <span className="faint">(otherwise a strong one is made for you)</span></span>
@@ -1306,24 +1366,24 @@ function AddStaffDialog({ open, onClose, onDone }) {
   );
 }
 
-function EditStaffDialog({ member, self, onClose, onDone }) {
+function EditStaffDialog({ member, gates, self, onClose, onDone }) {
   const toast = useToast();
-  const [f, setF] = useState({ fullName: '', role: 'guard' });
+  const [f, setF] = useState({ fullName: '', role: 'guard', gateId: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
   const [newPassword, setNewPassword] = useState(null);
   useEffect(() => {
-    if (member) { setF({ fullName: member.fullName, role: member.role }); setErr(''); setConfirmReset(false); setNewPassword(null); }
+    if (member) { setF({ fullName: member.fullName, role: member.role, gateId: member.gate?.id || '' }); setErr(''); setConfirmReset(false); setNewPassword(null); }
   }, [member?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const changed = member && (f.fullName.trim() !== member.fullName || f.role !== member.role);
+  const changed = member && (f.fullName.trim() !== member.fullName || f.role !== member.role || f.gateId !== (member.gate?.id || ''));
   const save = async (e) => {
     e.preventDefault();
     if (!changed) return onClose();
     setBusy(true); setErr('');
     try {
-      await api(`/api/admin/users/${member.id}`, { method: 'PATCH', body: { fullName: f.fullName, role: f.role } });
+      await api(`/api/admin/users/${member.id}`, { method: 'PATCH', body: { fullName: f.fullName, role: f.role, gateId: f.gateId || null } });
       toast(`${f.fullName} updated.`);
       onDone();
       onClose();
@@ -1354,6 +1414,7 @@ function EditStaffDialog({ member, self, onClose, onDone }) {
               <span>Role {self && <span className="faint">· you cannot change your own role</span>}</span>
               <RolePicker value={f.role} onChange={(role) => setF({ ...f, role })} disabled={self} />
             </div>
+            {f.role === 'guard' && <GatePicker value={f.gateId} gates={gates} onChange={(gateId) => setF({ ...f, gateId })} />}
             <div className="field">
               <span>Password</span>
               {newPassword ? (
@@ -1693,6 +1754,69 @@ function BlockDialog({ prefill, onClose, onDone }) {
 // ================================================================= Settings
 const RETENTION_LABEL = { 1: '1 day', 7: '7 days', 30: '30 days', 90: '90 days', 180: '180 days', 365: '1 year' };
 
+// Entry points. Added, renamed and opened or closed here; each guard is assigned one under Staff.
+function GatesManager() {
+  const toast = useToast();
+  const [rows, setRows] = useState(null);
+  const [name, setName] = useState('');
+  const [editing, setEditing] = useState(null); // { id, name }
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api('/api/admin/gates').then((r) => setRows(r.rows)).catch(() => setRows([])), []);
+  useEffect(() => { load(); }, [load]);
+
+  const call = async (fn, msg) => {
+    setBusy(true);
+    try { await fn(); if (msg) toast(msg); load(); return true; } catch (e) { toast(e.message, 'bad'); return false; } finally { setBusy(false); }
+  };
+  const add = async () => {
+    const n = name.trim();
+    if (n.length < 2) return;
+    if (await call(() => api('/api/admin/gates', { method: 'POST', body: { name: n } }), `${n} added. Assign guards to it under Staff.`)) setName('');
+  };
+  const rename = async () => {
+    const n = editing.name.trim();
+    if (n.length < 2) return;
+    if (await call(() => api(`/api/admin/gates/${editing.id}`, { method: 'PATCH', body: { name: n } }), 'Gate renamed. Past entries keep the old name.')) setEditing(null);
+  };
+  const toggle = (g) => call(() => api(`/api/admin/gates/${g.id}`, { method: 'PATCH', body: { active: !g.active } }),
+    g.active ? `${g.name} closed. Its guards use the first open gate until you move them.` : `${g.name} is open again.`);
+  const enter = (fn) => (e) => { if (e.key === 'Enter') { e.preventDefault(); fn(); } if (e.key === 'Escape') setEditing(null); };
+
+  return (
+    <div className="field">
+      <span>Gates</span>
+      {!rows ? <div className="skeleton" style={{ height: 44, borderRadius: 10 }} /> : (
+        <ul className="gate-list">
+          {rows.map((g) => (
+            <li key={g.id} className={g.active ? '' : 'row-off'}>
+              {editing?.id === g.id ? (
+                <>
+                  <input className="input" value={editing.name} maxLength={40} autoFocus aria-label="Gate name"
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })} onKeyDown={enter(rename)} />
+                  <button type="button" className="btn btn-sm btn-primary" disabled={busy || editing.name.trim().length < 2} onClick={rename}><Save />Save</button>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <span className="gate-name"><strong>{g.name}</strong><span className="faint">{g.active ? `${g.staff} ${g.staff === 1 ? 'guard' : 'guards'}` : 'Closed'}</span></span>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing({ id: g.id, name: g.name })}>Rename</button>
+                  <button type="button" className="switch" role="switch" aria-checked={g.active} disabled={busy} aria-label={`${g.name} is open`} onClick={() => toggle(g)} />
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="gate-add">
+        <input className="input" value={name} maxLength={40} placeholder="e.g. Staff Entrance" aria-label="New gate name"
+          onChange={(e) => setName(e.target.value)} onKeyDown={enter(add)} />
+        <button type="button" className="btn btn-sm" disabled={busy || name.trim().length < 2} onClick={add}><Plus />Add gate</button>
+      </div>
+      <span className="hint">Every entry and exit records the gate and the guard. A visitor can come in at one gate and leave by another.</span>
+    </div>
+  );
+}
+
 function SettingsPage({ toast }) {
   const [s, setS] = useState(null);
   const [f, setF] = useState(null);
@@ -1725,10 +1849,7 @@ function SettingsPage({ toast }) {
             <input className="input" value={f.siteName} maxLength={60} onChange={(e) => setF({ ...f, siteName: e.target.value })} />
             <span className="hint">Printed on visitor passes, shown on the host’s approval page and in downloads.</span>
           </label>
-          <label className="field"><span>Gate name</span>
-            <input className="input" value={f.gateName} maxLength={40} onChange={(e) => setF({ ...f, gateName: e.target.value })} />
-            <span className="hint">Shown at the top of the guard desk.</span>
-          </label>
+          <GatesManager />
         </div>
       </section>
 

@@ -8,6 +8,7 @@ const { audit } = require('./core');
 const { publish } = require('./events');
 const settings = require('./settings');
 const { retireTelegram, whatsappFallback } = require('./notify');
+const passes = require('./passes');
 
 const backoffMs = (attempts) => Math.min(60000, 2 ** attempts * 1000);
 
@@ -37,7 +38,8 @@ async function processOutbox() {
         const d = new Date(visit.decidedAt || Date.now());
         const dateStr = d.toLocaleDateString('en-IN', { timeZone: config.timezone });
         const timeStr = d.toLocaleTimeString('en-GB', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit' });
-        const zpl = buildStickerZpl(visit, visit.host.unit, visit.host.fullName, timeStr, dateStr);
+        const until = visit.validUntil ? new Date(visit.validUntil).toLocaleString('en-IN', { timeZone: config.timezone, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+        const zpl = buildStickerZpl(visit, visit.host.unit, visit.host.fullName, timeStr, dateStr, until);
         job.providerRef = await deliverZpl(zpl, visit.ref);
       }
       job.status = 'sent';
@@ -71,6 +73,17 @@ async function expireStaleApprovals() {
   }
 }
 
+// A pass holder who is out when the pass runs out: the visit closes at their last exit. Someone still inside
+// is never checked out by the system; the gate and admin see their pass as expired instead.
+async function closeExpiredPasses() {
+  const due = await Visit.find({ status: 'away', validUntil: { $lte: new Date() } }, '_id ref movements').limit(200).lean();
+  for (const v of due) {
+    const lastOut = passes.entryExit(v).exit?.at || new Date();
+    const r = await Visit.updateOne({ _id: v._id, status: 'away' }, { status: 'checked_out', checkedOutAt: lastOut });
+    if (r.modifiedCount) audit({ label: 'system' }, 'visit.pass_expired', { entity: 'Visit', entityId: v._id, details: { ref: v.ref } });
+  }
+}
+
 // DPDP data minimisation: masked ID images are deleted after the retention window.
 async function purgeIdImages() {
   const { idRetentionDays } = await settings.get();
@@ -90,6 +103,7 @@ function start() {
     try {
       await processOutbox();
       await expireStaleApprovals();
+      await closeExpiredPasses();
       await purgeIdImages();
     } catch (err) {
       console.error('[worker]', err.message);
@@ -102,4 +116,4 @@ function start() {
   return tick;
 }
 
-module.exports = { start, processOutbox, expireStaleApprovals, purgeIdImages };
+module.exports = { start, processOutbox, expireStaleApprovals, closeExpiredPasses, purgeIdImages };

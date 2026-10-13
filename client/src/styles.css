@@ -413,6 +413,10 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .visitor-item .name { font-weight: 600; }
 .visitor-item .meta { font-size: 13px; color: var(--text-2); }
 .visitor-item .time { font-size: 12.5px; color: var(--text-3); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.visitor-item.is-expired { border-color: #efc4c1; background: linear-gradient(var(--bad-soft), var(--surface) 70%); }
+.visitor-item.is-away { background: var(--surface-2); }
+.pass-valid { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); font-size: 13px; }
+.pass-valid strong { font-weight: 600; }
 .guard-split { display: grid; gap: 24px; }
 .guard-side { display: grid; gap: 28px; align-content: start; min-width: 0; }
 .topbar .where small .sep { margin: 0 1px; color: var(--border-strong); }
@@ -770,3 +774,22 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
   .mobile-cc { height: 46px; padding: 0 7px; font-size: 14px; }
 }
 .otp-skip { justify-self: start; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 13px; color: var(--text-3); text-decoration: underline; cursor: pointer; }
+
+/* Entries and exits of one visit (admin drawer) */
+.moves { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.move { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13.5px; }
+.move-kind { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.move-kind svg { width: 15px; height: 15px; }
+.move-in .move-kind { color: var(--ok); }
+.move-out .move-kind { color: var(--text-2); }
+.move-when { color: var(--text-3); font-size: 12.5px; white-space: nowrap; }
+@media (max-width: 480px) { .move { grid-template-columns: 56px 1fr; } .move-when { grid-column: 2; } }
+
+/* Gates (settings) */
+.gate-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.gate-list li { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-height: 46px; }
+.gate-list li .input { flex: 1; height: 34px; }
+.gate-name { flex: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.gate-name .faint { font-size: 12.5px; }
+.gate-add { display: flex; gap: 8px; }
+.gate-add .input { flex: 1; }

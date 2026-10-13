@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { Building2, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
+import { Building2, CalendarClock, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
 import { Logo, Spinner, useTitle } from '../components/ui.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
@@ -92,6 +92,7 @@ export default function Approve() {
             <div className="fact"><Building2 /><span>Coming from</span><strong>{info.company}</strong></div>
             {info.purpose && <div className="fact"><Target /><span>Purpose</span><strong>{info.purpose}</strong></div>}
             <div className="fact"><Clock /><span>Arrived</span><strong className="num">{fmtTime(info.arrivedAt)}</strong></div>
+            {info.passFor && <div className="fact"><CalendarClock /><span>Pass for</span><strong>{info.passFor}</strong></div>}
             <div className="fact"><Hash /><span>Visitor ID</span><strong className="mono">{info.ref}</strong></div>
           </div>
 

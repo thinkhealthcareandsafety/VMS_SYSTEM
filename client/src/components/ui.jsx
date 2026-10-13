@@ -36,6 +36,7 @@ export function Avatar({ src, name, size = 36, square = false }) {
 export const STATUS = {
   pending: ['Awaiting host', 'badge-warn'],
   approved: ['On premises', 'badge-live'],
+  away: ['Out on pass', 'badge-ok'],
   rejected: ['Declined', 'badge-bad'],
   expired: ['No response', ''],
   cancelled: ['Cancelled', ''],

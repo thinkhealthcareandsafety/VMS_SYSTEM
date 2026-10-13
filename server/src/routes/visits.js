@@ -11,6 +11,7 @@ const messaging = require('../services/messaging');
 const { retireTelegram } = require('../services/notify');
 const telegram = require('../services/telegram');
 const whatsapp = require('../services/whatsapp');
+const passes = require('../services/passes');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
@@ -44,6 +45,10 @@ const publicVisit = (v, host, withMobile = false) => ({
   ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
   decidedAt: v.decidedAt,
   checkedOutAt: v.checkedOutAt,
+  validity: passes.validityLabel(v.validity),
+  validUntil: v.validUntil ?? null,
+  ...passes.entryExit(v),
+  ...(withMobile ? { movements: (v.movements || []).map((m) => ({ kind: m.kind, at: m.at, gate: m.gateName, by: m.byName })) } : {}),
 });
 
 // Creates a fresh single-use approval link and queues the SMS to the host.
@@ -57,14 +62,14 @@ async function issueApprovalLink(visit, host, visitorName, company) {
   const from = /^(personal|self|none|na|n\/a|-)$/i.test(company) ? '' : ` from ${company}`;
   const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${smsLink} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
   const tg = config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId
-    ? { kind: 'telegram', to: String(host.telegramChatId), body: `🚪 ${visitorName}${from} is at the gate to meet you.\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.` }
+    ? { kind: 'telegram', to: String(host.telegramChatId), body: `🚪 ${visitorName}${from} is at the gate to meet you.\nPass asked for: ${passes.validityLabel(visit.validity)}\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.` }
     : null;
   const sms = { kind: 'sms', to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, minutes: config.approvalTtlMinutes } };
   if (config.approvalChannel !== 'sms' && whatsapp.enabled() && host.mobile) {
     // If WhatsApp can't deliver, the request goes by Telegram, or by SMS once a real SMS gateway is on.
     const fallback = tg || (config.sms.driver !== 'console' ? sms : null);
     const purpose = visit.purpose ? `\nPurpose: ${visit.purpose}` : '';
-    const text = `🚪 *${visitorName}*${from} is at the gate to meet you.${purpose}\n\nTap a button below, or see their details: ${link}`;
+    const text = `🚪 *${visitorName}*${from} is at the gate to meet you.${purpose}\nPass asked for: *${passes.validityLabel(visit.validity)}*\n\nTap a button below, or see their details: ${link}`;
     await Outbox.create({ kind: 'whatsapp', visit: visit._id, to: host.mobile, body: text, vars: { fallback } });
     return null;
   }
@@ -87,14 +92,20 @@ async function saveFile(folder, buf) {
   return path.join(dir, name);
 }
 
-const activeVisitFor = (mobile) => Visit.findOne({ mobile, status: { $in: ['pending', 'approved'] } }).sort({ createdAt: -1 }).populate('host').lean();
+const activeVisitFor = (mobile) => Visit.findOne({
+  mobile, $or: [{ status: { $in: ['pending', 'approved'] } }, { status: 'away', validUntil: { $gt: new Date() } }],
+}).sort({ createdAt: -1 }).populate('host').lean();
+const fmtUntil = (d) => new Intl.DateTimeFormat('en-IN', { timeZone: config.timezone, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(d));
 const activeSummary = (v) => ({
   id: String(v._id), ref: v.ref, status: v.status, name: `${v.firstName} ${v.lastName}`,
-  dailyNumber: v.dailyNumber ?? null, host: v.host ? { name: v.host.fullName, unit: v.host.unit } : null,
+  dailyNumber: v.dailyNumber ?? null, host: v.host ? { name: v.host.fullName, unit: v.host.unit } : null, validUntil: v.validUntil ?? null,
 });
-const activeMessage = (v) => (v.status === 'approved'
-  ? `${v.firstName} ${v.lastName} is already inside with pass ${v.dailyNumber} (meeting ${v.host?.fullName}). Check them out before registering a new visit.`
-  : `${v.firstName} ${v.lastName} is already waiting for ${v.host?.fullName} to approve. Resend or cancel that request instead.`);
+const activeMessage = (v) => {
+  const name = `${v.firstName} ${v.lastName}`;
+  if (v.status === 'away') return `${name} has a valid pass (no. ${v.dailyNumber}) until ${fmtUntil(v.validUntil)}. Let them in again; no new approval is needed.`;
+  if (v.status === 'approved') return `${name} is already inside with pass ${v.dailyNumber} (meeting ${v.host?.fullName}). Check them out before registering a new visit.`;
+  return `${name} is already waiting for ${v.host?.fullName} to approve. Resend or cancel that request instead.`;
+};
 
 // Someone the admin blocked. Checked on lookup (red warning) and again on check-in (refused).
 const blockFor = (mobile) => Block.findOne({ mobile, active: true }).lean();
@@ -199,6 +210,8 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email address does not look right. Fix it or leave it empty.' });
   if (!company) return res.status(400).json({ error: 'Company / source is required' });
   if (!isId(b.hostId)) return res.status(400).json({ error: 'Select whom to meet' });
+  const pass = passes.parseValidity(b);
+  if (pass.error) return res.status(400).json({ error: pass.error });
 
   const host = await Host.findOne({ _id: b.hostId, active: true }).lean();
   if (!host) return res.status(400).json({ error: 'Selected host is not active' });
@@ -243,6 +256,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     photoPath = await saveFile('photos', photo);
     idPath = await saveFile('id-masked', idImage);
     const visitorName = `${firstName} ${lastName}`;
+    const gate = await passes.gateOf(req.user.id);
     const visit = await Visit.create({
       ref: await nextVisitorRef(),
       firstName, lastName, mobile, email: email || undefined, gender, company, purpose,
@@ -251,6 +265,8 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       visitDay: siteDay(),
       photoPath, idImagePath: idPath, idMaskMethod,
       ...faceMatchFrom(b), ...mobileCheck,
+      validity: pass.validity,
+      arrival: { gate: gate.id || undefined, gateName: gate.name, by: req.user.id, byName: req.user.fullName },
       createdBy: req.user.id,
     });
     audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });
@@ -260,11 +276,15 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       const claimed = await Invite.findOneAndUpdate({ _id: invite._id, status: 'expected' }, { status: 'arrived', visit: visit._id }, { new: true });
       if (claimed) {
         const { day, number } = await nextDailyNumber();
-        Object.assign(visit, { status: 'approved', decidedAt: new Date(), checkedInAt: new Date(), dailyDay: day, dailyNumber: number });
+        const now = new Date();
+        Object.assign(visit, {
+          status: 'approved', decidedAt: now, checkedInAt: now, dailyDay: day, dailyNumber: number,
+          validUntil: passes.validUntil(visit.validity, now), movements: [passes.movement('in', gate, req.user, now)],
+        });
         await visit.save();
         if (config.printer.mode !== 'off') await Outbox.create({ kind: 'print', visit: visit._id });
         audit(req.user, 'visit.approved', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, dailyNumber: number, via: 'expected' }, ip: req.ip });
-        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number });
+        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number, validUntil: visit.validUntil });
       }
     }
     const share = await issueApprovalLink(visit, host, visitorName, company);
@@ -278,13 +298,21 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
 
 // Status poll used by the guard screen while waiting for the host.
 router.get('/inside', requireRole('guard', 'admin'), async (req, res) => {
-  const visits = await Visit.find({ status: 'approved' }).sort({ decidedAt: 1 }).populate('host').lean();
   const now = Date.now();
-  const rows = visits.map((v) => ({
-    ...publicVisit(v, v.host, req.user.role === 'admin'),
-    insideMinutes: Math.round((now - new Date(v.decidedAt).getTime()) / 60000),
-  }));
-  res.json({ count: rows.length, visits: rows, staleAfterHours: config.maxInsideHours });
+  const [visits, away] = await Promise.all([
+    Visit.find({ status: 'approved' }).sort({ decidedAt: 1 }).populate('host').lean(),
+    Visit.find({ status: 'away', validUntil: { $gt: new Date(now) } }).sort({ validUntil: 1 }).limit(500).populate('host').lean(),
+  ]);
+  const admin = req.user.role === 'admin';
+  const rows = visits.map((v) => {
+    const since = passes.entryExit(v).lastIn?.at || v.decidedAt;
+    return {
+      ...publicVisit(v, v.host, admin),
+      insideMinutes: Math.round((now - new Date(since).getTime()) / 60000),
+      passExpired: Boolean(v.validUntil) && new Date(v.validUntil).getTime() < now,
+    };
+  });
+  res.json({ count: rows.length, visits: rows, away: away.map((v) => publicVisit(v, v.host, admin)), staleAfterHours: config.maxInsideHours });
 });
 
 // Returning visitor: last known name/company for a mobile number, to prefill check-in.
@@ -386,7 +414,7 @@ router.post('/:id/resend', requireRole('guard', 'admin'), async (req, res) => {
 // The guard printed the pass (browser print, any printer). Recorded for the audit trail; it is also the handover.
 router.post('/:id/printed', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
-  const v = await Visit.findOne({ _id: req.params.id, status: { $in: ['approved', 'checked_out', 'force_checked_out'] } }, 'ref').lean();
+  const v = await Visit.findOne({ _id: req.params.id, status: { $in: ['approved', 'away', 'checked_out', 'force_checked_out'] } }, 'ref').lean();
   if (!v) return res.status(409).json({ error: 'No pass has been issued for this visit' });
   audit(req.user, 'pass.printed', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
   res.json({ ok: true });
@@ -407,17 +435,68 @@ router.post('/:id/cancel', requireRole('guard', 'admin'), async (req, res) => {
   res.json({ ok: true, status: v.status });
 });
 
-// Guard marks departure.
+// Guard marks departure, at whichever gate they work. A pass that outlives today stays open ("away"), so the
+// visitor can come back on it; `final: true` closes it anyway (the visitor is done for good).
 router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const now = new Date();
+  const current = await Visit.findOne({ _id: req.params.id, status: 'approved' }, 'validity validUntil').lean();
+  if (!current) return res.status(409).json({ error: 'Visitor is not currently inside' });
+  const gate = await passes.gateOf(req.user.id);
+  const keep = req.body?.final !== true && passes.staysOpen(current.validity, current.validUntil, now);
+  const exit = passes.movement('out', gate, req.user, now);
   const v = await Visit.findOneAndUpdate(
     { _id: req.params.id, status: 'approved' },
-    { status: 'checked_out', checkedOutAt: new Date(), checkedOutBy: req.user.id },
+    keep
+      ? { status: 'away', $push: { movements: exit } }
+      : { status: 'checked_out', checkedOutAt: now, checkedOutBy: req.user.id, $push: { movements: exit } },
     { new: true },
   );
   if (!v) return res.status(409).json({ error: 'Visitor is not currently inside' });
-  audit(req.user, 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
-  res.json({ ok: true, status: v.status, checkedOutAt: v.checkedOutAt });
+  audit(req.user, keep ? 'visit.went_out' : 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name }, ip: req.ip });
+  res.json({ ok: true, status: v.status, checkedOutAt: v.checkedOutAt, validUntil: v.validUntil });
+});
+
+// A pass holder comes back while the pass is valid: in again at this gate, no new approval.
+router.post('/:id/reenter', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const current = await Visit.findById(req.params.id, 'status validUntil mobile ref').lean();
+  if (!current) return res.status(404).json({ error: 'Not found' });
+  if (current.status === 'approved') return res.status(409).json({ error: 'This visitor is already inside' });
+  if (current.status !== 'away' || !current.validUntil || new Date(current.validUntil) <= new Date()) {
+    return res.status(409).json({ error: 'This pass has ended. Check the visitor in again for a new pass.' });
+  }
+  const blocked = await blockFor(current.mobile);
+  if (blocked) {
+    audit(req.user, 'visit.blocked_attempt', { entity: 'Visit', entityId: current._id, details: { ref: current.ref, reason: blocked.reason, via: 'reentry' }, ip: req.ip });
+    return res.status(403).json({ code: 'blocked', error: blockMessage(blocked) });
+  }
+  const now = new Date();
+  const gate = await passes.gateOf(req.user.id);
+  const v = await Visit.findOneAndUpdate(
+    { _id: req.params.id, status: 'away', validUntil: { $gt: now } },
+    { status: 'approved', $push: { movements: passes.movement('in', gate, req.user, now) } },
+    { new: true },
+  ).populate('host').lean();
+  if (!v) return res.status(409).json({ error: 'This pass has ended. Check the visitor in again for a new pass.' });
+  audit(req.user, 'visit.reentered', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name }, ip: req.ip });
+  res.json(publicVisit(v, v.host));
+});
+
+// The pass holder is done before the pass runs out (contract finished): close it so it cannot be used again.
+router.post('/:id/end-pass', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const current = await Visit.findOne({ _id: req.params.id, status: 'away' }, 'movements').lean();
+  if (!current) return res.status(409).json({ error: 'Only a pass holder who is outside can have the pass ended' });
+  const lastOut = passes.entryExit(current).exit?.at || new Date();
+  const v = await Visit.findOneAndUpdate(
+    { _id: req.params.id, status: 'away' },
+    { status: 'checked_out', checkedOutAt: lastOut, checkedOutBy: req.user.id },
+    { new: true },
+  );
+  if (!v) return res.status(409).json({ error: 'Only a pass holder who is outside can have the pass ended' });
+  audit(req.user, 'visit.pass_ended', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
+  res.json({ ok: true, status: v.status });
 });
 
 // Admin force checkout when guard forgot to mark exit. Reason is mandatory.
@@ -426,11 +505,11 @@ router.post('/:id/force-checkout', requireRole('admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
   if (reason.length < 5) return res.status(400).json({ error: 'Give a reason (at least 5 characters)' });
   const v = await Visit.findOneAndUpdate(
-    { _id: req.params.id, status: 'approved' },
+    { _id: req.params.id, status: { $in: ['approved', 'away'] } },
     { status: 'force_checked_out', checkedOutAt: new Date(), checkedOutBy: req.user.id, forceReason: reason },
     { new: true },
   );
-  if (!v) return res.status(409).json({ error: 'Visitor is not currently inside' });
+  if (!v) return res.status(409).json({ error: 'Visitor is not currently inside or holding a pass' });
   audit(req.user, 'visit.force_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, reason }, ip: req.ip });
   res.json({ ok: true, status: v.status });
 });
@@ -441,7 +520,7 @@ router.post('/:id/reprint', requireRole('guard', 'admin'), async (req, res) => {
   if (config.printer.mode === 'off') return res.status(409).json({ error: 'No sticker printer is connected. Write the pass number on the visitor slip.' });
   const v = await Visit.findById(req.params.id, 'status ref').lean();
   if (!v) return res.status(404).json({ error: 'Not found' });
-  if (v.status !== 'approved' && v.status !== 'checked_out' && v.status !== 'force_checked_out') return res.status(409).json({ error: 'Pass not issued yet' });
+  if (!['approved', 'away', 'checked_out', 'force_checked_out'].includes(v.status)) return res.status(409).json({ error: 'Pass not issued yet' });
   await Outbox.create({ kind: 'print', visit: v._id });
   audit(req.user, 'sticker.reprint_requested', { entity: 'Visit', entityId: v._id, details: { ref: v.ref }, ip: req.ip });
   res.status(202).json({ ok: true });

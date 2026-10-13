@@ -58,6 +58,7 @@ async function main() {
   }
   await mongoose.connect(config.mongoUri);
   console.log('MongoDB connected');
+  await require('./services/passes').ensureDefaultGate();
   worker.start();
   telegram.init(); // registers the webhook when a bot token is set
   createApp().listen(config.port, () => console.log(`${config.siteName} API on :${config.port}`));

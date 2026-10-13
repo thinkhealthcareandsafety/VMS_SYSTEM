@@ -819,3 +819,138 @@ test('WhatsApp: request with photo and buttons goes to the chosen host; only the
     fake.close();
   }
 });
+
+test('gates: entry at one gate and exit at another are recorded with the guard; the admin manages gates', async () => {
+  const { Gate } = require('../src/models');
+  await require('../src/services/passes').ensureDefaultGate();
+
+  // Admin adds gates; names are unique (any case); guards cannot manage gates.
+  const g1 = await call('POST', '/api/admin/gates', { name: 'Main Entrance' }, admin);
+  const g3 = await call('POST', '/api/admin/gates', { name: 'Receiving Gate' }, admin);
+  assert.equal(g1.status, 201);
+  assert.equal((await call('POST', '/api/admin/gates', { name: 'main entrance' }, admin)).status, 409);
+  assert.equal((await call('POST', '/api/admin/gates', { name: 'X' }, admin)).status, 400);
+  assert.equal((await call('GET', '/api/admin/gates', null, guard)).status, 403);
+
+  // One guard per gate. A gate id that does not exist is refused.
+  assert.equal((await call('POST', '/api/admin/users', { username: 'g-bad', fullName: 'Bad Gate', role: 'guard', gateId: '64b000000000000000000000' }, admin)).status, 400);
+  const a = await call('POST', '/api/admin/users', { username: 'gate.one', fullName: 'Arjun Gate One', role: 'guard', gateId: g1.body.id }, admin);
+  const c = await call('POST', '/api/admin/users', { username: 'gate.three', fullName: 'Chetan Gate Three', role: 'guard', gateId: g3.body.id }, admin);
+  assert.equal(a.body.gate.name, 'Main Entrance');
+  const guardA = await login('gate.one', a.body.password);
+  const guardC = await login('gate.three', c.body.password);
+  assert.equal((await call('GET', '/api/auth/me', null, guardA)).body.gateName, 'Main Entrance', 'the desk shows the guard their gate');
+
+  // In at the Main Entrance, approved by the host, out at the Receiving Gate.
+  const v = await call('POST', '/api/visits', {
+    firstName: 'Gita', lastName: 'Rao', gender: 'female', mobile: '9811100001', company: 'Rao Events', purpose: 'Meeting',
+    hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), validity: '4h',
+  }, guardA);
+  assert.equal(v.status, 201);
+  await call('POST', `/api/approvals/${await tokenFor(v.body.id)}/decision`, { decision: 'approve' });
+  const out = await call('POST', `/api/visits/${v.body.id}/checkout`, {}, guardC);
+  assert.equal(out.body.status, 'checked_out', 'a 4-hour pass closes when the visitor leaves');
+
+  const detail = (await call('GET', `/api/visits/${v.body.id}`, null, admin)).body;
+  assert.deepEqual([detail.entry.gate, detail.entry.by], ['Main Entrance', 'Arjun Gate One']);
+  assert.deepEqual([detail.exit.gate, detail.exit.by], ['Receiving Gate', 'Chetan Gate Three']);
+  assert.equal(detail.movements.length, 2);
+  assert.equal(detail.validity, '4 hours');
+
+  // History can be filtered by gate, and the sheet names both gates and guards.
+  const atG3 = await call('GET', `/api/admin/visits?gate=${g3.body.id}`, null, admin);
+  assert.ok(atG3.body.rows.some((r) => r.id === v.body.id));
+  assert.ok(atG3.body.rows.every((r) => r.exit?.gate === 'Receiving Gate' || r.entry?.gate === 'Receiving Gate'));
+  const csv = await (await fetch(`${base}/api/admin/visits.csv?name=Gita`, { headers: { Cookie: admin } })).text();
+  assert.match(csv, /"Main Entrance","Arjun Gate One","Receiving Gate","Chetan Gate Three","1","4 hours"/);
+
+  // Renaming a gate does not rewrite history; the last open gate cannot be closed.
+  await call('PATCH', `/api/admin/gates/${g1.body.id}`, { name: 'Lobby Entrance' }, admin);
+  assert.equal((await call('GET', `/api/visits/${v.body.id}`, null, admin)).body.entry.gate, 'Main Entrance');
+  for (const g of await Gate.find({ active: true, _id: { $ne: g3.body.id } }).lean()) {
+    assert.equal((await call('PATCH', `/api/admin/gates/${g._id}`, { active: false }, admin)).status, 200);
+  }
+  assert.equal((await call('PATCH', `/api/admin/gates/${g3.body.id}`, { active: false }, admin)).body.error, 'Keep at least one gate open');
+  // A guard whose gate was closed works at the first open gate until moved.
+  assert.equal((await call('GET', '/api/auth/me', null, guardA)).body.gateName, 'Receiving Gate');
+  await Gate.updateMany({}, { active: true });
+});
+
+test('pass validity: multi-day passes let the holder out and back in at any gate until they end', async () => {
+  const { Visit } = require('../src/models');
+  const { closeExpiredPasses } = require('../src/services/worker');
+  const add = (body) => call('POST', '/api/visits', {
+    firstName: 'Kabir', lastName: 'Contractor', gender: 'male', mobile: '9811100002', company: 'BuildCo', purpose: 'Renovation',
+    hostId: hostIds.rahul, photo: jpeg(), idImage: jpeg(), ...body,
+  }, guard);
+
+  // Bad choices are refused with a clear reason; past dates and dates beyond 90 days are not allowed.
+  assert.equal((await add({ validity: '5y' })).status, 400);
+  assert.equal((await add({ validity: 'date', validUntilDay: '2001-01-01' })).status, 400);
+  assert.equal((await add({ validity: 'date', validUntilDay: '2099-01-01' })).status, 400);
+
+  // 10 days: the host is told, approves once.
+  const v = await add({ validity: '10d' });
+  assert.equal(v.status, 201);
+  const raw = await tokenFor(v.body.id);
+  assert.equal((await call('GET', `/api/approvals/${raw}`)).body.passFor, '10 days');
+  await call('POST', `/api/approvals/${raw}/decision`, { decision: 'approve' });
+  const issued = (await call('GET', `/api/visits/${v.body.id}`, null, guard)).body;
+  const days = (new Date(issued.validUntil) - Date.now()) / 86400e3;
+  assert.ok(days > 8.9 && days < 10.01, `valid until the end of the 10th day (${days.toFixed(2)} days)`);
+
+  // Leaving keeps the pass open; the lookup offers "let in again" instead of a new check-in.
+  const out = await call('POST', `/api/visits/${v.body.id}/checkout`, {}, guard);
+  assert.equal(out.body.status, 'away');
+  const inside = (await call('GET', '/api/visits/inside', null, guard)).body;
+  assert.ok(inside.away.some((r) => r.id === v.body.id), 'listed as a pass holder who is out');
+  assert.ok(!inside.visits.some((r) => r.id === v.body.id));
+  const look = (await call('GET', '/api/visits/lookup?mobile=9811100002', null, guard)).body;
+  assert.equal(look.active.status, 'away');
+  assert.match(look.active.message, /valid pass/);
+  assert.equal((await add({ validity: '10d' })).status, 409, 'no second pass while one is valid');
+
+  // Back in, no approval; then out again: four movements.
+  const back = await call('POST', `/api/visits/${v.body.id}/reenter`, {}, guard);
+  assert.equal(back.body.status, 'approved');
+  assert.equal((await call('POST', `/api/visits/${v.body.id}/reenter`, {}, guard)).status, 409, 'already inside');
+  await call('POST', `/api/visits/${v.body.id}/checkout`, {}, guard);
+  assert.equal((await call('GET', `/api/visits/${v.body.id}`, null, admin)).body.movements.length, 4);
+
+  // A pass holder who gets blocked cannot come back in.
+  await call('POST', '/api/admin/blocks', { mobile: '9811100002', reason: 'Contract terminated' }, admin);
+  const refused = await call('POST', `/api/visits/${v.body.id}/reenter`, {}, guard);
+  assert.equal(refused.status, 403);
+  const blocks = (await call('GET', '/api/admin/blocks', null, admin)).body.rows;
+  await call('PATCH', `/api/admin/blocks/${blocks.find((b) => b.mobile.endsWith('9811100002')).id}`, { active: false }, admin);
+
+  // Ending the pass early closes it at the last exit.
+  const ended = await call('POST', `/api/visits/${v.body.id}/end-pass`, {}, guard);
+  assert.equal(ended.body.status, 'checked_out');
+  assert.equal((await call('POST', `/api/visits/${v.body.id}/reenter`, {}, guard)).status, 409);
+
+  // Expiry while out: the worker closes it. Expiry while inside: flagged, never checked out by the system.
+  const w = await add({ validity: '3d' });
+  await call('POST', `/api/approvals/${await tokenFor(w.body.id)}/decision`, { decision: 'approve' });
+  await call('POST', `/api/visits/${w.body.id}/checkout`, {}, guard);
+  await Visit.updateOne({ _id: w.body.id }, { validUntil: new Date(Date.now() - 60e3) });
+  await closeExpiredPasses();
+  assert.equal((await Visit.findById(w.body.id).lean()).status, 'checked_out');
+
+  const x = await call('POST', '/api/visits', {
+    firstName: 'Lata', lastName: 'Late', gender: 'female', mobile: '9811100003', company: 'Vendor', hostId: hostIds.rahul,
+    photo: jpeg(), idImage: jpeg(), validity: '2h',
+  }, guard);
+  await call('POST', `/api/approvals/${await tokenFor(x.body.id)}/decision`, { decision: 'approve' });
+  await Visit.updateOne({ _id: x.body.id }, { validUntil: new Date(Date.now() - 60e3) });
+  await closeExpiredPasses();
+  const row = (await call('GET', '/api/visits/inside', null, guard)).body.visits.find((r) => r.id === x.body.id);
+  assert.equal(row.passExpired, true);
+  assert.equal(row.status, 'approved');
+
+  // Older screens that send no validity get the default 8-hour pass.
+  const y = await call('POST', '/api/visits', {
+    firstName: 'Old', lastName: 'Screen', gender: 'male', mobile: '9811100004', company: 'Legacy', hostId: hostIds.rahul, photo: jpeg(), idImage: jpeg(),
+  }, guard);
+  assert.equal((await call('GET', `/api/visits/${y.body.id}`, null, guard)).body.validity, '8 hours');
+});

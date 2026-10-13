@@ -70,7 +70,7 @@ async function sendOtp(to, code) {
 // Builds ZPL (Zebra-compatible; most WiFi/LAN label printers accept it on TCP 9100).
 const ascii = (s, max) => String(s || '').replace(/[^\x20-\x7E]/g, '').replace(/[\^~]/g, ' ').slice(0, max);
 
-function buildStickerZpl(visit, hostUnit, hostName, timeStr, dateStr) {
+function buildStickerZpl(visit, hostUnit, hostName, timeStr, dateStr, validTill = '') {
   return [
     '^XA',
     '^PW400^LL600',
@@ -82,7 +82,8 @@ function buildStickerZpl(visit, hostUnit, hostName, timeStr, dateStr) {
     `^FO220,135^A0N,26,26^FDTO: ${ascii(hostUnit, 14)}^FS`,
     `^FO220,170^A0N,24,24^FD${ascii(hostName, 18)}^FS`,
     `^FO220,205^A0N,22,22^FD${ascii(visit.company, 18)}^FS`,
-    `^FO20,300^A0N,24,24^FD${dateStr}  ${timeStr}^FS`,
+    `^FO20,270^A0N,24,24^FD${dateStr}  ${timeStr}^FS`,
+    ...(validTill ? [`^FO20,302^A0N,24,24^FDVALID TILL ${ascii(validTill, 24)}^FS`] : []),
     `^FO20,340^BCN,110,Y,N,N^FD${ascii(visit.ref, 20)}^FS`,
     '^XZ',
   ].join('\n');

@@ -30,6 +30,14 @@ const TZ = 'Asia/Kolkata';
 export const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: TZ }) : '—');
 export const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: TZ }) : '—');
 export const fmtDateTime = (iso) => (iso ? `${fmtDate(iso)}, ${fmtTime(iso)}` : '—');
+// When a pass runs out: "Today, 6:30 pm", "Tomorrow, 2:30 am" or "22 Oct, 11:59 pm".
+export const fmtUntil = (iso) => {
+  if (!iso) return '—';
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date(iso));
+  const t = new Date(); const now = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(t);
+  const next = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date(t.getTime() + 86400e3));
+  return `${day === now ? 'Today' : day === next ? 'Tomorrow' : fmtDate(iso)}, ${fmtTime(iso)}`;
+};
 export const minutesSince = (iso) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
 export const fmtDuration = (mins) => (mins < 1 ? 'just now' : mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)} h ${mins % 60} min`);
 export const fmtMobile = (m = '') => m.replace(/^\+91(\d{5})(\d{5})$/, '+91 $1 $2');

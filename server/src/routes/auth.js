@@ -5,6 +5,7 @@ const { z } = require('zod');
 const { User } = require('../models');
 const { signSession, setSessionCookie, COOKIE, loadUser, requireRole } = require('../middleware/auth');
 const settings = require('../services/settings');
+const passes = require('../services/passes');
 const { audit, passwordProblem } = require('../services/core');
 
 const router = express.Router();
@@ -33,8 +34,9 @@ router.post('/login', loginLimiter, async (req, res) => {
   await User.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
   setSessionCookie(res, signSession(user));
   audit({ username: user.username, role: user.role }, 'auth.login', { ip: req.ip });
-  const { siteName, gateName } = await settings.get();
-  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName, gateName });
+  const { siteName } = await settings.get();
+  const gate = await passes.gateOf(user._id);
+  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName, gateName: gate.name });
 });
 
 router.post('/logout', (req, res) => {
@@ -45,8 +47,9 @@ router.post('/logout', (req, res) => {
 router.get('/me', async (req, res) => {
   const user = await loadUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });
-  const { siteName, gateName } = await settings.get();
-  res.json({ ...user, siteName, gateName });
+  const { siteName } = await settings.get();
+  const gate = await passes.gateOf(user.id);
+  res.json({ ...user, siteName, gateName: gate.name });
 });
 
 // Change your own password. Signs out every other device; this one gets a fresh session.
