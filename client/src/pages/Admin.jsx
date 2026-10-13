@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
@@ -14,6 +14,7 @@ import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
 import { printEvacuation } from '../lib/evacuation.js';
 import GroupsPage from './Groups.jsx';
+import MaterialBoard from '../components/Material.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
@@ -23,6 +24,7 @@ const NAV = [
     { id: 'inside', label: 'On premises', icon: Users },
     { id: 'expected', label: 'Expected visitors', icon: CalendarCheck },
     { id: 'groups', label: 'Groups and events', icon: PartyPopper },
+    { id: 'material', label: 'Material', icon: Package },
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
@@ -46,6 +48,7 @@ const TITLES = {
   staff: ['Staff accounts', 'Who can sign in to the guard desk and this console'],
   expected: ['Expected visitors', 'Let in on arrival, without waiting for the host'],
   groups: ['Groups and events', 'Weddings, banquets, conferences: one guest list, a pass for every guest, any gate'],
+  material: ['Material', 'Gate passes out (returnable and not), deliveries and tools in, with approvals and returns'],
   blocked: ['Blocked visitors', 'People the guard must not let in'],
   settings: ['Settings', 'Site details, privacy and notifications'],
 };
@@ -134,6 +137,7 @@ export default function Admin({ user, onLogout }) {
           {section === 'staff' && <StaffPage {...page} user={user} />}
           {section === 'expected' && <ExpectedPage {...page} />}
           {section === 'groups' && <GroupsPage {...page} />}
+          {section === 'material' && <MaterialBoard admin liveTick={tick} />}
           {section === 'blocked' && <BlockedPage {...page} />}
           {section === 'settings' && <SettingsPage {...page} superAdmin={user.role === 'superadmin'} />}
         </div>

@@ -107,7 +107,9 @@ const counterSchema = new Schema({
 
 const outboxSchema = new Schema({
   kind: { type: String, enum: ['sms', 'telegram', 'whatsapp', 'print'], required: true, index: true },
-  visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true },
+  visit: { type: Schema.Types.ObjectId, ref: 'Visit' },          // a visitor's approval request...
+  material: { type: Schema.Types.ObjectId, ref: 'Material' },    // ...or a material gate pass approval...
+  parcel: { type: Schema.Types.ObjectId, ref: 'Parcel' },        // ...or a courier notice
   status: { type: String, enum: ['queued', 'sent', 'failed'], default: 'queued', index: true },
   to: { type: String },              // sms, whatsapp: mobile number; telegram: chat id
   body: { type: String },            // message text
@@ -172,6 +174,58 @@ const guestSchema = new Schema({
 }, opts);
 guestSchema.index({ group: 1, mobile: 1 });
 
+// ---------- Material: gate passes (RGP / NRGP) and gate entries ----------
+const materialItemSchema = new Schema({
+  name: { type: String, required: true, trim: true },
+  qty: { type: Number, required: true, min: 0 },
+  unit: { type: String, default: 'nos' },
+  serial: { type: String, trim: true, default: '' },   // serial number or asset tag
+  returnedQty: { type: Number, default: 0 },           // returnable passes: how much has come back
+});
+const materialReturnSchema = new Schema({
+  at: { type: Date, required: true },
+  items: [{ _id: false, item: Schema.Types.ObjectId, qty: Number }],
+  gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String, note: String,
+}, { _id: false });
+// direction out: kind returnable (RGP: comes back by returnBy) or non_returnable (NRGP), approved by a head first.
+// direction in:  kind delivery (supplier goods) or returnable_in (contractor tools that must leave again).
+const materialSchema = new Schema({
+  number: { type: String, required: true, unique: true },   // OUT-000123 / IN-000123
+  direction: { type: String, enum: ['in', 'out'], required: true, index: true },
+  kind: { type: String, enum: ['returnable', 'non_returnable', 'delivery', 'returnable_in'], required: true },
+  // out: pending -> approved -> out -> (returnable) partly_returned -> returned; or rejected / cancelled
+  // in:  received -> handed_over (delivery) or closed (returnable_in taken back out)
+  status: { type: String, required: true, index: true,
+    enum: ['pending', 'approved', 'rejected', 'cancelled', 'out', 'partly_returned', 'returned', 'received', 'handed_over', 'closed'] },
+  items: { type: [materialItemSchema], validate: (v) => v.length > 0 },
+  party: { name: { type: String, trim: true, default: '' }, company: { type: String, trim: true, default: '' }, mobile: String },
+  department: { type: String, trim: true, default: '' },
+  purpose: { type: String, trim: true, default: '' },
+  note: { type: String, trim: true, default: '' },
+  vehicle: { number: { type: String, default: '' }, driver: { type: String, default: '' }, driverMobile: String, transporter: { type: String, default: '' } },
+  docs: { dc: { type: String, default: '' }, invoice: { type: String, default: '' }, po: { type: String, default: '' }, eway: { type: String, default: '' } },
+  returnBy: { type: String },                                  // YYYY-MM-DD, returnable passes
+  approver: { type: Schema.Types.ObjectId, ref: 'Host' },     // the head who approves an outward pass
+  decidedAt: Date, decidedBy: String, decisionNote: String,
+  returns: { type: [materialReturnSchema], default: undefined },
+  handedTo: String, handedAt: Date,
+  movements: { type: [movementSchema], default: undefined },
+  photos: { type: [String], default: undefined },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  createdByName: String,
+}, opts);
+materialSchema.index({ kind: 1, status: 1, returnBy: 1 });
+materialSchema.index({ createdAt: -1 });
+
+// Single-use links for decisions other than a visitor's (a material pass today). Only a hash is kept.
+const actionTokenSchema = new Schema({
+  kind: { type: String, enum: ['material'], required: true },
+  ref: { type: Schema.Types.ObjectId, required: true, index: true },
+  tokenHash: { type: String, required: true, unique: true },
+  expiresAt: { type: Date, required: true },
+  usedAt: Date,
+}, { versionKey: false, timestamps: true });
+
 // A visitor the admin expects: at the gate they are let in without waiting for the host.
 const inviteSchema = new Schema({
   firstName: { type: String, required: true, trim: true },
@@ -224,6 +278,8 @@ module.exports = {
   User: mongoose.model('User', userSchema),
   Gate: mongoose.model('Gate', gateSchema),
   Group: mongoose.model('Group', groupSchema),
+  Material: mongoose.model('Material', materialSchema),
+  ActionToken: mongoose.model('ActionToken', actionTokenSchema),
   Guest: mongoose.model('Guest', guestSchema),
   Host: mongoose.model('Host', hostSchema),
   Visit: mongoose.model('Visit', visitSchema),

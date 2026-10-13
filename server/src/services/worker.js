@@ -23,15 +23,19 @@ async function processOutbox() {
     try {
       if (job.kind === 'sms') {
         job.providerRef = await sendSms(job.to, job.body, job.vars || {});
+      } else if (job.kind === 'telegram' && job.vars?.plain) {
+        job.providerRef = String((await telegram.say(job.to, job.body, { disable_web_page_preview: true })).message_id);
+      } else if (job.kind === 'whatsapp' && job.vars?.plain) {
+        job.providerRef = String((await whatsapp.say(job.to, job.body)).messages?.[0]?.id || 'accepted');
       } else if (job.kind === 'telegram') {
-        const token = /\/approve\/([\w-]+)/.exec(job.body)?.[1];
+        const token = /\/approve(?:-material)?\/([\w-]+)/.exec(job.body)?.[1];
         if (!token) throw new Error('Approval link missing from message');
-        job.providerRef = await telegram.sendApproval(job.to, job.body, token);
+        job.providerRef = await telegram.sendApproval(job.to, job.body, token, job.vars?.prefix || '');
       } else if (job.kind === 'whatsapp') {
-        const token = /\/approve\/([\w-]+)/.exec(job.body)?.[1];
+        const token = /\/approve(?:-material)?\/([\w-]+)/.exec(job.body)?.[1];
         if (!token) throw new Error('Approval link missing from message');
-        const visit = await Visit.findById(job.visit, 'photoPath').lean();
-        job.providerRef = await whatsapp.sendApproval(job.to, job.body, token, visit?.photoPath);
+        const visit = job.visit ? await Visit.findById(job.visit, 'photoPath').lean() : null;
+        job.providerRef = await whatsapp.sendApproval(job.to, job.body, token, visit?.photoPath, job.vars?.prefix || '');
       } else if (job.kind === 'print') {
         const visit = await Visit.findById(job.visit).populate('host').lean();
         if (!visit) throw new Error('Visit not found');
@@ -45,7 +49,7 @@ async function processOutbox() {
       job.status = 'sent';
       job.sentAt = new Date();
       job.lastError = undefined;
-      publish(`${job.kind}.sent`, { visitId: String(job.visit) });
+      publish(`${job.kind}.sent`, { visitId: job.visit ? String(job.visit) : undefined });
     } catch (err) {
       job.attempts = err.permanent ? config.worker.maxAttempts : job.attempts + 1;
       job.lastError = String(err.message || err).slice(0, 300);

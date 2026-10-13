@@ -39,7 +39,8 @@ async function uploadJpeg(file) {
 }
 
 // The approval request. `token` is the single-use approval token; it rides in the button ids.
-async function sendApproval(to, text, token, photoPath) {
+// `prefix` 'm' marks a material gate pass (buttons Approve / Decline, link valid 24 hours).
+async function sendApproval(to, text, token, photoPath, prefix = '') {
   let header;
   if (photoPath) {
     try { header = { type: 'image', image: { id: await uploadJpeg(photoPath) } }; } catch (err) { console.error('[whatsapp] photo upload failed:', err.message); }
@@ -50,11 +51,11 @@ async function sendApproval(to, text, token, photoPath) {
       type: 'button',
       ...(header ? { header } : {}),
       body: { text: text.slice(0, 1024) },
-      footer: { text: `Valid for ${config.approvalTtlMinutes} min` },
+      footer: { text: prefix ? 'Valid for 24 hours' : `Valid for ${config.approvalTtlMinutes} min` },
       action: {
         buttons: [
-          { type: 'reply', reply: { id: `a:${token}`, title: '✅ Let them in' } },
-          { type: 'reply', reply: { id: `r:${token}`, title: '❌ Decline' } },
+          { type: 'reply', reply: { id: `${prefix}a:${token}`, title: prefix ? '✅ Approve' : '✅ Let them in' } },
+          { type: 'reply', reply: { id: `${prefix}r:${token}`, title: '❌ Decline' } },
         ],
       },
     },

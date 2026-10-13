@@ -7,6 +7,7 @@ import GuardDesk from './pages/GuardDesk.jsx';
 import Admin from './pages/Admin.jsx';
 import Approve from './pages/Approve.jsx';
 import { GuestPass, JoinGroup } from './pages/GuestPass.jsx';
+import ApproveMaterial from './pages/ApproveMaterial.jsx';
 
 const isAdmin = (user) => user?.role === 'admin' || user?.role === 'superadmin';
 const home = (user) => (isAdmin(user) ? '/admin' : '/guard');
@@ -45,6 +46,7 @@ export default function App() {
       <Route path="/approve/:token" element={<Approve />} />
       <Route path="/approve" element={<Approve />} />
       <Route path="/g/:code" element={<GuestPass />} />
+      <Route path="/approve-material/:token" element={<ApproveMaterial />} />
       <Route path="/join/:code" element={<JoinGroup />} />
       <Route path="/login" element={user ? <Navigate to={home(user)} replace /> : <Login onLogin={setUser} />} />
       <Route path="/guard" element={user ? <GuardDesk user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />

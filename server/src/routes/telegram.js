@@ -3,6 +3,7 @@ const express = require('express');
 const { Host, Outbox } = require('../models');
 const telegram = require('../services/telegram');
 const { decide, findByToken } = require('../services/decision');
+const material = require('../services/material');
 const { audit, sha256 } = require('../services/core');
 
 // Telegram calls this for every message to the bot and every button tap. Not behind a login:
@@ -35,6 +36,14 @@ async function onMessage(msg) {
 async function onButton(cb) {
   const chatId = String(cb.message?.chat?.id || '');
   const [kind, token] = String(cb.data || '').split(':');
+  if (kind === 'ma' || kind === 'mr') {
+    const found = token ? await material.findByToken(token) : null;
+    if (!found) return telegram.answer(cb.id, 'This request is no longer valid', true);
+    if (!found.m.approver?.telegramChatId || String(found.m.approver.telegramChatId) !== chatId) return telegram.answer(cb.id, 'This request was not sent to you', true);
+    const r = await material.decideByToken(token, kind === 'ma' ? 'approve' : 'reject', { via: 'telegram' });
+    await telegram.answer(cb.id, r.status === 200 ? (kind === 'ma' ? 'Approved' : 'Declined') : r.body.error, r.status !== 200);
+    return telegram.finish(chatId, cb.message.message_id, `${cb.message.text.split('\n')[0]}\n\n${r.status === 200 ? (kind === 'ma' ? '✅ Approved. Security has been told.' : '❌ Declined. Security has been told.') : r.body.error}`);
+  }
   const decision = kind === 'a' ? 'approve' : kind === 'r' ? 'reject' : null;
   if (!decision || !token) return telegram.answer(cb.id, 'Unknown action');
 

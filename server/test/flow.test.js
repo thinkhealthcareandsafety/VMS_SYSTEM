@@ -1218,3 +1218,129 @@ test('group link: guests add themselves up to a limit, safely; an ended event si
     assert.equal((await Visit.findById(lone._id).lean()).status, 'approved');
   }
 });
+
+test('material: gate passes approved by the head, let out at the gate, returned in parts; deliveries in and handed over', async () => {
+  const ExcelJS = require('exceljs');
+  const { Material, Outbox, Audit, ActionToken } = require('../src/models');
+  const config = require('../src/config');
+  const { siteDay } = require('../src/services/core');
+  const { addDays } = require('../src/services/passes');
+  const today = siteDay();
+  const out = (body, who = guard) => call('POST', '/api/material', {
+    direction: 'out', kind: 'returnable', approverId: hostIds.asha, returnBy: addDays(today, 7), department: 'Engineering', purpose: 'Repair',
+    party: { name: 'Ramesh', company: 'Cool Air Services' }, vehicle: { number: 'mh 12 ab 1234', driver: 'Suresh' }, docs: { dc: 'DC-77' },
+    items: [{ name: 'Split AC compressor', qty: 2, unit: 'nos', serial: 'CMP-1, CMP-2' }, { name: 'Copper pipe', qty: 10, unit: 'metre' }],
+    ...body,
+  }, who);
+
+  // Clear reasons for bad requests.
+  assert.equal((await out({ items: [] })).status, 400);
+  assert.equal((await out({ items: [{ name: 'Thing', qty: 0 }] })).status, 400);
+  assert.equal((await out({ approverId: undefined })).status, 400);
+  assert.equal((await out({ returnBy: '2001-01-01' })).status, 400);
+  assert.equal((await out({ party: {} })).status, 400);
+  assert.equal((await out({ kind: 'delivery' })).status, 400);
+
+  // A returnable pass waits for the head; the gate cannot let it out yet.
+  const p = await out({});
+  assert.equal(p.status, 201);
+  assert.match(p.body.number, /^OUT-\d{6}$/);
+  assert.equal(p.body.status, 'pending');
+  assert.equal(p.body.vehicle.number, 'MH 12 AB 1234');
+  assert.equal(p.body.approvalSentBy, null, 'no WhatsApp or Telegram in this test: an admin decides');
+  assert.match((await call('POST', `/api/material/${p.body.id}/let-out`, {}, guard)).body.error, /waiting for approval/);
+
+  // The head approves from the link (as WhatsApp or Telegram would send it).
+  const raw = 'test-token-material-0001-abcdef';
+  await ActionToken.create({ kind: 'material', ref: p.body.id, tokenHash: require('../src/services/core').sha256(raw), expiresAt: new Date(Date.now() + 3600e3) });
+  const seen = await call('GET', `/api/material-approvals/${raw}`);
+  assert.equal(seen.body.state, 'pending');
+  assert.equal(seen.body.items.length, 2);
+  assert.equal((await call('POST', `/api/material-approvals/${raw}/decision`, { decision: 'approve' })).status, 200);
+  assert.equal((await call('POST', `/api/material-approvals/${raw}/decision`, { decision: 'reject' })).status, 409, 'decided once');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(await Audit.exists({ action: 'material.approved', entityId: p.body.id }));
+
+  // Out through the gate, recorded with gate and guard.
+  const gone = await call('POST', `/api/material/${p.body.id}/let-out`, {}, guard);
+  assert.equal(gone.body.status, 'out');
+  assert.equal(gone.body.out.by, 'Gate Guard');
+  assert.equal((await call('POST', `/api/material/${p.body.id}/let-out`, {}, guard)).status, 409, 'only once');
+
+  // Comes back in parts; never more than went out.
+  const [comp, pipe] = gone.body.items;
+  assert.match((await call('POST', `/api/material/${p.body.id}/return`, { items: [{ item: comp.id, qty: 3 }] }, guard)).body.error, /only 2 nos still out/);
+  assert.equal((await call('POST', `/api/material/${p.body.id}/return`, { items: [] }, guard)).status, 400);
+  const part = await call('POST', `/api/material/${p.body.id}/return`, { items: [{ item: comp.id, qty: 1 }, { item: pipe.id, qty: 10 }] }, guard);
+  assert.equal(part.body.status, 'partly_returned');
+  assert.deepEqual(part.body.items.map((i) => i.returnedQty), [1, 10]);
+
+  // Overdue once the date has passed: in the register and its count.
+  await Material.updateOne({ _id: p.body.id }, { returnBy: addDays(today, -1) });
+  const reg = (await call('GET', '/api/material?view=overdue', null, guard)).body;
+  assert.ok(reg.rows.some((r) => r.id === p.body.id && r.overdue));
+  assert.equal(reg.counts.overdue, 1);
+  const done = await call('POST', `/api/material/${p.body.id}/return`, { items: [{ item: comp.id, qty: 1 }] }, guard);
+  assert.equal(done.body.status, 'returned');
+  assert.equal(done.body.overdue, false);
+  assert.equal(done.body.movements.filter((m) => m.kind === 'in').length, 2);
+
+  // Non-returnable: an admin may approve at once; nothing can be "returned" on it; a declined pass never leaves.
+  const scrap = await out({ kind: 'non_returnable', returnBy: undefined, purpose: 'Scrap sale', items: [{ name: 'Old mattresses', qty: 12, unit: 'nos' }], approveNow: true }, admin);
+  assert.equal(scrap.body.status, 'approved');
+  assert.equal((await out({ kind: 'non_returnable', returnBy: undefined, approveNow: true }, guard)).body.status, 'pending', 'a guard cannot approve');
+  await call('POST', `/api/material/${scrap.body.id}/let-out`, {}, guard);
+  assert.match((await call('POST', `/api/material/${scrap.body.id}/return`, { items: [{ item: scrap.body.items[0].id, qty: 1 }] }, guard)).body.error, /Only a returnable/);
+  const declined = await out({});
+  assert.equal((await call('POST', `/api/material/${declined.body.id}/decision`, { decision: 'reject', note: 'Use the vendor pickup' }, admin)).status, 200);
+  assert.match((await call('POST', `/api/material/${declined.body.id}/let-out`, {}, guard)).body.error, /declined/);
+  assert.equal((await call('POST', `/api/material/${declined.body.id}/decision`, { decision: 'approve' }, guard)).status, 403);
+
+  // The head taps Approve on WhatsApp: only from their own number.
+  const saved = { ...config.whatsapp };
+  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  try {
+    const viaWa = await out({});
+    assert.equal(viaWa.body.approvalSentBy, 'whatsapp');
+    const job = await Outbox.findOne({ material: viaWa.body.id }).lean();
+    assert.equal(job.vars.prefix, 'm');
+    const tok = /approve-material\/([\w-]+)/.exec(job.body)[1];
+    const tap = (from, id) => fetch(`${base}/api/whatsapp/webhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from, id: `w${Math.random()}`, type: 'interactive', interactive: { type: 'button_reply', button_reply: { id } } }] } }] }] }),
+    });
+    await tap('919111111111', `ma:${tok}`);
+    assert.equal((await Material.findById(viaWa.body.id).lean()).status, 'pending', 'a stranger cannot approve');
+    await tap('919000000001', `ma:${tok}`);
+    assert.equal((await Material.findById(viaWa.body.id).lean()).status, 'approved');
+  } finally { Object.assign(config.whatsapp, saved); }
+
+  // Inward: a delivery recorded at the gate and handed to stores; contractor tools in, and later out again.
+  const dl = await call('POST', '/api/material', {
+    direction: 'in', kind: 'delivery', party: { company: 'Fresh Farms' }, department: 'Kitchen', docs: { invoice: 'INV-9', po: 'PO-12' },
+    items: [{ name: 'Vegetables', qty: 40, unit: 'kg' }], photos: [jpeg()],
+  }, guard);
+  assert.equal(dl.status, 201);
+  assert.match(dl.body.number, /^IN-\d{6}$/);
+  assert.equal(dl.body.status, 'received');
+  assert.equal(dl.body.photos.length, 1);
+  assert.equal((await fetch(`${base}${dl.body.photos[0]}`, { headers: { Cookie: guard } })).status, 200);
+  assert.equal((await call('POST', `/api/material/${dl.body.id}/hand-over`, { to: '' }, guard)).status, 400);
+  assert.equal((await call('POST', `/api/material/${dl.body.id}/hand-over`, { to: 'Store keeper Anil' }, guard)).body.status, 'handed_over');
+  const tools = await call('POST', '/api/material', { direction: 'in', kind: 'returnable_in', party: { name: 'Vikas', company: 'BuildCo' }, items: [{ name: 'Drill machine', qty: 1, serial: 'DR-55' }] }, guard);
+  assert.equal((await call('GET', '/api/material?view=inside', null, guard)).body.counts.inside, 1);
+  assert.equal((await call('POST', `/api/material/${tools.body.id}/let-out`, {}, guard)).body.status, 'closed');
+
+  // Search and the Excel register (one row per item).
+  const found = (await call('GET', '/api/material?q=CMP-2', null, guard)).body.rows;
+  assert.ok(found.some((r) => r.id === p.body.id), 'search finds a pass by serial number');
+  const xl = await fetch(`${base}/api/material/export.xlsx`, { headers: { Cookie: admin } });
+  assert.equal(xl.status, 200);
+  assert.equal((await fetch(`${base}/api/material/export.xlsx`, { headers: { Cookie: guard } })).status, 403);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(Buffer.from(await xl.arrayBuffer()));
+  const ws = book.getWorksheet('Material');
+  const items = [];
+  ws.eachRow((r, i) => { if (i > 1) items.push(r.getCell(6).text); });
+  assert.ok(items.includes('Split AC compressor') && items.includes('Copper pipe') && items.includes('Vegetables'));
+});

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, BadgeCheck, Bell, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
-  PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
+  Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
@@ -15,6 +15,7 @@ import MobileVerify from '../components/MobileVerify.jsx';
 import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
 import PassScanner from '../components/PassScanner.jsx';
 import GroupGate from '../components/GroupGate.jsx';
+import MaterialBoard from '../components/Material.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 
@@ -76,6 +77,9 @@ export default function GuardDesk({ user, onLogout }) {
   const [groupId, setGroupId] = useState(null);    // a guest group open in the main column
   const [scanning, setScanning] = useState(false); // the pass scanner
   const [groups, setGroups] = useState([]);        // groups that can be let in today
+  // The desk handles people or material; the choice is remembered on this device.
+  const [mode, setMode] = useState(() => { try { return localStorage.getItem('vms.desk.mode') === 'material' ? 'material' : 'visitors'; } catch { return 'visitors'; } });
+  const switchMode = (m) => { setMode(m); try { localStorage.setItem('vms.desk.mode', m); } catch { /* storage blocked */ } };
   const [autoPrint, setAutoPrint] = useState(() => { try { return localStorage.getItem(AUTOPRINT_KEY) === '1'; } catch { return false; } });
   const printingRef = useRef(null);
   printingRef.current = printing;
@@ -227,12 +231,19 @@ export default function GuardDesk({ user, onLogout }) {
             </small>
           </div>
         </div>
+        <div className="desk-mode seg" role="tablist" aria-label="Desk">
+          <button role="tab" aria-selected={mode === 'visitors'} aria-pressed={mode === 'visitors'} onClick={() => switchMode('visitors')}><Users size={15} /> Visitors</button>
+          <button role="tab" aria-selected={mode === 'material'} aria-pressed={mode === 'material'} onClick={() => switchMode('material')}><Package size={15} /> Material</button>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {groups.length > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)}><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
+          {mode === 'visitors' && groups.length > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)}><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
           <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
         </div>
       </header>
 
+      {mode === 'material' ? (
+        <main className="guard-main"><MaterialBoard liveTick={liveTick} /></main>
+      ) : (
       <main className="guard-main">
         <div className="guard-split">
           <section className={tab === 'checkin' ? '' : 'hide-mobile'} aria-label="Check in">
@@ -282,8 +293,9 @@ export default function GuardDesk({ user, onLogout }) {
         </div>
       </main>
 
+      )}
       <PassScanner open={scanning} onClose={() => setScanning(false)} onChanged={refreshInside} />
-      <nav className="tabbar" role="tablist" aria-label="Guard views">
+      {mode === 'visitors' && <nav className="tabbar" role="tablist" aria-label="Guard views">
         <button role="tab" aria-selected={tab === 'checkin'} onClick={() => setTab('checkin')}><UserPlus />Check in</button>
         <button role="tab" aria-selected={tab === 'waiting'} onClick={() => setTab('waiting')}>
           <Bell />Waiting
@@ -293,7 +305,7 @@ export default function GuardDesk({ user, onLogout }) {
           <Users />On premises
           {insideCount > 0 && <span className="count">{insideCount}</span>}
         </button>
-      </nav>
+      </nav>}
 
       <PrintSheet visit={printing} siteName={user.siteName} onDone={donePrinting} />
     </div>

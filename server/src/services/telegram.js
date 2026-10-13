@@ -46,13 +46,13 @@ async function init() {
 const say = (chatId, text, extra) => call('sendMessage', { chat_id: chatId, text, ...extra });
 
 // The approval request. `token` is the single-use approval token; it rides in the button data.
-async function sendApproval(chatId, text, token) {
+async function sendApproval(chatId, text, token, prefix = '') {
   const msg = await say(chatId, text, {
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
-        { text: '✅ Let them in', callback_data: `a:${token}` },
-        { text: '❌ Decline', callback_data: `r:${token}` },
+        { text: prefix ? '✅ Approve' : '✅ Let them in', callback_data: `${prefix}a:${token}` },
+        { text: '❌ Decline', callback_data: `${prefix}r:${token}` },
       ]],
     },
   });
