@@ -122,7 +122,8 @@ button { font: inherit; color: inherit; }
 .input::placeholder, .textarea::placeholder { color: var(--text-3); }
 .input:hover, .select:hover, .textarea:hover { border-color: #b8bec8; }
 .input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 135, 106, 0.16); }
-.input[aria-invalid='true'] { border-color: var(--bad); }
+.input[aria-invalid='true'] { border-color: var(--bad); background: #fffafa; }
+.input[aria-invalid='true']:focus { box-shadow: 0 0 0 3px rgba(184, 50, 43, 0.16); }
 .select { appearance: none; padding-right: 34px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23687080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
 .input-group { position: relative; display: flex; align-items: center; }
 .input-group > svg { position: absolute; left: 12px; width: 16px; height: 16px; color: var(--text-3); pointer-events: none; }
@@ -303,7 +304,7 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .host-row .tick { color: var(--accent); width: 20px; height: 20px; }
 .checkin { display: grid; gap: 16px; }
 .checkin > .card { scroll-margin-top: 76px; transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease); }
-.card.needs { border-color: #e9b98a; box-shadow: 0 0 0 3px var(--warn-soft); }
+.card.needs { border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
 .sec-head { display: flex; align-items: center; gap: 10px; }
 .sec-head h2 { font-size: 16px; }
 .sec-n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px; font-weight: 600; background: var(--sunken); color: var(--text-2); font-variant-numeric: tabular-nums; transition: background 200ms var(--ease), color 200ms var(--ease); }
@@ -324,7 +325,7 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 /* Sticks to the bottom of the form column, so it lines up with the form and never covers it once scrolled to the end. */
 .footer-bar { position: sticky; z-index: 15; bottom: calc(62px + env(safe-area-inset-bottom)); margin: 0 -16px; padding: 14px 16px 12px; background: linear-gradient(to top, var(--bg) 78%, rgba(244, 245, 247, 0)); }
 .footer-bar .inner { display: grid; grid-template-columns: auto 1fr; gap: 10px; }
-.footer-bar .need { grid-column: 1 / -1; font-size: 13px; color: var(--text-3); text-align: center; }
+.footer-bar .need { grid-column: 1 / -1; font-size: 13.5px; font-weight: 500; color: var(--bad); text-align: center; }
 
 /* Camera */
 .camera { position: relative; overflow: hidden; border-radius: 18px; background: #0b0d10; aspect-ratio: 4 / 3; box-shadow: var(--shadow); }
@@ -735,5 +736,37 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .otp-head .grow { display: grid; gap: 2px; min-width: 0; }
 .otp-head small { font-size: 13px; color: var(--text-2); }
 .otp-entry { display: flex; gap: 8px; flex-wrap: wrap; }
-.otp-input { flex: 1 1 140px; min-width: 0; letter-spacing: 0.3em; font-size: 20px; text-align: center; }
+
+/* Digit boxes (mobile number, OTP): one invisible input over the boxes does the typing. */
+.mobile-boxes { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mobile-cc { flex: none; height: 52px; padding: 0 10px; display: grid; place-items: center; border-radius: 10px; background: var(--sunken); color: var(--text-2); font-size: 16px; font-weight: 500; }
+.digits { position: relative; display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.otp-entry .digits { flex: 1 1 260px; }
+.digit {
+  flex: 1 1 0; min-width: 0; max-width: 46px; height: 52px; display: grid; place-items: center;
+  border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface);
+  color: var(--text); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+  transition: border-color 0.12s, box-shadow 0.12s, background-color 0.12s;
+}
+.digits-lg .digit { max-width: 52px; height: 56px; font-size: 24px; }
+.digits-gap { flex: 0 0 8px; }
+.digits:hover .digit:not(.is-active):not(.is-filled) { border-color: #b8bec8; }
+.digit.is-filled { border-color: #9aa1ad; }
+.digit.is-active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 135, 106, 0.16); }
+.digit.is-active:not(.is-filled)::after { content: ''; width: 2px; height: 24px; border-radius: 1px; background: var(--accent); animation: digit-caret 1s steps(1) infinite; }
+@keyframes digit-caret { 50% { opacity: 0; } }
+.digits.is-invalid .digit { border-color: var(--bad); background: var(--bad-soft); }
+.digits.is-invalid .digit.is-active { box-shadow: 0 0 0 3px rgba(184, 50, 43, 0.16); }
+.digits.is-invalid .digit.is-active::after { background: var(--bad); }
+.digits-input {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0;
+  background: transparent; color: transparent; caret-color: transparent; font-size: 16px; cursor: text;
+}
+@media (prefers-reduced-motion: reduce) { .digit.is-active::after { animation: none; } .digit { transition: none; } }
+@media (max-width: 480px) {
+  .digits { gap: 4px; }
+  .digits-gap { flex-basis: 4px; }
+  .digit, .digits-lg .digit { height: 46px; border-radius: 8px; font-size: 19px; }
+  .mobile-cc { height: 46px; padding: 0 7px; font-size: 14px; }
+}
 .otp-skip { justify-self: start; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 13px; color: var(--text-3); text-decoration: underline; cursor: pointer; }

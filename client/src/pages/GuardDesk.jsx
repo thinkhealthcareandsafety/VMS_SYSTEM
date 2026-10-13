@@ -11,6 +11,7 @@ import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
 import MobileVerify from '../components/MobileVerify.jsx';
+import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 
@@ -497,17 +498,16 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
 
       <section className={flag('visitor')} ref={sec.visitor} aria-labelledby="sec-visitor">
         <SectionHead id="sec-visitor" n={1} title="Visitor" done={done('visitor')} />
-        <label className="field">
-          <span>Mobile number</span>
-          <div className="input-group">
-            <span className="prefix">+91</span>
-            <input className="input num" inputMode="numeric" autoComplete="off" maxLength={11} placeholder="98765 43210"
-              aria-invalid={digits.length === 10 && !mobileOk}
-              value={digits.length > 5 ? `${digits.slice(0, 5)} ${digits.slice(5)}` : digits}
-              onChange={(e) => update({ mobile: e.target.value.replace(/\D/g, '').slice(0, 10) })} autoFocus />
+        <div className="field">
+          <span id="lbl-mobile">Mobile number</span>
+          <div className="mobile-boxes" role="group" aria-labelledby="lbl-mobile">
+            <span className="mobile-cc">+91</span>
+            <DigitBoxes length={10} gapAfter={[4]} value={digits} clean={cleanMobile} label="Mobile number, 10 digits" autoFocus
+              invalid={(digits.length === 10 || tried) && !mobileOk}
+              onChange={(d) => update({ mobile: d })} />
           </div>
           {digits.length === 10 && !mobileOk && <span className="hint err">Indian mobile numbers start with 6, 7, 8 or 9.</span>}
-        </label>
+        </div>
         {mobileOk && otp.mode !== 'off' && !active && !blocked && !otp.verified && (
           <MobileVerify mobile={digits} mode={otp.mode} canSkip={otp.mode === 'optional' || isAdmin} value={verify} onChange={setVerify} />
         )}
@@ -544,8 +544,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
           </div>
         )}
         <div className="grid-2">
-          <label className="field"><span>First name</span><input className="input" value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
-          <label className="field"><span>Last name</span><input className="input" value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
+          <label className="field"><span>First name</span><input className="input" aria-invalid={tried && !NAME_RE.test(form.firstName.trim())} value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
+          <label className="field"><span>Last name</span><input className="input" aria-invalid={tried && !NAME_RE.test(form.lastName.trim())} value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
         </div>
         <div className="field">
           <span id="lbl-gender">Gender</span>
@@ -555,7 +555,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin }) {
             ))}
           </div>
         </div>
-        <label className="field"><span>Company or coming from</span><input className="input" value={form.company} onChange={(e) => update({ company: e.target.value })} autoComplete="off" maxLength={100} placeholder="e.g. Blue Dart, Infosys, Personal" /></label>
+        <label className="field"><span>Company or coming from</span><input className="input" aria-invalid={tried && !form.company.trim()} value={form.company} onChange={(e) => update({ company: e.target.value })} autoComplete="off" maxLength={100} placeholder="e.g. Blue Dart, Infosys, Personal" /></label>
         <label className="field">
           <span>Email <span className="faint">· optional</span></span>
           <input className="input" type="email" inputMode="email" value={form.email} onChange={(e) => update({ email: e.target.value })} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={120} aria-invalid={Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim())} />

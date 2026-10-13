@@ -414,10 +414,15 @@ test('mobile OTP: off by default, then optional and required modes, limits and e
     messaging.sendOtp = async () => { throw new Error('gateway down'); };
     assert.equal((await call('POST', '/api/visits/otp/send', { mobile: '9855500007' }, guard)).status, 502);
 
-    // A number verified recently is not asked again; the lookup says so.
+    // Right after the code, the same check-in is not asked again; on a later visit the code is asked every time.
     assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, 'otp', 'still fresh right after the code');
     await Otp.updateMany({ mobile: '+91' + mobile }, { verifiedAt: new Date(Date.now() - 3600e3) });
+    assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, null, 'asked again on the next visit');
+    // A site that sets OTP_VERIFIED_DAYS trusts a number verified within that many days.
+    const config = require('../src/config');
+    config.otp.verifiedDays = 90;
     const again = await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard);
+    config.otp.verifiedDays = 0;
     assert.equal(again.body.otp.verified, 'returning');
 
     // Expected visitors come with a number the host gave us: no code.

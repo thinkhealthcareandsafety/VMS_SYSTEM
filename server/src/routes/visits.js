@@ -124,8 +124,10 @@ const otpHash = (mobile, code) => sha256(`otp:${mobile}:${code}:${process.env.JW
 async function verifiedVia(mobile, invite) {
   if (invite) return 'expected'; // the host gave us this number
   if (await Otp.exists({ mobile, verifiedAt: { $gte: new Date(Date.now() - OTP_FRESH_MS) } })) return 'otp';
-  const since = new Date(Date.now() - config.otp.verifiedDays * 86400e3);
-  if (await Visit.exists({ mobile, mobileVerified: 'otp', mobileVerifiedAt: { $gte: since } })) return 'returning';
+  if (config.otp.verifiedDays > 0) {
+    const since = new Date(Date.now() - config.otp.verifiedDays * 86400e3);
+    if (await Visit.exists({ mobile, mobileVerified: 'otp', mobileVerifiedAt: { $gte: since } })) return 'returning';
+  }
   return null;
 }
 

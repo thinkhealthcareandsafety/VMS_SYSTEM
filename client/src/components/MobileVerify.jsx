@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, MessageSquare, RotateCcw, ShieldAlert } from 'lucide-react';
 import { api } from '../api.js';
 import { Spinner } from './ui.jsx';
+import DigitBoxes from './DigitBoxes.jsx';
 
 const RESEND_AFTER = 30; // seconds; the server enforces the same gap
 
@@ -68,10 +69,10 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
       </div>
       {sentAt && (
         <div className="otp-entry">
-          <input
-            ref={input} className="input num otp-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6-digit code" aria-label="6-digit code"
-            value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            onKeyDown={(e) => { if (e.key === 'Enter' && code.length === 6 && !busy) { e.preventDefault(); check(); } }}
+          <DigitBoxes
+            inputRef={input} length={6} size="lg" autoComplete="one-time-code" label="6-digit code" invalid={Boolean(error)}
+            value={code} onChange={(c) => { setCode(c); if (error) setError(''); }}
+            onEnter={() => { if (code.length === 6 && !busy) check(); }}
           />
           <button type="button" className="btn btn-primary" disabled={code.length !== 6 || Boolean(busy)} onClick={check}>{busy === 'check' ? <Spinner /> : 'Verify'}</button>
           <button type="button" className="btn" disabled={wait > 0 || Boolean(busy)} onClick={send}><RotateCcw />{wait > 0 ? `${wait}s` : 'Resend'}</button>
