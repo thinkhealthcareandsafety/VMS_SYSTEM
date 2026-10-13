@@ -21,7 +21,9 @@ export default function Approve() {
   // /approve/<code> (Telegram) or /approve?t=<code> (SMS: the DLT-registered link form)
   const params = useParams();
   const [search] = useSearchParams();
-  const token = params.token || search.get('t') || '';
+  // /approve/<code> (Telegram), /approve?<code> (SMS: the DLT-registered form) or /approve?t=<code>
+  const rawSearch = window.location.search.replace(/^\?/, '');
+  const token = params.token || search.get('t') || (/^[\w-]{16,64}$/.test(rawSearch) ? rawSearch : '');
   const [info, setInfo] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState('');

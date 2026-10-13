@@ -52,7 +52,7 @@ async function issueApprovalLink(visit, host, visitorName, company) {
   const expiresAt = new Date(Date.now() + config.approvalTtlMinutes * 60e3);
   await ApprovalToken.create({ visit: visit._id, tokenHash: sha256(raw), expiresAt });
   const link = `${config.appBaseUrl}/approve/${raw}`;           // Telegram
-  const smsLink = `${config.appBaseUrl}/approve?t=${raw}`;      // SMS: operators need the changing part after a "?"
+  const smsLink = `${config.appBaseUrl}/approve?${raw}`;        // SMS: operators need the changing part right after a "?"
   const from = /^(personal|self|none|na|n\/a|-)$/i.test(company) ? '' : ` from ${company}`;
   const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${smsLink} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
   if (config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId) {
