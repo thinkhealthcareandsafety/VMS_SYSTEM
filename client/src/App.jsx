@@ -41,6 +41,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/approve/:token" element={<Approve />} />
+      <Route path="/approve" element={<Approve />} />
       <Route path="/login" element={user ? <Navigate to={home(user)} replace /> : <Login onLogin={setUser} />} />
       <Route path="/guard" element={user ? <GuardDesk user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />
       <Route path="/admin" element={user?.role === 'admin' ? <Admin user={user} onLogout={logout} /> : <Navigate to={user ? '/guard' : '/login'} replace />} />

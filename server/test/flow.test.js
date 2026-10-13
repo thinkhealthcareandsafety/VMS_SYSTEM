@@ -95,7 +95,7 @@ after(async () => {
 async function tokenFor(visitId) {
   const { Outbox } = require('../src/models');
   const sms = await Outbox.findOne({ kind: 'sms', visit: visitId }).sort({ _id: -1 });
-  return /approve\/([\w-]+)/.exec(sms.body)[1];
+  return /approve(?:\/|\?t=)([\w-]+)/.exec(sms.body)[1];
 }
 
 // Each test visitor gets their own number: one person cannot be waiting or inside twice.

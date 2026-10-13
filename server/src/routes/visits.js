@@ -48,17 +48,18 @@ const publicVisit = (v, host, withMobile = false) => ({
 // Creates a fresh single-use approval link and queues the SMS to the host.
 async function issueApprovalLink(visit, host, visitorName, company) {
   await ApprovalToken.updateMany({ visit: visit._id, usedAt: { $exists: false } }, { usedAt: new Date() });
-  const raw = crypto.randomBytes(24).toString('base64url');
+  const raw = crypto.randomBytes(18).toString('base64url'); // 24 characters: short enough for an SMS link variable
   const expiresAt = new Date(Date.now() + config.approvalTtlMinutes * 60e3);
   await ApprovalToken.create({ visit: visit._id, tokenHash: sha256(raw), expiresAt });
-  const link = `${config.appBaseUrl}/approve/${raw}`;
+  const link = `${config.appBaseUrl}/approve/${raw}`;           // Telegram
+  const smsLink = `${config.appBaseUrl}/approve?t=${raw}`;      // SMS: operators need the changing part after a "?"
   const from = /^(personal|self|none|na|n\/a|-)$/i.test(company) ? '' : ` from ${company}`;
-  const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${link} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
+  const body = `${visitorName}${from} is at the gate to meet you. Approve or reject: ${smsLink} Link valid ${config.approvalTtlMinutes} min. -${config.sms.senderId}`;
   if (config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId) {
     const text = `🚪 ${visitorName}${from} is at the gate to meet you.\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.`;
     await Outbox.create({ kind: 'telegram', visit: visit._id, to: String(host.telegramChatId), body: text });
   } else {
-    await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link, minutes: config.approvalTtlMinutes } });
+    await Outbox.create({ kind: 'sms', visit: visit._id, to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, minutes: config.approvalTtlMinutes } });
   }
 }
 

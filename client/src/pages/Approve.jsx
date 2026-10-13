@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { Building2, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
 import { Logo, Spinner, useTitle } from '../components/ui.jsx';
@@ -18,7 +18,10 @@ const CLOSED = {
 };
 
 export default function Approve() {
-  const { token } = useParams();
+  // /approve/<code> (Telegram) or /approve?t=<code> (SMS: the DLT-registered link form)
+  const params = useParams();
+  const [search] = useSearchParams();
+  const token = params.token || search.get('t') || '';
   const [info, setInfo] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState('');
