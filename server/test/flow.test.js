@@ -377,7 +377,9 @@ test('mobile OTP: off by default, then optional and required modes, limits and e
     assert.equal(sent.length, 1);
     assert.match(sent[0].code, /^\d{6}$/);
     assert.equal((await Otp.findOne({ mobile: '+91' + mobile }).lean()).codeHash.includes(sent[0].code), false);
-    assert.equal((await call('POST', '/api/visits/otp/send', { mobile }, guard)).status, 429, 'resend needs a short wait');
+    const soon = await call('POST', '/api/visits/otp/send', { mobile }, guard);
+    assert.equal(soon.status, 429, 'resend needs a short wait');
+    assert.equal(soon.body.code, 'otp_recent', 'the screen opens the code boxes for the code already sent');
     const wrong = sent[0].code === '000000' ? '111111' : '000000';
     const bad = await call('POST', '/api/visits/otp/verify', { mobile, code: wrong }, guard);
     assert.equal(bad.status, 400);

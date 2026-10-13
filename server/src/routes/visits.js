@@ -139,10 +139,10 @@ router.post('/otp/send', requireRole('guard', 'admin'), async (req, res) => {
 
   const last = await Otp.findOne({ mobile }).sort({ createdAt: -1 }).lean();
   if (last && Date.now() - new Date(last.createdAt).getTime() < OTP_RESEND_GAP) {
-    return res.status(429).json({ error: 'A code was just sent. Wait a few seconds before sending another.' });
+    return res.status(429).json({ code: 'otp_recent', error: 'A code was just sent. Wait a few seconds before sending another.' });
   }
   if (await Otp.countDocuments({ mobile, createdAt: { $gte: new Date(Date.now() - 3600e3) } }) >= OTP_PER_HOUR) {
-    return res.status(429).json({ error: 'Too many codes for this number. Try again in an hour, or skip verification.' });
+    return res.status(429).json({ code: 'otp_recent', error: 'Too many codes for this number. Try again in an hour, or skip verification.' });
   }
   if (await Otp.countDocuments({ createdAt: { $gte: new Date(Date.now() - 86400e3) } }) >= config.otp.dailyLimit) {
     return res.status(429).json({ error: 'The daily SMS limit was reached. Skip verification for now and tell your admin.' });

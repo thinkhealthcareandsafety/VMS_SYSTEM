@@ -13,11 +13,12 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState('');         // 'send' | 'check'
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState(''); // a code is already on its way (sent before the page was left or reloaded)
   const [test, setTest] = useState(false);      // server has no SMS provider yet: the code is only in its log
   const [, tick] = useState(0);
   const input = useRef(null);
 
-  useEffect(() => { setSentAt(null); setCode(''); setError(''); setBusy(''); }, [mobile]);
+  useEffect(() => { setSentAt(null); setCode(''); setError(''); setNotice(''); setBusy(''); }, [mobile]);
   useEffect(() => {
     if (!sentAt) return undefined;
     const t = setInterval(() => tick((n) => n + 1), 1000);
@@ -28,11 +29,17 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
   const wait = sentAt ? Math.max(0, RESEND_AFTER - Math.round((Date.now() - sentAt) / 1000)) : 0;
 
   const send = async () => {
-    setBusy('send'); setError('');
+    setBusy('send'); setError(''); setNotice('');
     try {
       const r = await api('/api/visits/otp/send', { method: 'POST', body: { mobile } });
       setSentAt(Date.now()); setCode(''); setTest(!r.live);
-    } catch (e) { setError(e.message); } finally { setBusy(''); }
+    } catch (e) {
+      // A code sent moments ago (maybe before the page was reloaded) still works: open the boxes for it.
+      if (e.data?.code === 'otp_recent') {
+        setSentAt((t) => t || Date.now());
+        setNotice(/just sent/.test(e.message) ? 'A code was already sent to this number. Ask the visitor for it and enter it below.' : e.message);
+      } else setError(e.message);
+    } finally { setBusy(''); }
   };
   const check = async () => {
     setBusy('check'); setError('');
@@ -79,6 +86,7 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
         </div>
       )}
       {test && <p className="hint">Test mode: no SMS provider is connected yet, so no text was sent. The code is in the server log.</p>}
+      {notice && !error && <p className="hint" role="status">{notice}</p>}
       {error && <p className="hint err" role="alert">{error}</p>}
       {canSkip && (
         <button type="button" className="otp-skip" onClick={() => onChange('skipped')}>Can’t verify now (no signal, no phone)? Skip</button>
