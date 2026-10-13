@@ -28,6 +28,8 @@ function createApp() {
   app.use(cookieParser());
   app.use('/api', rateLimit({ windowMs: 60e3, limit: 300, standardHeaders: true, legacyHeaders: false }));
 
+  // Public privacy policy, linked from the WhatsApp (Meta) app settings.
+  app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'privacy.html')));
   app.get('/api/health', (req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
   app.get('/api/events', requireRole('guard', 'admin'), stream);
   app.use('/api/auth', require('./routes/auth'));
