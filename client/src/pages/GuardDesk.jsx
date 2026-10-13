@@ -129,6 +129,12 @@ export default function GuardDesk({ user, onLogout }) {
     api(`/api/visits/${v.id}/printed`, { method: 'POST' }).catch(() => {});
     toast(`Pass ${v.dailyNumber} sent to the printer.`);
   }, [dismiss, toast]);
+  // A print click shows at once that something is happening: the system print dialog can take a moment, mostly on a Mac.
+  const printPass = useCallback((v) => {
+    if (printingRef.current?.id === v.id) return;
+    toast(`Preparing pass ${v.dailyNumber}…`);
+    setPrinting(v);
+  }, [toast]);
   const toggleAutoPrint = () => setAutoPrint((on) => {
     const next = !on;
     try { localStorage.setItem(AUTOPRINT_KEY, next ? '1' : '0'); } catch { /* storage blocked */ }
@@ -174,6 +180,8 @@ export default function GuardDesk({ user, onLogout }) {
   };
 
   const tray = useMemo(() => sortTray((queue || []).filter((r) => !dismissed.has(r.id))), [queue, dismissed]);
+  // Fetch each approved visitor's photo as soon as the approval lands, so Print goes straight to the print dialog.
+  useEffect(() => { for (const r of tray) if (r.status === 'approved') photoData(r.id); }, [tray]);
   const insideCount = inside?.count ?? 0;
   const needsAttention = tray.filter((r) => r.status !== 'pending').length;
   useTitle(needsAttention ? `(${needsAttention}) Guard desk` : 'Guard desk');
@@ -207,7 +215,7 @@ export default function GuardDesk({ user, onLogout }) {
                 onResend={() => act.resend(open)}
                 onCancel={() => act.cancel(open)}
                 onReprint={() => act.reprint(open)}
-                onPrint={() => setPrinting(open)}
+                onPrint={() => printPass(open)}
               />
             ) : (
               <CheckInForm
@@ -231,10 +239,10 @@ export default function GuardDesk({ user, onLogout }) {
           </section>
           <aside className={`guard-side ${tab === 'checkin' ? 'hide-mobile' : ''}`} aria-label="Waiting and on premises">
             <div className={tab === 'waiting' ? '' : 'hide-mobile'}>
-              <WaitingTray rows={tray} loaded={Boolean(queue)} sentAt={sentAt} openId={open?.id} onOpen={openVisit} act={act} onDismiss={dismiss} onPrint={setPrinting} />
+              <WaitingTray rows={tray} loaded={Boolean(queue)} sentAt={sentAt} openId={open?.id} onOpen={openVisit} act={act} onDismiss={dismiss} onPrint={printPass} />
             </div>
             <div className={tab === 'inside' ? '' : 'hide-mobile'}>
-              <InsideList data={inside} onChanged={refreshInside} onPrint={setPrinting} />
+              <InsideList data={inside} onChanged={refreshInside} onPrint={printPass} />
             </div>
           </aside>
         </div>
@@ -780,9 +788,20 @@ body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/
 const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // The photo as a data URL, so the print page needs no further request. Never waits long: a pass without a photo still prints.
-async function photoData(id) {
+// Photos for the printed pass, kept for the session so a print never waits on the network twice.
+const photoCache = new Map(); // visit id -> Promise<data URL or ''>
+function photoData(id, known) {
+  if (typeof known === 'string' && known.startsWith('data:')) return Promise.resolve(known); // taken on this device
+  if (!photoCache.has(id)) {
+    if (photoCache.size > 100) photoCache.clear();
+    photoCache.set(id, fetchPhoto(id).then((d) => { if (!d) photoCache.delete(id); return d; }));
+  }
+  return photoCache.get(id);
+}
+
+async function fetchPhoto(id) {
   try {
-    const res = await fetch(`/api/visits/${id}/photo`, { credentials: 'same-origin', signal: AbortSignal.timeout(4000) });
+    const res = await fetch(`/api/visits/${id}/photo`, { credentials: 'same-origin', signal: AbortSignal.timeout(2500) });
     if (!res.ok) return '';
     const blob = await res.blob();
     return await new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => resolve(''); r.readAsDataURL(blob); });
@@ -824,7 +843,7 @@ function PrintSheet({ visit, siteName, onDone }) {
       if (!cancelled) doneRef.current();
     };
     (async () => {
-      const photo = await photoData(visit.id);
+      const photo = await photoData(visit.id, visit.photo);
       if (cancelled) return;
       frame = document.createElement('iframe');
       frame.setAttribute('aria-hidden', 'true');
