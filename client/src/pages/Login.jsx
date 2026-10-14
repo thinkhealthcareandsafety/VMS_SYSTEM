@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, ShieldCheck, Lock, Radio, AlertCircle, Info } from 'lucide-react';
 import { api } from '../api.js';
-import { Lockup, Logo, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Logo, Spinner, useTitle, PoweredBy } from '../components/ui.jsx';
 
 // Concentric arches: the gate, drawn once for the brand panel.
 function GateArt() {
@@ -91,6 +91,7 @@ export default function Login({ onLogin }) {
             {busy ? <><Spinner />Signing in</> : 'Sign in'}
           </button>
         </form>
+        <PoweredBy className="auth-powered" />
       </section>
     </main>
   );

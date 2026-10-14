@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { AlertTriangle, CalendarDays, CheckCircle2, Sun, UserPlus } from 'lucide-react';
 import { api } from '../api.js';
-import { Lockup, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Spinner, useTitle, PoweredBy } from '../components/ui.jsx';
 
 // The guest's own pass, opened from the link they were sent. No login: the code in the link is the pass.
 // The QR carries the same link, so the gate's camera or scanner reads it, and the code can be read out.
@@ -114,6 +114,7 @@ export function JoinGroup() {
           )}
         </div>
       </article>
+      <PoweredBy className="public-powered" />
     </div>
   );
 }

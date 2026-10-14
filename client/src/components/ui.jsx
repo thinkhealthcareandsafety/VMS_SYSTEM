@@ -25,6 +25,27 @@ export function Lockup({ dark = false }) {
   );
 }
 
+// Our signature: the hotels lead, GateSmartX signs quietly, like any white-label product.
+// The mark is the gate arch with the approval tick inside it, as on gatesmartx.com.
+export function GsMark({ size = 16 }) {
+  return (
+    <svg className="gs-mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="8" fill="#151515" />
+      <path d="M9 25V15a7 7 0 0 1 14 0v10" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="m12.4 19.4 2.7 2.7 4.8-5.2" fill="none" stroke="#12b76a" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+export function PoweredBy({ dark = false, className = '' }) {
+  return (
+    <a className={`powered${dark ? ' on-ink' : ''} ${className}`} href="https://gatesmartx.com" target="_blank" rel="noopener noreferrer" aria-label="Powered by GateSmartX">
+      <span className="pb-by">Powered by</span>
+      <GsMark />
+      <span className="pb-name">Gate<b>SmartX</b></span>
+    </a>
+  );
+}
+
 // Each screen names itself in the browser tab.
 export function useTitle(title) {
   useEffect(() => { document.title = title ? `${title} · Marquis & St. Regis` : 'Marquis & St. Regis · New Delhi'; }, [title]);

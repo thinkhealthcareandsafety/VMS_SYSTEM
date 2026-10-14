@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Building2, CalendarClock, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
-import { Lockup, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Spinner, useTitle, PoweredBy } from '../components/ui.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
 import { useTick } from '../lib/live.js';
 
@@ -120,6 +120,7 @@ export default function Approve() {
       </article>
       <ImageViewer open={zoom} onClose={() => setZoom(false)} src={info.photoUrl} alt={`Photo of ${name}`} title={`${name} at the gate`} />
       {!closed && <p className="approve-foot">Didn’t expect anyone? Decline, and security will not let them in. Your decision is recorded.</p>}
+      <PoweredBy className="public-powered" />
     </div>
   );
 }

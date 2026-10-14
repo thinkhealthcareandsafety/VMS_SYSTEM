@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle, Building2, CalendarDays, Check, CheckCircle2, Package, Target, Truck, X, XCircle } from 'lucide-react';
 import { api, fmtDate } from '../api.js';
-import { Lockup, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Spinner, useTitle, PoweredBy } from '../components/ui.jsx';
 
 // The head of department's page for one material gate pass, opened from WhatsApp or Telegram. No login: the
 // single-use link is the credential. They see exactly what is leaving, then approve or decline.
@@ -80,6 +80,7 @@ export default function ApproveMaterial() {
         </div>
       </article>
       {!closed && <p className="approve-foot">Your decision is recorded with your name. Security lets the material out only after you approve.</p>}
+      <PoweredBy className="public-powered" />
     </div>
   );
 }

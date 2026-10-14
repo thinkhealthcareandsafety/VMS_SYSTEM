@@ -16,7 +16,7 @@ import { printEvacuation } from '../lib/evacuation.js';
 import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
-import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
+import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle, PoweredBy } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
 // Badges say what needs someone: a red one needs action now, a grey one is a count.
@@ -112,6 +112,7 @@ export default function Admin({ user, onLogout }) {
           <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setPwOpen(true)} aria-label="Change password" title="Change password"><KeyRound /></button>
           <button className="btn btn-ghost btn-sm btn-icon" onClick={onLogout} aria-label="Sign out" title="Sign out"><LogOut /></button>
         </div>
+        <PoweredBy className="side-powered" />
       </aside>
 
       <main className="admin-main">

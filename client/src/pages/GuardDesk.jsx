@@ -7,7 +7,7 @@ import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, pass
 import { useLive, useTick } from '../lib/live.js';
 import { cue } from '../lib/notify.js';
 import { printEvacuation } from '../lib/evacuation.js';
-import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials } from '../components/ui.jsx';
+import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials, PoweredBy } from '../components/ui.jsx';
 import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
@@ -346,6 +346,7 @@ function UserMenu({ user, onLogout, autoPrint, onToggleAutoPrint }) {
           </button>
           <button role="menuitem" onClick={() => { setOpen(false); setPw(true); }}><KeyRound />Change password</button>
           <button role="menuitem" onClick={onLogout}><LogOut />Sign out</button>
+          <PoweredBy className="menu-powered" />
         </div>
       )}
       <PasswordDialog open={pw} onClose={() => setPw(false)} />
