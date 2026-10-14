@@ -25,19 +25,19 @@ colors:
   amber-soft: "#faf0e0"
 typography:
   display:
-    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'bold Geist 72', Georgia, serif"
+    fontFamily: "'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif"
     fontSize: "84px"
     fontWeight: 500
     lineHeight: 0.9
     letterSpacing: "-0.02em"
   headline:
-    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'bold Geist 72', Georgia, serif"
+    fontFamily: "'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif"
     fontSize: "28px"
     fontWeight: 500
     lineHeight: 1.15
     letterSpacing: "-0.005em"
   title:
-    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'bold Geist 72', Georgia, serif"
+    fontFamily: "'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif"
     fontSize: "22px"
     fontWeight: 500
     lineHeight: 1.2
@@ -277,7 +277,7 @@ A near-monochrome stone-and-ink palette carrying one crimson signature and a thr
 
 ## Typography
 
-**Display Font:** Geist (600) (with Didot, bold Geist 72, Georgia)
+**Display Font:** Geist 600 (with ui-sans-serif, system-ui)
 **Body Font:** Geist (with ui-sans-serif, system-ui, Segoe UI)
 **Label/Mono Font:** Geist Mono, for visitor IDs, Aadhaar masks and codes
 
