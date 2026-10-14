@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Info, LogIn, ScanLine, Search, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Info, LogIn, LogOut, ScanLine, Search, UserPlus, Users } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
 import { cue } from '../lib/notify.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
@@ -40,6 +40,14 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
   const admit = async (g) => {
     setBusy(g.id);
     try { say(await api(`/api/groups/${groupId}/guests/${g.id}/admit`, { method: 'POST' })); load(); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
+  };
+  const leave = async (g) => {
+    setBusy(g.id);
+    try {
+      await api(`/api/visits/${g.visitId}/checkout`, { method: 'POST' });
+      toast(`${g.firstName} ${g.lastName} checked out.`);
+      load();
+    } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
   };
   const admitPicked = async () => {
     setBusy('many');
@@ -110,6 +118,11 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
                   {canAdmit(g) && (
                     <button type="button" className="btn btn-sm btn-success" disabled={busy !== null} onClick={() => admit(g)}>
                       {busy === g.id ? <Spinner /> : <><LogIn />Let in</>}
+                    </button>
+                  )}
+                  {g.status === 'inside' && g.visitId && (
+                    <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => leave(g)}>
+                      {busy === g.id ? <Spinner /> : <><LogOut />Check out</>}
                     </button>
                   )}
                 </li>
