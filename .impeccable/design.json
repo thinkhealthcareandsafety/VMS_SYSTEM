@@ -1,0 +1,587 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-14T04:55:08.064Z",
+  "title": "Design System: Marquis & St. Regis Security Desk",
+  "extensions": {
+    "colorMeta": {
+      "stone-ground": {
+        "role": "neutral",
+        "displayName": "Stone Ground",
+        "canonical": "oklch(96.4% 0.003 106)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252524",
+          "#424240",
+          "#616160",
+          "#828281",
+          "#a5a5a3",
+          "#c9c9c7",
+          "#eeeeec"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Gallery White",
+        "canonical": "oklch(100.0% 0.000 89)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised White",
+        "canonical": "oklch(98.5% 0.001 106)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252524",
+          "#424241",
+          "#616160",
+          "#828281",
+          "#a5a5a4",
+          "#c9c9c8",
+          "#eeeeed"
+        ]
+      },
+      "sunken": {
+        "role": "neutral",
+        "displayName": "Sunken Stone",
+        "canonical": "oklch(94.3% 0.003 106)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252524",
+          "#424240",
+          "#616160",
+          "#828281",
+          "#a5a5a3",
+          "#c9c9c7",
+          "#eeeeec"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(91.2% 0.004 106)",
+        "tonalRamp": [
+          "#0b0b09",
+          "#252523",
+          "#424240",
+          "#61615f",
+          "#828280",
+          "#a5a5a2",
+          "#c9c9c6",
+          "#efefec"
+        ]
+      },
+      "hairline-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "oklch(83.8% 0.007 106)",
+        "tonalRamp": [
+          "#0b0b08",
+          "#252522",
+          "#42423e",
+          "#61615d",
+          "#83837e",
+          "#a5a5a0",
+          "#c9c9c4",
+          "#efefea"
+        ]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "House Ink",
+        "canonical": "oklch(19.6% 0.000 89)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "ink-hover": {
+        "role": "primary",
+        "displayName": "Ink Lifted",
+        "canonical": "oklch(30.1% 0.002 106)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252524",
+          "#424241",
+          "#616160",
+          "#828281",
+          "#a5a5a4",
+          "#c9c9c8",
+          "#eeeeed"
+        ]
+      },
+      "ink-soft": {
+        "role": "primary",
+        "displayName": "Ink Wash",
+        "canonical": "oklch(95.1% 0.004 106)",
+        "tonalRamp": [
+          "#0b0b09",
+          "#252523",
+          "#424240",
+          "#61615f",
+          "#828280",
+          "#a5a5a2",
+          "#c9c9c6",
+          "#efefec"
+        ]
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "oklch(41.2% 0.002 106)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252524",
+          "#424241",
+          "#616160",
+          "#828281",
+          "#a5a5a4",
+          "#c9c9c8",
+          "#eeeeed"
+        ]
+      },
+      "text-tertiary": {
+        "role": "neutral",
+        "displayName": "Pewter",
+        "canonical": "oklch(51.7% 0.003 106)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252523",
+          "#424240",
+          "#61615f",
+          "#828280",
+          "#a5a5a3",
+          "#c9c9c7",
+          "#efefec"
+        ]
+      },
+      "marquis-red": {
+        "role": "secondary",
+        "displayName": "Marquis Crimson",
+        "canonical": "oklch(45.3% 0.162 19)",
+        "tonalRamp": [
+          "#2a0000",
+          "#530007",
+          "#7f041e",
+          "#aa2b39",
+          "#d15159",
+          "#f47b7e",
+          "#ffa6a6",
+          "#ffd2d1"
+        ]
+      },
+      "marquis-red-on-ink": {
+        "role": "secondary",
+        "displayName": "Crimson on Ink",
+        "canonical": "oklch(58.5% 0.178 19)",
+        "tonalRamp": [
+          "#2a0000",
+          "#530008",
+          "#7f041f",
+          "#ad2638",
+          "#d54e57",
+          "#f47b7f",
+          "#ffa6a7",
+          "#ffd2d1"
+        ]
+      },
+      "regis-silver": {
+        "role": "tertiary",
+        "displayName": "Regis Silver",
+        "canonical": "oklch(73.2% 0.000 89)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "silver-soft": {
+        "role": "tertiary",
+        "displayName": "Silver Mist",
+        "canonical": "oklch(94.6% 0.003 106)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252524",
+          "#424240",
+          "#616160",
+          "#828281",
+          "#a5a5a3",
+          "#c9c9c7",
+          "#eeeeec"
+        ]
+      },
+      "live-green": {
+        "role": "state",
+        "displayName": "Live Green",
+        "canonical": "oklch(48.5% 0.099 163)",
+        "tonalRamp": [
+          "#001501",
+          "#003216",
+          "#005133",
+          "#167251",
+          "#419572",
+          "#66b994",
+          "#8adeb7",
+          "#b0ffdc"
+        ]
+      },
+      "live-green-soft": {
+        "role": "state",
+        "displayName": "Live Green Soft",
+        "canonical": "oklch(94.8% 0.018 161)",
+        "tonalRamp": [
+          "#050e09",
+          "#1d2822",
+          "#3a453f",
+          "#59655e",
+          "#79867f",
+          "#9ca9a1",
+          "#bfcdc5",
+          "#e5f3eb"
+        ]
+      },
+      "vermilion": {
+        "role": "state",
+        "displayName": "Vermilion",
+        "canonical": "oklch(54.6% 0.178 34)",
+        "tonalRamp": [
+          "#2a0000",
+          "#530000",
+          "#7e0d00",
+          "#ac2c07",
+          "#d45334",
+          "#f37f63",
+          "#ffaa90",
+          "#ffd5be"
+        ]
+      },
+      "vermilion-soft": {
+        "role": "state",
+        "displayName": "Vermilion Soft",
+        "canonical": "oklch(95.6% 0.018 43)",
+        "tonalRamp": [
+          "#120906",
+          "#2d221e",
+          "#4b3f3a",
+          "#6b5e59",
+          "#8c7f7a",
+          "#b0a29c",
+          "#d4c6c0",
+          "#faebe5"
+        ]
+      },
+      "amber": {
+        "role": "state",
+        "displayName": "Amber",
+        "canonical": "oklch(49.9% 0.112 62)",
+        "tonalRamp": [
+          "#260000",
+          "#480f00",
+          "#6a3000",
+          "#8d5002",
+          "#b17233",
+          "#d79557",
+          "#feb97b",
+          "#ffdfa2"
+        ]
+      },
+      "amber-soft": {
+        "role": "state",
+        "displayName": "Amber Soft",
+        "canonical": "oklch(95.9% 0.024 79)",
+        "tonalRamp": [
+          "#100a02",
+          "#2b2418",
+          "#494134",
+          "#686052",
+          "#8a8173",
+          "#ada495",
+          "#d1c8b8",
+          "#f7eddd"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Pass Numeral",
+        "purpose": "The daily pass number on the on-screen pass, inside the crimson-on-ink frame."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Sign-in, approval, guard step and outcome titles (26-32px)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Admin page heads, side-panel titles, list heads; pass holder and house names use the same voice smaller."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "All operated text on admin and host surfaces."
+      },
+      "body-guard": {
+        "displayName": "Guard Body",
+        "purpose": "Guard app base size; guard inputs run at 16px."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "Card, panel and dialog headings in Geist."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels and segmented items."
+      },
+      "framed-label": {
+        "displayName": "Framed Label",
+        "purpose": "Tracked capitals, only inside the red frame (gate name, Security desk)."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "Admin KPI values, tabular."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Visitor IDs, Aadhaar masks, codes."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-sm",
+        "value": "0 1px 2px rgba(21, 21, 21, 0.05)",
+        "purpose": "Rest: buttons, inputs, cards, panels, active nav item."
+      },
+      {
+        "name": "shadow",
+        "value": "0 1px 2px rgba(21, 21, 21, 0.04), 0 4px 12px -2px rgba(21, 21, 21, 0.07)",
+        "purpose": "Lift: intermediate raised surfaces."
+      },
+      {
+        "name": "shadow-lg",
+        "value": "0 24px 48px -12px rgba(21, 21, 21, 0.24), 0 4px 12px rgba(21, 21, 21, 0.06)",
+        "purpose": "Float: dialogs, drawers, menus, toasts, the pass."
+      },
+      {
+        "name": "ring",
+        "value": "0 0 0 3px rgba(21, 21, 21, 0.12)",
+        "purpose": "Input focus ring with an ink border."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The one easing for every transition and entrance."
+      },
+      {
+        "name": "state",
+        "value": "140ms",
+        "purpose": "Hover, border and press transitions on controls."
+      },
+      {
+        "name": "pop",
+        "value": "220ms",
+        "purpose": "Dialog entrance (160ms for menus)."
+      },
+      {
+        "name": "drawer",
+        "value": "300ms",
+        "purpose": "Visit drawer slide-in."
+      },
+      {
+        "name": "pass-in",
+        "value": "700ms",
+        "purpose": "The pass lands with a slight rotate; the number un-blurs over 900ms after 120ms."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "All animation and transition collapses under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone-narrow",
+        "value": "480px"
+      },
+      {
+        "name": "cobrand-compact",
+        "value": "560px"
+      },
+      {
+        "name": "guard-topbar-wrap",
+        "value": "640px"
+      },
+      {
+        "name": "admin-strip",
+        "value": "860px"
+      },
+      {
+        "name": "guard-split",
+        "value": "1000px"
+      },
+      {
+        "name": "kpi-two-up",
+        "value": "1100px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ink fill for the main action on every surface; ink is the colour of operation.",
+      "html": "<button class=\"ds-btn-primary\">Send to host</button>",
+      "css": ".ds-btn-primary { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid #151515; background: #151515; color: #fff; font-size: 14px; font-weight: 500; box-shadow: 0 1px 2px rgba(21,21,21,0.05); cursor: pointer; transition: background-color 140ms cubic-bezier(0.16,1,0.3,1), transform 140ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary:hover { background: #2e2e2d; border-color: #2e2e2d; } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid #151515; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "White with a strong hairline for secondary actions.",
+      "html": "<button class=\"ds-btn-secondary\">Reprint</button>",
+      "css": ".ds-btn-secondary { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid #cacac5; background: #fff; color: #151515; font-size: 14px; font-weight: 500; box-shadow: 0 1px 2px rgba(21,21,21,0.05); cursor: pointer; transition: background-color 140ms cubic-bezier(0.16,1,0.3,1), transform 140ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-secondary:hover { background: #fafaf9; } .ds-btn-secondary:active { transform: translateY(1px); } .ds-btn-secondary:focus-visible { outline: 2px solid #151515; outline-offset: 2px; }"
+    },
+    {
+      "name": "Evacuation Action",
+      "kind": "button",
+      "refersTo": "button-danger-outline",
+      "description": "Vermilion outline: the one non-error use of vermilion, printing everyone on the premises.",
+      "html": "<button class=\"ds-btn-evac\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M7 18v-6a5 5 0 1 1 10 0v6\"/><path d=\"M5 21a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1z\"/><path d=\"M21 12h1\"/><path d=\"M18.5 4.5 18 5\"/><path d=\"M2 12h1\"/><path d=\"M12 2v1\"/><path d=\"m4.93 4.93.7.7\"/></svg>Evacuation list</button>",
+      "css": ".ds-btn-evac { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid #efc4c1; background: #fff; color: #c23a17; font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color 140ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-evac svg { width: 16px; height: 16px; } .ds-btn-evac:hover { background: #fcede7; border-color: #e6a9a5; } .ds-btn-evac:focus-visible { outline: 2px solid #151515; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "White field with a strong hairline; focus turns the border ink with a soft ink ring.",
+      "html": "<label class=\"ds-field\"><span>Mobile number</span><input class=\"ds-input\" placeholder=\"98765 43210\"></label>",
+      "css": ".ds-field { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); display: grid; gap: 6px; } .ds-field span { font-size: 13px; font-weight: 500; color: #4b4b4a; } .ds-input { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); height: 40px; padding: 0 12px; font-size: 14px; color: #151515; background: #fff; border: 1px solid #cacac5; border-radius: 10px; box-shadow: 0 1px 2px rgba(21,21,21,0.05); caret-color: #151515; transition: border-color 140ms cubic-bezier(0.16,1,0.3,1), box-shadow 140ms cubic-bezier(0.16,1,0.3,1); } .ds-input::placeholder { color: #686866; } .ds-input:focus { outline: none; border-color: #151515; box-shadow: 0 0 0 3px rgba(21,21,21,0.12); }"
+    },
+    {
+      "name": "Chips",
+      "kind": "chip",
+      "refersTo": "chip-selected",
+      "description": "Pill choices; selected is ink, never red.",
+      "html": "<div class=\"ds-chips\"><button class=\"ds-chip\" aria-pressed=\"true\">Delivery</button><button class=\"ds-chip\" aria-pressed=\"false\">Meeting</button><button class=\"ds-chip\" aria-pressed=\"false\">Interview</button></div>",
+      "css": ".ds-chips { display: flex; gap: 8px; flex-wrap: wrap; } .ds-chip { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid #cacac5; background: #fff; color: #151515; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background-color 140ms cubic-bezier(0.16,1,0.3,1), border-color 140ms cubic-bezier(0.16,1,0.3,1), color 140ms cubic-bezier(0.16,1,0.3,1); } .ds-chip:hover { border-color: #a8a8a3; } .ds-chip[aria-pressed=\"true\"] { background: #151515; border-color: #151515; color: #fff; } .ds-chip:focus-visible { outline: 2px solid #151515; outline-offset: 2px; }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Admin sidebar items; the current page is a white tile whose icon turns Marquis Crimson.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"9\" rx=\"1\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"5\" rx=\"1\"/><rect x=\"14\" y=\"12\" width=\"7\" height=\"9\" rx=\"1\"/><rect x=\"3\" y=\"16\" width=\"7\" height=\"5\" rx=\"1\"/></svg>Today</a><a class=\"ds-nav-item\" href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 6h18\"/><path d=\"M3 12h18\"/><path d=\"M3 18h18\"/></svg>Records</a></nav>",
+      "css": ".ds-nav { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); display: grid; gap: 4px; width: 224px; padding: 12px; background: #fafaf9; } .ds-nav-item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: #4b4b4a; font-size: 14px; font-weight: 500; text-decoration: none; transition: background 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1); } .ds-nav-item svg { width: 17px; height: 17px; } .ds-nav-item:hover { background: #ececea; color: #151515; } .ds-nav-item[aria-current=\"page\"] { background: #fff; color: #151515; box-shadow: 0 1px 2px rgba(21,21,21,0.05), inset 0 0 0 1px #e2e2df; } .ds-nav-item[aria-current=\"page\"] svg { color: #9c1c2e; } .ds-nav-item:focus-visible { outline: 2px solid #151515; outline-offset: 2px; }"
+    },
+    {
+      "name": "Framed Label",
+      "kind": "custom",
+      "refersTo": "framed-label",
+      "description": "The Marquis frame around the one name that says where you are, with the live line beneath.",
+      "html": "<div class=\"ds-where\"><span class=\"ds-frame\">Gate 2</span><small><i class=\"ds-live\"></i>Live</small></div>",
+      "css": ".ds-where { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); display: grid; gap: 4px; justify-items: start; } .ds-frame { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid #9c1c2e; font-size: 10.5px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: #151515; white-space: nowrap; line-height: 1; } .ds-where small { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #686866; } .ds-live { width: 8px; height: 8px; border-radius: 50%; background: #12704f; }"
+    },
+    {
+      "name": "Guard Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "White card on stone with a hairline and rest shadow, under a Bodoni step title.",
+      "html": "<div class=\"ds-ground\"><h1 class=\"ds-step\">New visitor</h1><section class=\"ds-card\"><h2>Whom to meet</h2><p>Search a host by name, flat or department.</p><span class=\"ds-badge\">On premises</span></section></div>",
+      "css": ".ds-ground { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); background: #f3f3f1; padding: 20px; display: grid; gap: 16px; } .ds-step { font-family: var(--display, 'Bodoni Moda', Didot, Georgia, serif); font-size: 28px; font-weight: 500; letter-spacing: -0.005em; line-height: 1.15; margin: 0; color: #151515; } .ds-card { background: #fff; border: 1px solid #e2e2df; border-radius: 18px; box-shadow: 0 1px 2px rgba(21,21,21,0.05); padding: 18px; display: grid; gap: 12px; justify-items: start; } .ds-card h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.015em; margin: 0; } .ds-card p { margin: 0; color: #4b4b4a; font-size: 14px; } .ds-badge { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; background: #e4f2ea; color: #12704f; } .ds-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }"
+    },
+    {
+      "name": "Visitor Pass",
+      "kind": "custom",
+      "refersTo": "pass-number",
+      "description": "Key-card pass: ink header with the daily number in Bodoni inside the crimson-on-ink frame.",
+      "html": "<div class=\"ds-pass\"><div class=\"ds-pass-top\"><small>Visitor pass · 14 Oct</small><span class=\"ds-pass-no\">27</span></div><div class=\"ds-pass-body\"><strong>Ananya Rao</strong><span>Meeting Rohan Mehta · Sales office</span></div><div class=\"ds-pass-perf\"></div><div class=\"ds-pass-foot\">Wear this pass. Return it when you leave.</div></div>",
+      "css": ".ds-pass { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); width: 300px; border-radius: 18px; background: #fff; border: 1px solid #e2e2df; box-shadow: 0 24px 48px -12px rgba(21,21,21,0.24), 0 4px 12px rgba(21,21,21,0.06); overflow: hidden; } .ds-pass-top { background: #151515; color: #fff; padding: 18px 20px 20px; } .ds-pass-top small { display: block; color: #b4b4b1; font-size: 12px; font-weight: 500; } .ds-pass-no { display: inline-block; margin-top: 8px; padding: 4px 14px 2px; border: 1px solid #d0424f; font-family: var(--display, 'Bodoni Moda', Didot, Georgia, serif); font-weight: 500; font-size: 84px; line-height: 0.9; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; } .ds-pass-body { padding: 16px 20px; display: grid; gap: 4px; } .ds-pass-body strong { font-family: var(--display, 'Bodoni Moda', Didot, Georgia, serif); font-size: 19px; font-weight: 500; } .ds-pass-body span { font-size: 13px; color: #4b4b4a; } .ds-pass-perf { border-top: 1px dashed #cacac5; margin: 0 14px; } .ds-pass-foot { padding: 12px 20px 16px; font-size: 13px; color: #4b4b4a; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "One House Livery, Two Hotels",
+    "overview": "The desk is the complex's own instrument, worn in the livery the two hotels share. St. Regis lends the restraint: stone, white, near-black ink, a silver hairline, and an engraved Didone that speaks only in titles and names. Marriott Marquis lends the signature: its red, and the thin red frame it draws around MARQUIS, used here around the one label that says where you are (the gate, the security desk, the pass number). Everything a person operates is ink; red is never a control.\n\nDensity is operational. The guard works one-handed on a phone or a gate tablet with 48px fields and 56px actions on a stone ground; the admin works at a desk in a sidebar console with hairline tables, tabular figures, and a sticky page head. Hosts and guests never see a generic tool: they open a page headed by both full hotel logos, divided by a silver hairline. No admin-set site name appears on host, guest, or printed-pass surfaces; the two logos are the name.\n\nThe system is flat-leaning and quiet. White cards sit on stone with a hairline border and a barely-there shadow. State colours (live green, amber, vermilion) are reserved for state and always arrive with a word and usually an icon. The world rejects the SaaS look it replaced: no teal, no tinted gradient cards, no second accent.",
+    "keyCharacteristics": [
+      "Stone ground, white surfaces, ink for every interaction.",
+      "Marriott red as signature only: logos, the red frame, selection ticks, chart bars, the active nav icon.",
+      "St. Regis silver as ornament only: the hairline between the two marks.",
+      "Bodoni Moda for titles, names and the pass number; Geist for everything operated.",
+      "One framed label per view naming the place, in tracked capitals.",
+      "Co-brand marks on operating surfaces; both full logos on host, guest and sign-in surfaces."
+    ],
+    "rules": [
+      {
+        "name": "The Ink Operates Rule",
+        "body": "Anything a person can press, select, toggle or focus is ink. If red appears on a control, it is wrong.",
+        "section": "colors"
+      },
+      {
+        "name": "The Signature Rule",
+        "body": "Marquis Crimson draws lines and marks, never fields: a 1px frame, a tick, a chart bar, an icon stroke, a logo. Red never means \"selected\".",
+        "section": "colors"
+      },
+      {
+        "name": "The Silver Hairline Rule",
+        "body": "Silver is ornament between the two houses. It is never used for text, where it would fail contrast.",
+        "section": "colors"
+      },
+      {
+        "name": "The Vermilion Is Alarm Rule",
+        "body": "Vermilion belongs to errors and to the evacuation action; nothing decorative borrows it.",
+        "section": "colors"
+      },
+      {
+        "name": "The Didone Names Rule",
+        "body": "Bodoni Moda appears only where something is named: a page, a step, a person, a pass number. Buttons, fields, tables and figures are Geist.",
+        "section": "typography"
+      },
+      {
+        "name": "The Framed Capitals Rule",
+        "body": "Tracked uppercase lives only inside the red frame. Every other label is sentence case at normal tracking.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Card Rule",
+        "body": "Cards are white on stone with a hairline and the rest shadow. State shows through a badge, a word or a border, never through a tinted or gradient card fill.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do make every interactive state ink (#151515): primary buttons, selected chips, switches, focus, carets, progress.",
+      "Do keep Marquis Crimson (#9c1c2e) to lines and marks: the framed label, selection ticks, chart bars, the active nav icon, the logos.",
+      "Do put the name of the place (gate, desk, pass number) in the square 1px crimson frame, once per view.",
+      "Do set titles, people's names and the pass number in Bodoni Moda 500; set everything operated in Geist.",
+      "Do show both hotel logos on host, approver, guest and sign-in surfaces, and the co-brand marks on operating surfaces, in place of any admin-set site name.",
+      "Do pair every state colour with a word, and use tabular figures for every counted, timed or numbered value.",
+      "Do keep guard fields at 48px with 16px text and guard actions at 56px."
+    ],
+    "donts": [
+      "Don't use red for a button, a selected state, a filled badge or body text.",
+      "Don't set text in Regis Silver (#a8a8a8).",
+      "Don't use Vermilion (#c23a17) for anything but errors and the evacuation action.",
+      "Don't tint or gradient-fill a card to show its state; use a badge, a word or a border.",
+      "Don't use tracked uppercase outside the framed label.",
+      "Don't introduce teal or a second accent hue.",
+      "Don't set buttons, fields, tables or figures in Bodoni Moda."
+    ]
+  }
+}
