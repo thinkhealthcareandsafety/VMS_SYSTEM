@@ -147,11 +147,6 @@ const groupSchema = new Schema({
   joinOpen: { type: Boolean, default: false },
   joinLimit: { type: Number, default: 0 },                              // most guests who may add themselves
   joinCount: { type: Number, default: 0 },                              // places taken through the link (reserved atomically)
-  // One link the host shares (a family WhatsApp group, an email): guests add themselves and get their own pass.
-  joinCode: { type: String, unique: true, sparse: true },
-  joinOpen: { type: Boolean, default: false },
-  joinLimit: { type: Number, default: 0 },                              // most guests who may add themselves
-  joinCount: { type: Number, default: 0 },                              // places taken through the link (reserved atomically)
   status: { type: String, enum: ['active', 'cancelled'], default: 'active', index: true },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, opts);
@@ -167,7 +162,6 @@ const guestSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit' },
   arrivedAt: { type: Date },                       // first time let in
   addedAtGate: { type: Boolean, default: false },  // walk-in added by a guard
-  selfRegistered: { type: Boolean, default: false }, // added themselves through the group's link
   selfRegistered: { type: Boolean, default: false }, // added themselves through the group's link
   removedAt: { type: Date },                       // taken off the list: the pass no longer works
   createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -216,6 +210,41 @@ const materialSchema = new Schema({
 }, opts);
 materialSchema.index({ kind: 1, status: 1, returnBy: 1 });
 materialSchema.index({ createdAt: -1 });
+
+// ---------- Couriers: parcels in (to a person) and out (dispatched) ----------
+// In:  received at the gate -> collected (with the recipient's pickup code, or by an audited override)
+//      | forwarded (handed to a department or a room) | returned (refused, sent back with the courier).
+// Out: booked (a department hands it to security) -> dispatched (the courier's agent took it).
+const parcelSchema = new Schema({
+  number: { type: String, required: true, unique: true },     // PCL-000123
+  direction: { type: String, enum: ['in', 'out'], required: true, index: true },
+  status: { type: String, required: true, index: true, enum: ['received', 'collected', 'forwarded', 'returned', 'booked', 'dispatched', 'void'] },
+  carrier: { type: String, trim: true, default: '' },
+  awb: { type: String, trim: true, default: '', index: true },  // tracking / airway bill number
+  pieces: { type: Number, default: 1, min: 1 },
+  type: { type: String, enum: ['document', 'parcel', 'large', 'perishable', 'confidential'], default: 'parcel' },
+  sender: { name: { type: String, trim: true, default: '' }, company: { type: String, trim: true, default: '' } },
+  // The person it is for (in) or from (out): a host, or anyone else (a hotel guest, a staff member) by name.
+  host: { type: Schema.Types.ObjectId, ref: 'Host' },
+  person: { name: { type: String, trim: true, default: '' }, room: { type: String, trim: true, default: '' }, mobile: String },
+  department: { type: String, trim: true, default: '' },
+  address: { type: String, trim: true, default: '' },          // out: where it is going
+  note: { type: String, trim: true, default: '' },
+  photos: { type: [String], default: undefined },
+  // The pickup code: sealed (services/vault), never shown to staff; only the recipient's notice carries it.
+  codeSealed: String,
+  codeTries: { type: Number, default: 0 },
+  notifiedVia: String, notifiedAt: Date, reminders: { type: Number, default: 0 }, lastReminderAt: Date,
+  handover: {
+    at: Date, to: String, mobile: String, how: { type: String, enum: ['code', 'override', 'forward', 'return', 'dispatch'] },
+    reason: String, gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String,
+  },
+  movements: { type: [movementSchema], default: undefined },
+  voidReason: String,
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  createdByName: String,
+}, opts);
+parcelSchema.index({ direction: 1, status: 1, createdAt: -1 });
 
 // Single-use links for decisions other than a visitor's (a material pass today). Only a hash is kept.
 const actionTokenSchema = new Schema({
@@ -279,6 +308,7 @@ module.exports = {
   Gate: mongoose.model('Gate', gateSchema),
   Group: mongoose.model('Group', groupSchema),
   Material: mongoose.model('Material', materialSchema),
+  Parcel: mongoose.model('Parcel', parcelSchema),
   ActionToken: mongoose.model('ActionToken', actionTokenSchema),
   Guest: mongoose.model('Guest', guestSchema),
   Host: mongoose.model('Host', hostSchema),

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, BadgeCheck, Bell, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
-  Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
+  Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
@@ -16,6 +16,7 @@ import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
 import PassScanner from '../components/PassScanner.jsx';
 import GroupGate from '../components/GroupGate.jsx';
 import MaterialBoard from '../components/Material.jsx';
+import CourierBoard from '../components/Couriers.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 
@@ -78,7 +79,7 @@ export default function GuardDesk({ user, onLogout }) {
   const [scanning, setScanning] = useState(false); // the pass scanner
   const [groups, setGroups] = useState([]);        // groups that can be let in today
   // The desk handles people or material; the choice is remembered on this device.
-  const [mode, setMode] = useState(() => { try { return localStorage.getItem('vms.desk.mode') === 'material' ? 'material' : 'visitors'; } catch { return 'visitors'; } });
+  const [mode, setMode] = useState(() => { try { const m = localStorage.getItem('vms.desk.mode'); return ['material', 'couriers'].includes(m) ? m : 'visitors'; } catch { return 'visitors'; } });
   const switchMode = (m) => { setMode(m); try { localStorage.setItem('vms.desk.mode', m); } catch { /* storage blocked */ } };
   const [autoPrint, setAutoPrint] = useState(() => { try { return localStorage.getItem(AUTOPRINT_KEY) === '1'; } catch { return false; } });
   const printingRef = useRef(null);
@@ -234,6 +235,7 @@ export default function GuardDesk({ user, onLogout }) {
         <div className="desk-mode seg" role="tablist" aria-label="Desk">
           <button role="tab" aria-selected={mode === 'visitors'} aria-pressed={mode === 'visitors'} onClick={() => switchMode('visitors')}><Users size={15} /> Visitors</button>
           <button role="tab" aria-selected={mode === 'material'} aria-pressed={mode === 'material'} onClick={() => switchMode('material')}><Package size={15} /> Material</button>
+          <button role="tab" aria-selected={mode === 'couriers'} aria-pressed={mode === 'couriers'} onClick={() => switchMode('couriers')}><Mail size={15} /> Couriers</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {mode === 'visitors' && groups.length > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)}><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
@@ -243,6 +245,8 @@ export default function GuardDesk({ user, onLogout }) {
 
       {mode === 'material' ? (
         <main className="guard-main"><MaterialBoard liveTick={liveTick} /></main>
+      ) : mode === 'couriers' ? (
+        <main className="guard-main"><CourierBoard liveTick={liveTick} /></main>
       ) : (
       <main className="guard-main">
         <div className="guard-split">

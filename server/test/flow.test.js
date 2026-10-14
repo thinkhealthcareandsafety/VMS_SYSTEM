@@ -1344,3 +1344,116 @@ test('material: gate passes approved by the head, let out at the gate, returned 
   ws.eachRow((r, i) => { if (i > 1) items.push(r.getCell(6).text); });
   assert.ok(items.includes('Split AC compressor') && items.includes('Copper pipe') && items.includes('Vegetables'));
 });
+
+test('couriers: logged at the gate, the recipient gets a pickup code, handed over with it or by an audited override', async () => {
+  const ExcelJS = require('exceljs');
+  const { Parcel, Outbox, Audit } = require('../src/models');
+  const config = require('../src/config');
+  const { remind } = require('../src/services/parcels');
+  const arrive = (body, who = guard) => call('POST', '/api/parcels', { direction: 'in', carrier: 'Blue Dart', pieces: 1, ...body }, who);
+  const saved = { ...config.whatsapp };
+  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  try {
+    // Clear reasons.
+    assert.equal((await arrive({ carrier: '', hostId: hostIds.asha })).status, 400, 'which courier');
+    assert.equal((await arrive({})).status, 400, 'for whom');
+    assert.equal((await arrive({ hostId: hostIds.asha, pieces: 0 })).status, 400);
+
+    // For a host: logged with gate and guard, the notice carries a pickup code that staff never see.
+    const p = await arrive({ hostId: hostIds.asha, awb: 'bd 1234 5678', type: 'document', sender: { company: 'HDFC Bank' }, photos: [jpeg()] });
+    assert.equal(p.status, 201);
+    assert.match(p.body.number, /^PCL-\d{6}$/);
+    assert.equal(p.body.awb, 'BD12345678');
+    assert.equal(p.body.notifiedVia, 'whatsapp');
+    assert.equal(p.body.hasCode, true);
+    assert.equal(p.body.code, undefined);
+    assert.equal(p.body.movements[0].by, 'Gate Guard');
+    const job = await Outbox.findOne({ parcel: p.body.id }).lean();
+    assert.equal(job.vars.plain, true);
+    assert.equal(job.to, '+919000000001');
+    const code = /Pickup code: \*(\d{4})\*/.exec(job.body)[1];
+    const raw = await Parcel.findById(p.body.id).lean();
+    assert.ok(raw.codeSealed && !raw.codeSealed.includes(code), 'stored sealed, not readable');
+    assert.equal((await call('GET', `/api/parcels/${p.body.id}`, null, guard)).body.code, undefined);
+
+    // The same AWB scanned again while it waits is caught.
+    assert.equal((await arrive({ hostId: hostIds.asha, awb: 'BD12345678' })).body.code, 'duplicate_awb');
+
+    // Wrong code: tries counted; the right code hands it over, once.
+    const collect = (body) => call('POST', `/api/parcels/${p.body.id}/collect`, { collector: 'Asha Verma', ...body }, guard);
+    assert.equal((await collect({ code: '0000', collector: '' })).status, 400, 'collector name needed');
+    const wrongCode = code === '1111' ? '2222' : '1111';
+    assert.match((await collect({ code: wrongCode })).body.error, /4 tries left/);
+    const ok = await collect({ code, mobile: '9000000001' });
+    assert.equal(ok.body.status, 'collected');
+    assert.equal(ok.body.handover.how, 'code');
+    assert.equal(ok.body.handover.by, 'Gate Guard');
+    assert.equal((await collect({ code })).status, 409);
+
+    // Five wrong codes lock it; then only an override with a reason and the collector's number.
+    const q = await arrive({ hostId: hostIds.asha, awb: 'DLV-1' });
+    const qCode = /Pickup code: \*(\d{4})\*/.exec((await Outbox.findOne({ parcel: q.body.id }).lean()).body)[1];
+    const bad = qCode === '1234' ? '4321' : '1234';
+    let last;
+    for (let i = 0; i < 5; i += 1) last = await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Someone', code: bad }, guard);
+    assert.equal(last.body.locked, true);
+    const nowRight = await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Someone', code: qCode }, guard);
+    assert.match(nowRight.body.error, /Too many wrong codes/, 'even the right code no longer works once locked');
+    assert.equal((await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Ravi (assistant)', override: true, reason: 'x' }, guard)).status, 400);
+    assert.equal((await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Ravi (assistant)', override: true, reason: 'Called Asha, she sent her assistant' }, guard)).status, 400, 'mobile needed');
+    const ov = await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Ravi (assistant)', mobile: '9811122200', override: true, reason: 'Called Asha, she sent her assistant' }, guard);
+    assert.equal(ov.body.handover.how, 'override');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(await Audit.exists({ action: 'parcel.collected_override', entityId: q.body.id }));
+
+    // Reminders at 24 h and 72 h, then no more.
+    const r = await arrive({ hostId: hostIds.asha, awb: 'REM-1' });
+    await Parcel.collection.updateOne({ _id: new (require('mongoose').Types.ObjectId)(r.body.id) }, { $set: { createdAt: new Date(Date.now() - 80 * 3600e3) } });
+    await remind();
+    await remind();
+    await remind();
+    assert.equal((await Parcel.findById(r.body.id).lean()).reminders, 2);
+    assert.equal(await Outbox.countDocuments({ parcel: r.body.id }), 3, 'the notice and two reminders');
+    // Waiting three days: flagged as ageing.
+    const aging = (await call('GET', '/api/parcels?view=aging', null, guard)).body;
+    assert.ok(aging.rows.some((x) => x.id === r.body.id && x.aging));
+    assert.ok(aging.counts.aging >= 1);
+  } finally { Object.assign(config.whatsapp, saved); }
+
+  // For a hotel guest (not a host): no code to send; handed to the front desk by name.
+  const g = await arrive({ person: { name: 'Mr. J. Smith', room: '1204' }, carrier: 'DHL', awb: 'DHL998' });
+  assert.equal(g.body.hasCode, false);
+  assert.equal(g.body.notifiedVia, null);
+  assert.equal((await call('POST', `/api/parcels/${g.body.id}/forward`, { to: '' }, guard)).status, 400);
+  const fw = await call('POST', `/api/parcels/${g.body.id}/forward`, { to: 'Front desk, Priya' }, guard);
+  assert.equal(fw.body.status, 'forwarded');
+
+  // Refused: back with the courier, with a reason.
+  const ret = await arrive({ person: { name: 'Unknown Person' }, carrier: 'DTDC' });
+  assert.equal((await call('POST', `/api/parcels/${ret.body.id}/return`, { reason: '' }, guard)).status, 400);
+  assert.equal((await call('POST', `/api/parcels/${ret.body.id}/return`, { reason: 'No such person at the hotel' }, guard)).body.status, 'returned');
+
+  // Outgoing: booked by a department, dispatched with the agent's name and AWB.
+  const out = await call('POST', '/api/parcels', { direction: 'out', hostId: hostIds.rahul, department: 'Accounts', address: 'Head Office, BKC, Mumbai', type: 'document' }, guard);
+  assert.equal(out.body.status, 'booked');
+  assert.equal((await call('POST', `/api/parcels/${out.body.id}/dispatch`, { agent: '' }, guard)).status, 400);
+  const sent = await call('POST', `/api/parcels/${out.body.id}/dispatch`, { agent: 'Raju', carrier: 'Blue Dart', awb: 'bd 777' }, guard);
+  assert.equal(sent.body.status, 'dispatched');
+  assert.equal(sent.body.awb, 'BD777');
+
+  // Logged by mistake: only an admin voids it, with a reason; it stays on record.
+  const oops = await arrive({ person: { name: 'Typo' }, carrier: 'Amazon' });
+  assert.equal((await call('POST', `/api/parcels/${oops.body.id}/void`, { reason: 'Entered twice' }, guard)).status, 403);
+  assert.equal((await call('POST', `/api/parcels/${oops.body.id}/void`, { reason: 'Entered twice' }, admin)).body.status, 'void');
+
+  // Search by AWB or recipient, and the Excel register.
+  assert.ok((await call('GET', '/api/parcels?q=dhl998', null, guard)).body.rows.some((x) => x.id === g.body.id));
+  assert.ok((await call('GET', '/api/parcels?q=Asha', null, guard)).body.rows.length >= 3, 'by host name');
+  const xl = await fetch(`${base}/api/parcels/export.xlsx`, { headers: { Cookie: admin } });
+  assert.equal(xl.status, 200);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(Buffer.from(await xl.arrayBuffer()));
+  const awbs = [];
+  book.getWorksheet('Couriers').eachRow((row, i) => { if (i > 1) awbs.push(row.getCell(6).text); });
+  assert.ok(awbs.includes('BD12345678') && awbs.includes('BD777'));
+});

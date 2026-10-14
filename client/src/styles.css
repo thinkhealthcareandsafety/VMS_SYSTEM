@@ -934,3 +934,8 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .return-form { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-2); }
 .return-line { display: flex; align-items: center; gap: 10px; font-size: 14px; }
 .return-line .input { width: 100px; }
+
+/* Couriers */
+.row-end { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.return-form .digits { max-width: 260px; }
+@media (max-width: 480px) { .desk-mode button svg { display: none; } .desk-mode button { padding: 0 8px; font-size: 12.5px; } .topbar .where small { display: none; } }

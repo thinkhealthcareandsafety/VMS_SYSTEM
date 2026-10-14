@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
@@ -15,6 +15,7 @@ import { useLive, useTick } from '../lib/live.js';
 import { printEvacuation } from '../lib/evacuation.js';
 import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
+import CourierBoard from '../components/Couriers.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
@@ -25,6 +26,7 @@ const NAV = [
     { id: 'expected', label: 'Expected visitors', icon: CalendarCheck },
     { id: 'groups', label: 'Groups and events', icon: PartyPopper },
     { id: 'material', label: 'Material', icon: Package },
+    { id: 'couriers', label: 'Couriers', icon: Mail },
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
@@ -49,6 +51,7 @@ const TITLES = {
   expected: ['Expected visitors', 'Let in on arrival, without waiting for the host'],
   groups: ['Groups and events', 'Weddings, banquets, conferences: one guest list, a pass for every guest, any gate'],
   material: ['Material', 'Gate passes out (returnable and not), deliveries and tools in, with approvals and returns'],
+  couriers: ['Couriers', 'Parcels in with a pickup code for the recipient, and parcels out, with every handover recorded'],
   blocked: ['Blocked visitors', 'People the guard must not let in'],
   settings: ['Settings', 'Site details, privacy and notifications'],
 };
@@ -138,6 +141,7 @@ export default function Admin({ user, onLogout }) {
           {section === 'expected' && <ExpectedPage {...page} />}
           {section === 'groups' && <GroupsPage {...page} />}
           {section === 'material' && <MaterialBoard admin liveTick={tick} />}
+          {section === 'couriers' && <CourierBoard admin liveTick={tick} />}
           {section === 'blocked' && <BlockedPage {...page} />}
           {section === 'settings' && <SettingsPage {...page} superAdmin={user.role === 'superadmin'} />}
         </div>
