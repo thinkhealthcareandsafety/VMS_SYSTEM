@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Building2, CalendarClock, Check, CheckCircle2, Clock, Hash, LinkIcon, Target, X, XCircle, AlertTriangle } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
-import { Logo, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Spinner, useTitle } from '../components/ui.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
 import { useTick } from '../lib/live.js';
 
@@ -56,7 +56,7 @@ export default function Approve() {
   if (loadError) {
     return (
       <div className="approve-wrap">
-        <Logo />
+        <div className="approve-brand"><Lockup /></div>
         <div className="approve-card"><div className="body"><div className="done-state">
           <div className="state-icon bad"><AlertTriangle /></div>
           <h1>Link not valid</h1>
@@ -76,7 +76,7 @@ export default function Approve() {
 
   return (
     <div className="approve-wrap">
-      <div className="approve-brand"><Logo />{info.siteName && <span className="approve-site">{info.siteName}</span>}</div>
+      <div className="approve-brand"><Lockup /></div>
       <article className="approve-card">
         {photoOk && !['cancelled', 'expired', 'superseded'].includes(state) && (
           <button type="button" className="photo-btn wide" onClick={() => setZoom(true)} aria-label="See the photo full size">
@@ -85,8 +85,8 @@ export default function Approve() {
         )}
         <div className="body">
           <div>
-            <p className="muted" style={{ marginBottom: 4 }}>Hi {info.hostName.split(' ')[0]}, someone is at the gate for you</p>
             <h1>{name}</h1>
+            <p className="muted" style={{ marginTop: 6 }}>Hi {info.hostName.split(' ')[0]}, {name.split(' ')[0]} is at the gate to see you.</p>
           </div>
           <div className="facts">
             <div className="fact"><Building2 /><span>Coming from</span><strong>{info.company}</strong></div>

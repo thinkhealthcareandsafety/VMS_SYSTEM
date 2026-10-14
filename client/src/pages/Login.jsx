@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, ShieldCheck, Lock, Radio, AlertCircle, Info } from 'lucide-react';
 import { api } from '../api.js';
-import { Logo, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Logo, Spinner, useTitle } from '../components/ui.jsx';
 
 // Concentric arches: the gate, drawn once for the brand panel.
 function GateArt() {
@@ -14,7 +14,7 @@ function GateArt() {
         const x = 310 - w / 2;
         return (
           <path key={i} d={`M${x} 620 V${310 - i * 18} a${w / 2} ${w / 2} 0 0 1 ${w} 0 V620`} fill="none"
-            stroke={i === 0 ? '#2fd0a2' : '#ffffff'} strokeOpacity={i === 0 ? 0.9 : 0.12 - i * 0.012} strokeWidth={i === 0 ? 2 : 1.2} />
+            stroke={i === 0 ? '#d0424f' : '#ffffff'} strokeOpacity={i === 0 ? 0.9 : 0.12 - i * 0.012} strokeWidth={i === 0 ? 2 : 1.2} />
         );
       })}
     </svg>
@@ -51,13 +51,14 @@ export default function Login({ onLogin }) {
   return (
     <main className="auth">
       <section className="auth-art">
-        <Logo dark />
+        <Lockup dark />
         <GateArt />
         <div>
-          <h2>Every visitor, approved and accounted for.</h2>
-          <p>Check in at the gate, get the host’s approval by SMS, and know exactly who is on site, live.</p>
+          <h2>Every arrival, welcomed and accounted for.</h2>
+          <p>Security and guest access for Marriott Marquis and St. Regis, New Delhi: visitors, events, material and couriers at every gate, live.</p>
         </div>
         <div className="foot">
+          <span className="frame-label on-ink">Security desk</span>
           <span><ShieldCheck />Aadhaar masked on device</span>
           <span><Radio />Live site roster</span>
           <span><Lock />Every action audited</span>
@@ -66,7 +67,7 @@ export default function Login({ onLogin }) {
 
       <section className="auth-form">
         <form onSubmit={submit} noValidate>
-          <Logo />
+          <span className="auth-mark"><Logo /><span className="frame-label">Security desk</span></span>
           <div>
             <h1>Sign in</h1>
             <p className="lead">Use the account your site admin gave you.</p>

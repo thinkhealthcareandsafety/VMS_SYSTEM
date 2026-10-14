@@ -43,8 +43,9 @@ h1 { font-size: 16pt; margin: 0; } .total { font-size: 14pt; font-weight: 700; }
 table { width: 100%; border-collapse: collapse; } th, td { border: .2mm solid #888; padding: 1.5mm 2mm; text-align: left; vertical-align: top; } th { background: #eee; font-size: 9pt; }
 td span { color: #444; font-size: 8.5pt; } .n { width: 8mm; text-align: right; } .tick { width: 12mm; } tr { break-inside: avoid; }
 .empty { font-size: 13pt; padding: 10mm 0; }
+.lg { display: flex; align-items: center; gap: 4mm; margin-bottom: 3mm; } .lg img { height: 9mm; width: auto; } .lg img.sr { height: 12mm; } .lg i { width: .25mm; height: 9mm; background: #000; }
 </style></head><body>
-<header><div><h1>Evacuation list</h1><div>${esc(siteName || 'Visitor Desk')} · printed ${esc(fmtDate(now))}, ${esc(fmtTime(now))}</div></div><div class="total">${people.length} on premises</div></header>
+<header><div><div class="lg"><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"><i></i><img class="sr" src="${location.origin}/brand/stregis-print.png" alt="St. Regis"></div><h1>Evacuation list</h1><div>${esc(siteName || 'Marriott Marquis and St. Regis, New Delhi')} · printed ${esc(fmtDate(now))}, ${esc(fmtTime(now))}</div></div><div class="total">${people.length} on premises</div></header>
 ${people.length ? sections : '<p class="empty">Nobody is recorded as inside.</p>'}
 <p style="margin-top:6mm;font-size:8.5pt;color:#444">Visitors and guests let in at the gates and not yet checked out. Staff and residents are not on this list.</p>
 </body></html>`);

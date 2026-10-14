@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle, Building2, CalendarDays, Check, CheckCircle2, Package, Target, Truck, X, XCircle } from 'lucide-react';
 import { api, fmtDate } from '../api.js';
-import { Logo, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Spinner, useTitle } from '../components/ui.jsx';
 
 // The head of department's page for one material gate pass, opened from WhatsApp or Telegram. No login: the
 // single-use link is the credential. They see exactly what is leaving, then approve or decline.
@@ -31,7 +31,7 @@ export default function ApproveMaterial() {
 
   if (error) {
     return (
-      <div className="approve-wrap"><div className="approve-brand"><Logo /></div>
+      <div className="approve-wrap"><div className="approve-brand"><Lockup /></div>
         <div className="approve-card"><div className="body"><div className="done-state"><div className="state-icon bad"><AlertTriangle /></div><h1>Link not valid</h1><p className="muted">This link is wrong or no longer exists. Ask security to send it again.</p></div></div></div>
       </div>
     );
@@ -43,7 +43,7 @@ export default function ApproveMaterial() {
 
   return (
     <div className="approve-wrap">
-      <div className="approve-brand"><Logo />{info.siteName && <span className="approve-site">{info.siteName}</span>}</div>
+      <div className="approve-brand"><Lockup /></div>
       <article className="approve-card">
         <div className="body">
           <div>

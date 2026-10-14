@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { AlertTriangle, CalendarDays, CheckCircle2, Sun, UserPlus } from 'lucide-react';
 import { api } from '../api.js';
-import { Logo, Spinner, useTitle } from '../components/ui.jsx';
+import { Lockup, Spinner, useTitle } from '../components/ui.jsx';
 
 // The guest's own pass, opened from the link they were sent. No login: the code in the link is the pass.
 // The QR carries the same link, so the gate's camera or scanner reads it, and the code can be read out.
@@ -25,11 +25,10 @@ export function GuestPass() {
 
   return (
     <div className="approve-wrap">
-      <div className="approve-brand"><Logo />{info.siteName && <span className="approve-site">{info.siteName}</span>}</div>
+      <div className="approve-brand"><Lockup /></div>
       <article className="approve-card guest-pass">
         <div className="body">
           <div style={{ textAlign: 'center' }}>
-            <p className="muted" style={{ marginBottom: 4 }}>Guest pass</p>
             <h1>{info.name}</h1>
             <p className="guest-pass-event">{info.group}</p>
           </div>
@@ -84,7 +83,7 @@ export function JoinGroup() {
 
   return (
     <div className="approve-wrap">
-      <div className="approve-brand"><Logo />{info.siteName && <span className="approve-site">{info.siteName}</span>}</div>
+      <div className="approve-brand"><Lockup /></div>
       <article className="approve-card">
         <div className="body">
           <div>
@@ -122,7 +121,7 @@ export function JoinGroup() {
 function PublicNote({ tone, title, text }) {
   return (
     <div className="approve-wrap">
-      <div className="approve-brand"><Logo /></div>
+      <div className="approve-brand"><Lockup /></div>
       <div className="approve-card"><div className="body"><div className="done-state">
         <div className={`state-icon ${tone}`}>{tone === 'bad' ? <AlertTriangle /> : <CheckCircle2 />}</div>
         <h1>{title}</h1>

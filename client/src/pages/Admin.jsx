@@ -425,7 +425,7 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
                   <td>
                     <div className="actions">
                       <button className="btn btn-sm btn-icon" onClick={(e) => reprint(e, v)} aria-label={`Reprint sticker ${v.dailyNumber}`} title="Reprint sticker"><Printer /></button>
-                      <button className="btn btn-sm btn-danger-outline" onClick={(e) => { e.stopPropagation(); onForce(v); }}><LogOut />Check out</button>
+                      <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onForce(v); }}><LogOut />Check out</button>
                     </div>
                   </td>
                 )}
@@ -826,7 +826,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
           {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New request sent to the host.')}><RotateCcw />Resend request</button>}
           {admitted && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
           <button className="btn btn-ghost" onClick={() => setBlocking({ mobile: v.mobile, name: `${v.firstName} ${v.lastName}` })}><Ban />Block</button>
-          {['approved', 'away'].includes(v.status) && <button className="btn btn-danger-outline" onClick={() => setForce(v)}><LogOut />{v.status === 'away' ? 'End pass' : 'Check out'}</button>}
+          {['approved', 'away'].includes(v.status) && <button className="btn" onClick={() => setForce(v)}><LogOut />{v.status === 'away' ? 'End pass' : 'Check out'}</button>}
         </div>
       )}
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={onChanged} />

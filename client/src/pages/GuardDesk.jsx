@@ -224,7 +224,7 @@ export default function GuardDesk({ user, onLogout }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Logo name="" />
           <div className="where">
-            <strong>{user.gateName || 'Main gate'}</strong>
+            <strong><span className="frame-label">{user.gateName || 'Main gate'}</span></strong>
             <small>
               <span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}
               <span className="sep">·</span>{insideCount} inside
@@ -866,7 +866,10 @@ const PASS_CSS = `
 * { box-sizing: border-box; }
 html, body { margin: 0; background: #fff; }
 body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/1.3 -apple-system, "Segoe UI", Arial, sans-serif; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.site { font-size: 11pt; font-weight: 600; letter-spacing: .04em; }
+.logos { display: flex; align-items: center; justify-content: center; gap: 4mm; margin-bottom: 1mm; }
+.logos img { display: block; height: 11mm; width: auto; }
+.logos img + span { width: .25mm; height: 10mm; background: #000; }
+.logos img:last-child { height: 14mm; }
 .title { font-size: 9pt; letter-spacing: .22em; margin-top: 1mm; }
 .no { font-size: 64pt; font-weight: 700; line-height: 1; margin: 3mm 0 1mm; letter-spacing: -.03em; }
 .date { font-size: 10pt; margin-bottom: 3mm; }
@@ -906,7 +909,7 @@ async function fetchPhoto(id) {
 function passHtml(visit, siteName, photo) {
   const name = `${visit.firstName} ${visit.lastName}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
-<div class="site">${escHtml(siteName || 'Visitor Desk')}</div>
+<div class="logos"><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"><span></span><img src="${location.origin}/brand/stregis-print.png" alt="St. Regis"></div>
 <div class="title">VISITOR PASS</div>
 <div class="no">${escHtml(visit.dailyNumber)}</div>
 <div class="date">${escHtml(fmtDate(visit.decidedAt))} · ${escHtml(fmtTime(visit.decidedAt))}</div>
@@ -951,8 +954,11 @@ function PrintSheet({ visit, siteName, onDone }) {
         win.addEventListener('afterprint', finish, { once: true });
         let printed = false;
         const go = () => { if (printed) return; printed = true; try { win.focus(); win.print(); } catch { finish(); } };
-        const img = win.document.querySelector('img');
-        if (img && !img.complete) { img.onload = go; img.onerror = go; setTimeout(go, 1500); } else go();
+        // Wait for the photo and both logos (never long: a pass prints even if an image is slow).
+        const imgs = [...win.document.images].filter((im) => !im.complete);
+        let left = imgs.length;
+        if (!left) go();
+        else { imgs.forEach((im) => { im.onload = im.onerror = () => { left -= 1; if (!left) go(); }; }); setTimeout(go, 1500); }
         setTimeout(finish, 5 * 60e3); // browsers that never report the end of printing
       };
       frame.srcdoc = passHtml(visit, siteName, photo);
@@ -1126,7 +1132,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
         <>
           <div className="list-head" style={{ marginTop: 8 }}>
             <div>
-              <h2 style={{ fontSize: 18, margin: 0 }}>Pass holders outside</h2>
+              <h2 className="side-title">Pass holders outside</h2>
               <p className="muted">Multi-day passes. Let them in again without a new approval.</p>
             </div>
           </div>
@@ -1165,7 +1171,7 @@ function TodaysGroups({ groups, openId, onOpen, onScan }) {
     <div className="todays-groups">
       <div className="list-head">
         <div>
-          <h2 style={{ fontSize: 18, margin: 0 }}>Today’s groups</h2>
+          <h2 className="side-title">Today’s groups</h2>
           <p className="muted">Guests on a list: scan their pass, or find them by name.</p>
         </div>
         <button type="button" className="btn btn-sm btn-primary" onClick={onScan}><ScanLine />Scan</button>
@@ -1178,7 +1184,7 @@ function TodaysGroups({ groups, openId, onOpen, onScan }) {
               <strong>{g.name}</strong>
               <span className="faint">{g.days}{g.host ? ` · ${g.host.name}` : ''}</span>
             </span>
-            <span className="group-card-n"><strong className="num">{g.arrived}</strong>/{g.guests}<small>arrived</small></span>
+            <span className="group-card-n"><span className="num"><strong>{g.arrived}</strong>/{g.guests}</span><small>arrived</small></span>
           </button>
         ))}
       </div>
