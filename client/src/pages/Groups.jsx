@@ -421,7 +421,7 @@ async function printBadges(g, rows, toast) {
 .sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
 .b { height: 64mm; border: .3mm dashed #999; border-radius: 3mm; padding: 3.5mm 4mm; display: grid; grid-template-rows: auto auto auto auto 1fr auto auto; justify-items: center; text-align: center; break-inside: avoid; }
 .lg { display: flex; align-items: center; gap: 2.5mm; margin-bottom: 1.5mm; } .lg img { height: 5mm; width: auto; } .lg img.sr { height: 6mm; } .lg i { width: .2mm; height: 5mm; background: #a8a8a8; }
-.ev { font-size: 9pt; letter-spacing: .08em; text-transform: uppercase; color: #444; } .nm { font-family: 'Didot', 'Bodoni 72', 'Bodoni MT', Georgia, serif; font-size: 17pt; font-weight: 600; line-height: 1.1; margin-top: 1mm; }
+.ev { font-size: 9pt; letter-spacing: .08em; text-transform: uppercase; color: #444; } .nm { font-size: 16pt; font-weight: 700; line-height: 1.1; margin-top: 1mm; }
 .co { font-size: 10pt; color: #333; min-height: 4mm; } img { width: 26mm; height: 26mm; align-self: center; } .cd { font: 600 11pt ui-monospace, Menlo, Consolas, monospace; letter-spacing: .06em; } .dy { font-size: 8.5pt; color: #444; }
 </style></head><body><div class="sheet">${badges}</div></body></html>`);
   win.document.close();

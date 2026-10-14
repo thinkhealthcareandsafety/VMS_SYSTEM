@@ -25,19 +25,19 @@ colors:
   amber-soft: "#faf0e0"
 typography:
   display:
-    fontFamily: "'Bodoni Moda Variable', 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif"
+    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'Bodoni 72', Georgia, serif"
     fontSize: "84px"
     fontWeight: 500
     lineHeight: 0.9
     letterSpacing: "-0.02em"
   headline:
-    fontFamily: "'Bodoni Moda Variable', 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif"
+    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'Bodoni 72', Georgia, serif"
     fontSize: "28px"
     fontWeight: 500
     lineHeight: 1.15
     letterSpacing: "-0.005em"
   title:
-    fontFamily: "'Bodoni Moda Variable', 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif"
+    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'Bodoni 72', Georgia, serif"
     fontSize: "22px"
     fontWeight: 500
     lineHeight: 1.2
@@ -220,7 +220,7 @@ components:
 
 **Creative North Star: "One House Livery, Two Hotels"**
 
-The desk is the complex's own instrument, worn in the livery the two hotels share. St. Regis lends the restraint: stone, white, near-black ink, a silver hairline, and an engraved Didone that speaks only in titles and names. Marriott Marquis lends the signature: its red, and the thin red frame it draws around MARQUIS, used here around the one label that says where you are (the gate, the security desk, the pass number). Everything a person operates is ink; red is never a control.
+The desk is the complex's own instrument, worn in the livery the two hotels share. St. Regis lends the restraint: stone, white, near-black ink, a silver hairline, and a bold sans that speaks only in titles and names. Marriott Marquis lends the signature: its red, and the thin red frame it draws around MARQUIS, used here around the one label that says where you are (the gate, the security desk, the pass number). Everything a person operates is ink; red is never a control.
 
 Density is operational. The guard works one-handed on a phone or a gate tablet with 48px fields and 56px actions on a stone ground; the admin works at a desk in a sidebar console with hairline tables, tabular figures, and a sticky page head. Hosts and guests never see a generic tool: they open a page headed by both full hotel logos, divided by a silver hairline. No admin-set site name appears on host, guest, or printed-pass surfaces; the two logos are the name.
 
@@ -230,7 +230,7 @@ The system is flat-leaning and quiet. White cards sit on stone with a hairline b
 - Stone ground, white surfaces, ink for every interaction.
 - Marriott red as signature only: logos, the red frame, selection ticks, chart bars, the active nav icon.
 - St. Regis silver as ornament only: the hairline between the two marks.
-- Bodoni Moda for titles, names and the pass number; Geist for everything operated.
+- Geist (600) for titles, names and the pass number; Geist for everything operated.
 - One framed label per view naming the place, in tracked capitals.
 - Co-brand marks on operating surfaces; both full logos on host, guest and sign-in surfaces.
 
@@ -277,16 +277,16 @@ A near-monochrome stone-and-ink palette carrying one crimson signature and a thr
 
 ## Typography
 
-**Display Font:** Bodoni Moda (with Didot, Bodoni 72, Georgia)
+**Display Font:** Geist (600) (with Didot, Bodoni 72, Georgia)
 **Body Font:** Geist (with ui-sans-serif, system-ui, Segoe UI)
 **Label/Mono Font:** Geist Mono, for visitor IDs, Aadhaar masks and codes
 
-**Character:** An engraved Didone that only ever names things (pages, steps, people, the pass number) set against a precise grotesque that carries every operated word. The serif speaks; the sans works.
+**Character:** An engraved bold sans that only ever names things (pages, steps, people, the pass number) set against a precise grotesque that carries every operated word. The serif speaks; the sans works.
 
 ### Hierarchy
-- **Display** (Bodoni Moda 500, 84px, 0.9): the daily pass number on the on-screen pass, inside its crimson frame. Tabular.
-- **Headline** (Bodoni Moda 500, 26-32px, 1.1-1.15): sign-in title (32px), approval card title (30px), guard step title (28px), outcome title (26px), sign-in panel statement (clamp 30-44px on ink).
-- **Title** (Bodoni Moda 500, 22-24px, 1.2): admin page head (22px), side-panel titles (22px), inside-list head (24px); the pass holder's name (19px) and the co-brand house name (15-17px) use the same voice.
+- **Display** (Geist (600) 500, 84px, 0.9): the daily pass number on the on-screen pass, inside its crimson frame. Tabular.
+- **Headline** (Geist (600) 500, 26-32px, 1.1-1.15): sign-in title (32px), approval card title (30px), guard step title (28px), outcome title (26px), sign-in panel statement (clamp 30-44px on ink).
+- **Title** (Geist (600) 500, 22-24px, 1.2): admin page head (22px), side-panel titles (22px), inside-list head (24px); the pass holder's name (19px) and the co-brand house name (15-17px) use the same voice.
 - **Section** (Geist 600, 15-16px, 1.2, -0.015em): card and panel headings, dialog titles (17px).
 - **Body** (Geist 400, 14px, 1.5; 15px in the guard app; inputs 16px on the guard so phones do not zoom). Stylistic sets ss01 and cv11 on.
 - **Label** (Geist 500, 13px): field labels, segmented items, table headers (12.5px, Pewter).
@@ -294,7 +294,7 @@ A near-monochrome stone-and-ink palette carrying one crimson signature and a thr
 - **Framed label** (Geist 500, 10.5px, 0.16em, uppercase): the gate name, "Security desk". Only inside the red frame.
 
 ### Named Rules
-**The Didone Names Rule.** Bodoni Moda appears only where something is named: a page, a step, a person, a pass number. Buttons, fields, tables and figures are Geist.
+**The Bold Names Rule.** Geist (600) appears only where something is named: a page, a step, a person, a pass number. Buttons, fields, tables and figures are Geist.
 
 **The Framed Capitals Rule.** Tracked uppercase lives only inside the red frame. Every other label is sentence case at normal tracking.
 
@@ -373,7 +373,7 @@ A key card: an ink header carrying the co-brand marks (on-ink versions) and the 
 - **Do** make every interactive state ink (#151515): primary buttons, selected chips, switches, focus, carets, progress.
 - **Do** keep Marquis Crimson (#9c1c2e) to lines and marks: the framed label, selection ticks, chart bars, the active nav icon, the logos.
 - **Do** put the name of the place (gate, desk, pass number) in the square 1px crimson frame, once per view.
-- **Do** set titles, people's names and the pass number in Bodoni Moda 500; set everything operated in Geist.
+- **Do** set titles, people's names and the pass number in Geist (600) 500; set everything operated in Geist.
 - **Do** show both hotel logos on host, approver, guest and sign-in surfaces, and the co-brand marks on operating surfaces, in place of any admin-set site name.
 - **Do** pair every state colour with a word, and use tabular figures for every counted, timed or numbered value.
 - **Do** keep guard fields at 48px with 16px text and guard actions at 56px.
@@ -385,4 +385,4 @@ A key card: an ink header carrying the co-brand marks (on-ink versions) and the 
 - **Don't** tint or gradient-fill a card to show its state; use a badge, a word or a border.
 - **Don't** use tracked uppercase outside the framed label.
 - **Don't** introduce teal or a second accent hue.
-- **Don't** set buttons, fields, tables or figures in Bodoni Moda.
+- **Don't** set buttons, fields, tables or figures in Geist (600).

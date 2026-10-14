@@ -506,7 +506,7 @@
       "refersTo": "card",
       "description": "White card on stone with a hairline and rest shadow, under a Bodoni step title.",
       "html": "<div class=\"ds-ground\"><h1 class=\"ds-step\">New visitor</h1><section class=\"ds-card\"><h2>Whom to meet</h2><p>Search a host by name, flat or department.</p><span class=\"ds-badge\">On premises</span></section></div>",
-      "css": ".ds-ground { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); background: #f3f3f1; padding: 20px; display: grid; gap: 16px; } .ds-step { font-family: var(--display, 'Bodoni Moda', Didot, Georgia, serif); font-size: 28px; font-weight: 500; letter-spacing: -0.005em; line-height: 1.15; margin: 0; color: #151515; } .ds-card { background: #fff; border: 1px solid #e2e2df; border-radius: 18px; box-shadow: 0 1px 2px rgba(21,21,21,0.05); padding: 18px; display: grid; gap: 12px; justify-items: start; } .ds-card h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.015em; margin: 0; } .ds-card p { margin: 0; color: #4b4b4a; font-size: 14px; } .ds-badge { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; background: #e4f2ea; color: #12704f; } .ds-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }"
+      "css": ".ds-ground { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); background: #f3f3f1; padding: 20px; display: grid; gap: 16px; } .ds-step { font-family: var(--display, 'Geist (600)', Didot, Georgia, serif); font-size: 28px; font-weight: 500; letter-spacing: -0.005em; line-height: 1.15; margin: 0; color: #151515; } .ds-card { background: #fff; border: 1px solid #e2e2df; border-radius: 18px; box-shadow: 0 1px 2px rgba(21,21,21,0.05); padding: 18px; display: grid; gap: 12px; justify-items: start; } .ds-card h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.015em; margin: 0; } .ds-card p { margin: 0; color: #4b4b4a; font-size: 14px; } .ds-badge { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; background: #e4f2ea; color: #12704f; } .ds-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }"
     },
     {
       "name": "Visitor Pass",
@@ -514,17 +514,17 @@
       "refersTo": "pass-number",
       "description": "Key-card pass: ink header with the daily number in Bodoni inside the crimson-on-ink frame.",
       "html": "<div class=\"ds-pass\"><div class=\"ds-pass-top\"><small>Visitor pass · 14 Oct</small><span class=\"ds-pass-no\">27</span></div><div class=\"ds-pass-body\"><strong>Ananya Rao</strong><span>Meeting Rohan Mehta · Sales office</span></div><div class=\"ds-pass-perf\"></div><div class=\"ds-pass-foot\">Wear this pass. Return it when you leave.</div></div>",
-      "css": ".ds-pass { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); width: 300px; border-radius: 18px; background: #fff; border: 1px solid #e2e2df; box-shadow: 0 24px 48px -12px rgba(21,21,21,0.24), 0 4px 12px rgba(21,21,21,0.06); overflow: hidden; } .ds-pass-top { background: #151515; color: #fff; padding: 18px 20px 20px; } .ds-pass-top small { display: block; color: #b4b4b1; font-size: 12px; font-weight: 500; } .ds-pass-no { display: inline-block; margin-top: 8px; padding: 4px 14px 2px; border: 1px solid #d0424f; font-family: var(--display, 'Bodoni Moda', Didot, Georgia, serif); font-weight: 500; font-size: 84px; line-height: 0.9; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; } .ds-pass-body { padding: 16px 20px; display: grid; gap: 4px; } .ds-pass-body strong { font-family: var(--display, 'Bodoni Moda', Didot, Georgia, serif); font-size: 19px; font-weight: 500; } .ds-pass-body span { font-size: 13px; color: #4b4b4a; } .ds-pass-perf { border-top: 1px dashed #cacac5; margin: 0 14px; } .ds-pass-foot { padding: 12px 20px 16px; font-size: 13px; color: #4b4b4a; }"
+      "css": ".ds-pass { font-family: var(--font, 'Geist', ui-sans-serif, system-ui, sans-serif); width: 300px; border-radius: 18px; background: #fff; border: 1px solid #e2e2df; box-shadow: 0 24px 48px -12px rgba(21,21,21,0.24), 0 4px 12px rgba(21,21,21,0.06); overflow: hidden; } .ds-pass-top { background: #151515; color: #fff; padding: 18px 20px 20px; } .ds-pass-top small { display: block; color: #b4b4b1; font-size: 12px; font-weight: 500; } .ds-pass-no { display: inline-block; margin-top: 8px; padding: 4px 14px 2px; border: 1px solid #d0424f; font-family: var(--display, 'Geist (600)', Didot, Georgia, serif); font-weight: 500; font-size: 84px; line-height: 0.9; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; } .ds-pass-body { padding: 16px 20px; display: grid; gap: 4px; } .ds-pass-body strong { font-family: var(--display, 'Geist (600)', Didot, Georgia, serif); font-size: 19px; font-weight: 500; } .ds-pass-body span { font-size: 13px; color: #4b4b4a; } .ds-pass-perf { border-top: 1px dashed #cacac5; margin: 0 14px; } .ds-pass-foot { padding: 12px 20px 16px; font-size: 13px; color: #4b4b4a; }"
     }
   ],
   "narrative": {
     "northStar": "One House Livery, Two Hotels",
-    "overview": "The desk is the complex's own instrument, worn in the livery the two hotels share. St. Regis lends the restraint: stone, white, near-black ink, a silver hairline, and an engraved Didone that speaks only in titles and names. Marriott Marquis lends the signature: its red, and the thin red frame it draws around MARQUIS, used here around the one label that says where you are (the gate, the security desk, the pass number). Everything a person operates is ink; red is never a control.\n\nDensity is operational. The guard works one-handed on a phone or a gate tablet with 48px fields and 56px actions on a stone ground; the admin works at a desk in a sidebar console with hairline tables, tabular figures, and a sticky page head. Hosts and guests never see a generic tool: they open a page headed by both full hotel logos, divided by a silver hairline. No admin-set site name appears on host, guest, or printed-pass surfaces; the two logos are the name.\n\nThe system is flat-leaning and quiet. White cards sit on stone with a hairline border and a barely-there shadow. State colours (live green, amber, vermilion) are reserved for state and always arrive with a word and usually an icon. The world rejects the SaaS look it replaced: no teal, no tinted gradient cards, no second accent.",
+    "overview": "The desk is the complex's own instrument, worn in the livery the two hotels share. St. Regis lends the restraint: stone, white, near-black ink, a silver hairline, and a bold sans that speaks only in titles and names. Marriott Marquis lends the signature: its red, and the thin red frame it draws around MARQUIS, used here around the one label that says where you are (the gate, the security desk, the pass number). Everything a person operates is ink; red is never a control.\n\nDensity is operational. The guard works one-handed on a phone or a gate tablet with 48px fields and 56px actions on a stone ground; the admin works at a desk in a sidebar console with hairline tables, tabular figures, and a sticky page head. Hosts and guests never see a generic tool: they open a page headed by both full hotel logos, divided by a silver hairline. No admin-set site name appears on host, guest, or printed-pass surfaces; the two logos are the name.\n\nThe system is flat-leaning and quiet. White cards sit on stone with a hairline border and a barely-there shadow. State colours (live green, amber, vermilion) are reserved for state and always arrive with a word and usually an icon. The world rejects the SaaS look it replaced: no teal, no tinted gradient cards, no second accent.",
     "keyCharacteristics": [
       "Stone ground, white surfaces, ink for every interaction.",
       "Marriott red as signature only: logos, the red frame, selection ticks, chart bars, the active nav icon.",
       "St. Regis silver as ornament only: the hairline between the two marks.",
-      "Bodoni Moda for titles, names and the pass number; Geist for everything operated.",
+      "Geist (600) for titles, names and the pass number; Geist for everything operated.",
       "One framed label per view naming the place, in tracked capitals.",
       "Co-brand marks on operating surfaces; both full logos on host, guest and sign-in surfaces."
     ],
@@ -550,8 +550,8 @@
         "section": "colors"
       },
       {
-        "name": "The Didone Names Rule",
-        "body": "Bodoni Moda appears only where something is named: a page, a step, a person, a pass number. Buttons, fields, tables and figures are Geist.",
+        "name": "The Bold Names Rule",
+        "body": "Geist (600) appears only where something is named: a page, a step, a person, a pass number. Buttons, fields, tables and figures are Geist.",
         "section": "typography"
       },
       {
@@ -569,7 +569,7 @@
       "Do make every interactive state ink (#151515): primary buttons, selected chips, switches, focus, carets, progress.",
       "Do keep Marquis Crimson (#9c1c2e) to lines and marks: the framed label, selection ticks, chart bars, the active nav icon, the logos.",
       "Do put the name of the place (gate, desk, pass number) in the square 1px crimson frame, once per view.",
-      "Do set titles, people's names and the pass number in Bodoni Moda 500; set everything operated in Geist.",
+      "Do set titles, people's names and the pass number in Geist (600) 500; set everything operated in Geist.",
       "Do show both hotel logos on host, approver, guest and sign-in surfaces, and the co-brand marks on operating surfaces, in place of any admin-set site name.",
       "Do pair every state colour with a word, and use tabular figures for every counted, timed or numbered value.",
       "Do keep guard fields at 48px with 16px text and guard actions at 56px."
@@ -581,7 +581,7 @@
       "Don't tint or gradient-fill a card to show its state; use a badge, a word or a border.",
       "Don't use tracked uppercase outside the framed label.",
       "Don't introduce teal or a second accent hue.",
-      "Don't set buttons, fields, tables or figures in Bodoni Moda."
+      "Don't set buttons, fields, tables or figures in Geist (600)."
     ]
   }
 }

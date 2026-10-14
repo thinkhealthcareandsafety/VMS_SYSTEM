@@ -5,7 +5,6 @@ import App from './App.jsx';
 import { ToastProvider } from './components/ui.jsx';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
-import '@fontsource-variable/bodoni-moda';
 import './styles.css';
 
 // A render error should never leave a guard staring at a blank page. Typed form data survives in storage.

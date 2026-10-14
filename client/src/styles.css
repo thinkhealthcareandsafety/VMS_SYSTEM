@@ -46,7 +46,7 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
   --font: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --display: 'Bodoni Moda Variable', 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif;
+  --display: var(--font);
   --mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
   color-scheme: light;
 }
@@ -1063,3 +1063,11 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .auth-art .foot { z-index: 1; background: #151515; margin: 0 -40px -40px; padding: 18px 40px 40px; }
 .auth-mark { display: none; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 @media (max-width: 860px) { .auth-mark { display: flex; } }
+
+/* Titles in the app's own sans (client preference over the serif): weight, not a second face, makes them stand out. */
+.page-head h1, .step-title h1, .auth-form h1, .auth-art h2, .approve-card h1, .list-head h1, .outcome h1, .group-title h1, .guest-pass h1, .side-title, .cobrand .name strong {
+  font-weight: 600; letter-spacing: -0.02em;
+}
+.auth-art h2 { letter-spacing: -0.03em; }
+.pass-no { font-weight: 600; letter-spacing: -0.04em; }
+.pass-body .who strong, .guest-pass-event { font-weight: 600; letter-spacing: -0.01em; }
