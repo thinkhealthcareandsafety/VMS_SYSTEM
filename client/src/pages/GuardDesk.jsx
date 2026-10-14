@@ -1023,8 +1023,8 @@ function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss, onP
     <div className={`tray ${rows.length ? '' : 'tray-empty'}`}>
       <div className="list-head">
         <div>
-          <h1>Waiting for host</h1>
-          <p className="muted">{rows.length ? 'Updates live. You’ll hear a chime on every reply.' : 'Nobody is waiting right now.'}</p>
+          <h1>{rows.some((r) => r.status === 'pending') || !rows.length ? 'Waiting for host' : 'Just let in'}</h1>
+          <p className="muted">{rows.length ? 'Updates live. Visitors with a number are let in; a timer means still waiting.' : 'Nobody is waiting right now.'}</p>
         </div>
       </div>
       {!loaded && <div className="skeleton" style={{ height: 74, borderRadius: 16 }} />}
