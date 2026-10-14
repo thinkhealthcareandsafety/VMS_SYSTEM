@@ -25,19 +25,19 @@ colors:
   amber-soft: "#faf0e0"
 typography:
   display:
-    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'Bodoni 72', Georgia, serif"
+    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'bold Geist 72', Georgia, serif"
     fontSize: "84px"
     fontWeight: 500
     lineHeight: 0.9
     letterSpacing: "-0.02em"
   headline:
-    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'Bodoni 72', Georgia, serif"
+    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'bold Geist 72', Georgia, serif"
     fontSize: "28px"
     fontWeight: 500
     lineHeight: 1.15
     letterSpacing: "-0.005em"
   title:
-    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'Bodoni 72', Georgia, serif"
+    fontFamily: "'Geist (600) Variable', 'Geist (600)', 'Didot', 'bold Geist 72', Georgia, serif"
     fontSize: "22px"
     fontWeight: 500
     lineHeight: 1.2
@@ -277,7 +277,7 @@ A near-monochrome stone-and-ink palette carrying one crimson signature and a thr
 
 ## Typography
 
-**Display Font:** Geist (600) (with Didot, Bodoni 72, Georgia)
+**Display Font:** Geist (600) (with Didot, bold Geist 72, Georgia)
 **Body Font:** Geist (with ui-sans-serif, system-ui, Segoe UI)
 **Label/Mono Font:** Geist Mono, for visitor IDs, Aadhaar masks and codes
 
@@ -351,7 +351,7 @@ Calm, ink-first, quietly tactile.
 - **Error:** Vermilion border, hint text in Vermilion. Digit boxes (mobile, OTP) share the same states.
 
 ### Navigation
-- **Admin sidebar:** Raised White column, co-brand marks with the house name in Bodoni at the top. Items are 36px, Geist 500, Graphite with 17px icons; hover Sunken Stone; the current page is a white tile with the rest shadow and a hairline inset, its icon in Marquis Crimson. Alert counts are Vermilion pills.
+- **Admin sidebar:** Raised White column, co-brand marks with the house name in bold Geist at the top. Items are 36px, Geist 500, Graphite with 17px icons; hover Sunken Stone; the current page is a white tile with the rest shadow and a hairline inset, its icon in Marquis Crimson. Alert counts are Vermilion pills.
 - **Guard tab bar (phones):** three 62px tabs, 22px icons, Pewter at rest and ink when selected, ink count pills.
 
 ### Badges and live state
@@ -361,11 +361,11 @@ Calm, ink-first, quietly tactile.
 The Marquis frame around the one name that says where you are: 22px tall, 0 8px padding, 1px Marquis Crimson border with square corners, Geist 500 10.5px uppercase at 0.16em in ink. On ink it switches to Crimson on Ink with near-white text. Used for the gate name in the guard top bar and "Security desk" on sign-in. One per view.
 
 ### Co-brand marks and lockup (signature)
-- **Marks:** the Marriott M and the St. Regis monogram (26px and 30px tall; 22/25px under 560px) divided by a 1px silver hairline, with the house name in Bodoni and "New Delhi" in sentence-case Geist beside them when there is room. Used on the guard top bar, the admin sidebar, the pass header and the compact sign-in mark.
+- **Marks:** the Marriott M and the St. Regis monogram (26px and 30px tall; 22/25px under 560px) divided by a 1px silver hairline, with the house name in bold Geist and "New Delhi" in sentence-case Geist beside them when there is room. Used on the guard top bar, the admin sidebar, the pass header and the compact sign-in mark.
 - **Lockup:** both full logos at their own optical heights, divided by a silver hairline. Used on the sign-in ink panel and above the card on host, approver and guest pages. Light versions are used on ink.
 
 ### The Visitor Pass (signature)
-A key card: an ink header carrying the co-brand marks (on-ink versions) and the daily number in Bodoni 84px inside a Crimson on Ink frame, over a white body with the visitor's photo, their name in Bodoni 19px, two-column details, and a dashed perforation. 18px radius, float shadow; it lands with a short ease-out and the number un-blurs into place. The printed version is a black-on-white 80mm receipt headed by both logos.
+A key card: an ink header carrying the co-brand marks (on-ink versions) and the daily number in bold Geist 84px inside a Crimson on Ink frame, over a white body with the visitor's photo, their name in bold Geist 19px, two-column details, and a dashed perforation. 18px radius, float shadow; it lands with a short ease-out and the number un-blurs into place. The printed version is a black-on-white 80mm receipt headed by both logos.
 
 ## Do's and Don'ts
 
