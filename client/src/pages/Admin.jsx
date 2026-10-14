@@ -19,41 +19,34 @@ import CourierBoard from '../components/Couriers.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
+// Badges say what needs someone: a red one needs action now, a grey one is a count.
 const NAV = [
   { group: 'Today', items: [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'inside', label: 'On premises', icon: Users },
-    { id: 'expected', label: 'Expected visitors', icon: CalendarCheck },
-    { id: 'groups', label: 'Groups and events', icon: PartyPopper },
-    { id: 'material', label: 'Material', icon: Package },
-    { id: 'couriers', label: 'Couriers', icon: Mail },
+    { id: 'inside', label: 'On premises', icon: Users, n: (s) => s.inside },
+    { id: 'expected', label: 'Expected', icon: CalendarCheck, n: (s) => s.expectedToday },
+    { id: 'groups', label: 'Events', icon: PartyPopper, n: (s) => s.groupsToday },
+  ] },
+  { group: 'Gate', items: [
+    { id: 'material', label: 'Material', icon: Package, n: (s) => s.materialPending + s.materialOverdue, alert: (s) => s.materialOverdue > 0 },
+    { id: 'couriers', label: 'Couriers', icon: Mail, n: (s) => s.parcelsWaiting, alert: (s) => s.parcelsOld > 0 },
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
-    { id: 'messages', label: 'Messages and prints', icon: MessageSquare },
     { id: 'audit', label: 'Audit log', icon: ScrollText },
   ] },
   { group: 'Setup', items: [
     { id: 'hosts', label: 'Hosts', icon: Building2 },
-    { id: 'staff', label: 'Staff accounts', icon: UserCog },
-    { id: 'blocked', label: 'Blocked visitors', icon: Ban },
-    { id: 'settings', label: 'Settings', icon: SettingsIcon },
+    { id: 'staff', label: 'Staff', icon: UserCog },
+    { id: 'blocked', label: 'Blocked', icon: Ban },
+    { id: 'settings', label: 'Settings', icon: SettingsIcon, n: (s) => s.printFailed + s.smsFailed, alert: () => true },
   ] },
 ];
+// Page titles. "messages" has no menu entry: it opens from the failure alert and from Settings.
 const TITLES = {
-  overview: ['Overview', 'Today at this gate'],
-  inside: ['On premises', 'Everyone let in and not yet checked out'],
-  history: ['Visit history', 'Every visit, searchable'],
-  messages: ['Messages and prints', 'Approval requests sent to hosts, and sticker jobs'],
-  audit: ['Audit log', 'Who did what, and when'],
-  hosts: ['Hosts', 'Residents and staff who can approve visitors'],
-  staff: ['Staff accounts', 'Who can sign in to the guard desk and this console'],
-  expected: ['Expected visitors', 'Let in on arrival, without waiting for the host'],
-  groups: ['Groups and events', 'Weddings, banquets, conferences: one guest list, a pass for every guest, any gate'],
-  material: ['Material', 'Gate passes out (returnable and not), deliveries and tools in, with approvals and returns'],
-  couriers: ['Couriers', 'Parcels in with a pickup code for the recipient, and parcels out, with every handover recorded'],
-  blocked: ['Blocked visitors', 'People the guard must not let in'],
-  settings: ['Settings', 'Site details, privacy and notifications'],
+  overview: 'Overview', inside: 'On premises', history: 'Visit history', messages: 'Messages and prints', audit: 'Audit log',
+  hosts: 'Hosts', staff: 'Staff accounts', expected: 'Expected visitors', groups: 'Groups and events', material: 'Material',
+  couriers: 'Couriers', blocked: 'Blocked visitors', settings: 'Settings',
 };
 
 // ---------- date helpers (site timezone) ----------
@@ -69,7 +62,7 @@ export default function Admin({ user, onLogout }) {
   const toast = useToast();
   const [params, setParams] = useSearchParams();
   const section = TITLES[params.get('s')] ? params.get('s') : 'overview';
-  const go = (s) => { setParams(s === 'overview' ? {} : { s }); window.scrollTo(0, 0); };
+  const go = (s, extra = {}) => { setParams(s === 'overview' ? {} : { s, ...extra }); window.scrollTo(0, 0); };
   const [stats, setStats] = useState(null);
   const [tick, setTick] = useState(0); // bumps on every live event; pages reload on change
   const [visitId, setVisitId] = useState(null);
@@ -89,10 +82,9 @@ export default function Admin({ user, onLogout }) {
   }, [loadStats]);
   const refresh = () => { setTick((t) => t + 1); loadStats(); };
 
-  const failures = stats ? stats.printFailed + stats.smsFailed : 0;
-  const [title, sub] = TITLES[section];
+  const title = TITLES[section];
   useTitle(title);
-  const page = { tick, refresh, go, openVisit: setVisitId, toast, stats, openExport: setExportOpts };
+  const page = { tick, refresh, go, openVisit: setVisitId, toast, stats, openExport: setExportOpts, params };
 
   return (
     <div className="console">
@@ -101,18 +93,18 @@ export default function Admin({ user, onLogout }) {
         {NAV.map((g) => (
           <div key={g.group} style={{ display: 'contents' }}>
             <span className="group">{g.group}</span>
-            {g.items.map(({ id, label, icon: Icon }) => (
-              <button key={id} className="nav-item" aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}>
-                <Icon /><span className="grow">{label}</span>
-                {id === 'inside' && stats ? <span className="n">{stats.inside}</span> : null}
-                {id === 'expected' && stats?.expectedToday ? <span className="n">{stats.expectedToday}</span> : null}
-                {id === 'messages' && failures > 0 ? <span className="n alert-n" aria-label={`${failures} failed`}>{failures}</span> : null}
-              </button>
-            ))}
+            {g.items.map(({ id, label, icon: Icon, n, alert }) => {
+              const count = stats && n ? n(stats) || 0 : 0;
+              const red = count > 0 && alert?.(stats);
+              return (
+                <button key={id} className="nav-item" aria-current={section === id || (id === 'settings' && section === 'messages') ? 'page' : undefined} onClick={() => go(id)}>
+                  <Icon /><span className="grow">{label}</span>
+                  {count > 0 && <span className={`n ${red ? 'alert-n' : ''}`}>{count}</span>}
+                </button>
+              );
+            })}
           </div>
         ))}
-        <span className="group">Data</span>
-        <button className="nav-item" onClick={() => setExportOpts({})}><Download /><span className="grow">Download data</span></button>
         <span className="spacer" />
         <div className="me">
           <Avatar name={user.fullName} size={32} />
@@ -124,10 +116,12 @@ export default function Admin({ user, onLogout }) {
 
       <main className="admin-main">
         <header className="page-head">
-          <div><h1>{title}</h1><p className="sub">{sub}</p></div>
+          <div>
+            {section === 'messages' && <button className="btn btn-ghost btn-sm back-link" onClick={() => go('settings')}><ChevronLeft />Settings</button>}
+            <h1>{title}</h1>
+          </div>
           <div className="right">
-            <span className="conn"><span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}</span>
-            <button className="btn btn-primary btn-sm" onClick={() => setExportOpts({})}><Download />Download</button>
+            <span className={`conn ${connected ? '' : 'off'}`} title={connected ? 'Updates as it happens' : 'Reconnecting'}><span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}</span>
           </div>
         </header>
         <div className="page">
@@ -155,6 +149,35 @@ export default function Admin({ user, onLogout }) {
 }
 
 // ================================================================= Overview
+// One line per thing that needs someone, most urgent first. Nothing to do: the list is not shown at all.
+function Attention({ stats, go }) {
+  const items = [];
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  if (stats.smsFailed || stats.printFailed) {
+    items.push({ tone: 'bad', icon: AlertTriangle, to: ['messages'], text: `${[stats.smsFailed && plural(stats.smsFailed, 'message', 'messages'), stats.printFailed && plural(stats.printFailed, 'sticker print', 'sticker prints')].filter(Boolean).join(' and ')} failed`, hint: 'Check the settings or the printer, then retry' });
+  }
+  if (stats.idMismatchToday) items.push({ tone: 'bad', icon: ShieldCheck, to: ['history', { idCheck: 'mismatch' }], text: `${plural(stats.idMismatchToday, 'visitor', 'visitors')} today with an ID that does not match the name or gender typed`, hint: 'Look at the card and the photo' });
+  if (stats.materialOverdue) items.push({ tone: 'bad', icon: Package, to: ['material'], text: `${plural(stats.materialOverdue, 'returnable gate pass is', 'returnable gate passes are')} overdue`, hint: 'Items not back by the agreed day' });
+  if (stats.staleInside) items.push({ tone: 'warn', icon: Clock, to: ['inside'], text: `${plural(stats.staleInside, 'visitor has', 'visitors have')} been inside unusually long`, hint: 'The guard may have missed the exit' });
+  if (stats.materialPending) items.push({ tone: 'warn', icon: Package, to: ['material'], text: `${plural(stats.materialPending, 'gate pass waits', 'gate passes wait')} for approval`, hint: 'Remind the head of department, or decide' });
+  if (stats.parcelsOld) items.push({ tone: 'warn', icon: Mail, to: ['couriers'], text: `${plural(stats.parcelsOld, 'parcel has', 'parcels have')} waited more than 3 days`, hint: 'Call the recipient or return it' });
+  if (!items.length) return null;
+  return (
+    <section className="panel attention" aria-labelledby="att-h">
+      <div className="panel-head"><h2 id="att-h">Needs attention</h2><span className="sub num">{items.length}</span></div>
+      <ul>
+        {items.map((it) => (
+          <li key={it.text}>
+            <button className={`att-row ${it.tone}`} onClick={() => go(...it.to)}>
+              <it.icon /><span className="grow"><strong>{it.text}</strong><small>{it.hint}</small></span><ArrowRight />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Overview({ stats, tick, go, openVisit, toast, refresh }) {
   const [pending, setPending] = useState(null);
   const [inside, setInside] = useState(null);
@@ -177,29 +200,18 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
 
   return (
     <>
-      {(stats.printFailed > 0 || stats.smsFailed > 0) && (
-        <div className="alert alert-bad" role="alert">
-          <AlertTriangle />
-          <span className="grow">
-            <strong>{[stats.smsFailed && `${stats.smsFailed} SMS`, stats.printFailed && `${stats.printFailed} sticker ${stats.printFailed === 1 ? 'print' : 'prints'}`].filter(Boolean).join(' and ')} failed.</strong>{' '}
-            Check the SMS settings or the printer, then retry.
-          </span>
-          <button className="btn btn-sm" onClick={() => go('messages')}>Review<ArrowRight /></button>
-        </div>
-      )}
-      {stats.staleInside > 0 && (
-        <div className="alert alert-warn">
-          <Clock />
-          <span className="grow"><strong>{stats.staleInside} {stats.staleInside === 1 ? 'visitor has' : 'visitors have'} been inside unusually long.</strong> The guard may have missed the exit.</span>
-          <button className="btn btn-sm" onClick={() => go('inside')}>Review<ArrowRight /></button>
-        </div>
-      )}
+      <Attention stats={stats} go={go} />
 
       <section className="panel kpis" aria-label="Today in numbers">
         <Kpi icon={Users} label="On premises" value={stats.inside} note={stats.staleInside ? `${stats.staleInside} long stay` : 'Right now'} />
         <Kpi icon={LogIn} label="Arrivals today" value={stats.arrivalsToday} note={stats.arrivalsToday ? `Busiest ${fmtHour(peak)}–${fmtHour((peak + 1) % 24)}` : 'None yet'} />
         <Kpi icon={Clock} label="Awaiting host" value={stats.pending} note={stats.pending ? 'Request sent, no reply yet' : stats.expectedToday ? `${stats.expectedToday} expected later today` : 'Nobody waiting'} />
         <Kpi icon={LogOut} label="Left today" value={left} note={stats.forceToday ? `${stats.forceToday} checked out by admin` : 'Checked out at the gate'} />
+      </section>
+      <section className="panel kpis kpis-gate" aria-label="At the gate today">
+        <Kpi icon={PartyPopper} label="Events today" value={stats.groupsToday} note={stats.groupsToday ? 'Guests let in by pass' : 'None today'} onClick={() => go('groups')} />
+        <Kpi icon={Package} label="Gate passes to approve" value={stats.materialPending} note={stats.materialOverdue ? `${stats.materialOverdue} overdue` : 'Material going out'} onClick={() => go('material')} />
+        <Kpi icon={Mail} label="Parcels to collect" value={stats.parcelsWaiting} note={stats.parcelsOld ? `${stats.parcelsOld} over 3 days` : 'At the gate'} onClick={() => go('couriers')} />
       </section>
 
       <div className="overview-grid">
@@ -250,14 +262,15 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
   );
 }
 
-function Kpi({ icon: Icon, label, value, note }) {
-  return (
-    <div className="kpi">
+function Kpi({ icon: Icon, label, value, note, onClick }) {
+  const body = (
+    <>
       <span className="k"><Icon />{label}</span>
       <span className="v">{value}</span>
       <span className="d">{note}</span>
-    </div>
+    </>
   );
+  return onClick ? <button type="button" className="kpi kpi-link" onClick={onClick}>{body}</button> : <div className="kpi">{body}</div>;
 }
 
 function ListSkeleton() {
@@ -491,8 +504,10 @@ const RANGES = [
   { id: 'month', label: 'This month', from: monthStart, to: () => '' },
   { id: 'all', label: 'All', from: () => '', to: () => '' },
 ];
-function HistoryPage({ tick, openVisit, openExport }) {
-  const [f, setF] = useState({ name: '', host: '', company: '', status: '', gate: '', from: daysAgo(6), to: '' });
+const ID_CHECKS = [['mismatch', 'Does not match'], ['partial', 'Partly matches'], ['match', 'Matches'], ['unread', 'Not readable']];
+function HistoryPage({ tick, openVisit, openExport, params }) {
+  const preset = ID_CHECKS.some(([k]) => k === params.get('idCheck')) ? params.get('idCheck') : '';
+  const [f, setF] = useState({ name: '', host: '', company: '', status: '', gate: '', idCheck: preset, from: preset ? daysAgo(0) : daysAgo(6), to: '' });
   const [gates, setGates] = useState([]);
   useEffect(() => { api('/api/admin/gates').then((r) => setGates(r.rows)).catch(() => {}); }, []);
   const [applied, setApplied] = useState(f);
@@ -524,6 +539,12 @@ function HistoryPage({ tick, openVisit, openExport }) {
           <select className="select" value={f.status} onChange={set('status')}>
             <option value="">Any status</option>
             {Object.entries(STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Name on ID</span>
+          <select className="select" value={f.idCheck} onChange={set('idCheck')}>
+            <option value="">Any</option>
+            {ID_CHECKS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </label>
         {gates.length > 1 && (
@@ -574,7 +595,10 @@ function HistoryPage({ tick, openVisit, openExport }) {
                       </>
                     ) : <span className="faint">—</span>}
                   </td>
-                  <td><StatusBadge status={r.status} /></td>
+                  <td>
+                    <StatusBadge status={r.status} />
+                    {r.idCheck?.status === 'mismatch' && <div className="meta-line"><span className="badge badge-bad plain">ID does not match</span></div>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -639,8 +663,16 @@ const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
 const actionLabel = (a) => ACTIONS[a]?.[0] || a;
 const TL_ICON = { ok: CheckCircle2, bad: XCircle, warn: AlertTriangle };
 // How the guard's phone masked the Aadhaar number before upload.
+const ID_CHECK_TEXT = { match: ['Name matches the card', 'badge-ok'], partial: ['Name only partly matches the card', 'badge-warn'], mismatch: ['Name or gender does not match the card', 'badge-bad'], unread: ['Name on the card could not be read', ''] };
+function IdCheckLine({ c }) {
+  const [text, cls] = ID_CHECK_TEXT[c.status] || ID_CHECK_TEXT.unread;
+  const bits = [c.source === 'qr' ? 'read from the Aadhaar QR' : c.source === 'ocr' ? 'read from the printed card' : '', c.gender === 'mismatch' ? 'gender differs' : c.gender === 'match' ? 'gender matches' : '', c.tamper ? 'the QR does not belong to this card' : ''].filter(Boolean);
+  return <p style={{ margin: '0 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}><span className={`badge ${cls}`}>{text}</span>{bits.length > 0 && <span className="faint" style={{ fontSize: 12.5 }}>{bits.join(' · ')}. Checked on the guard’s device; advice only.</span>}</p>;
+}
+
 const maskNote = (m) => {
   const [how, manual] = m.split('+');
+  if (how === 'none') return manual ? 'Not an Aadhaar: nothing hidden automatically. The guard blacked out parts by hand.' : 'Not an Aadhaar: stored as photographed.';
   const base = { auto: 'Number found and hidden automatically on the guard’s phone', already: 'Card was already masked (UIDAI masked Aadhaar)', guide: 'Number could not be read; the standard area was hidden' }[how] || 'Masked on the guard’s phone';
   return manual ? `${base}. The guard blacked out more by hand.` : `${base}.`;
 };
@@ -748,7 +780,8 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
             )}
 
             <div>
-              <h3 className="section-title">Aadhaar card (masked)</h3>
+              <h3 className="section-title">{v.idType && v.idType !== 'aadhaar' ? v.idLabel : 'Aadhaar card (masked)'}</h3>
+              {v.idCheck && <IdCheckLine c={v.idCheck} />}
               {!v.hasIdImage ? (
                 <p className="muted">Deleted automatically after the retention period.</p>
               ) : showId ? (
@@ -762,7 +795,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
                     )
               ) : (
                 <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
-                  <button className="btn btn-sm" onClick={() => setShowId(true)}><Eye />Show masked Aadhaar</button>
+                  <button className="btn btn-sm" onClick={() => setShowId(true)}><Eye />{v.idType && v.idType !== 'aadhaar' ? `Show ${v.idLabel}` : 'Show masked Aadhaar'}</button>
                   <span className="faint" style={{ fontSize: 12.5 }}>Each view is recorded in the audit log.</span>
                 </div>
               )}
@@ -1077,7 +1110,7 @@ function AddHostDialog({ open, host, onClose, onDone }) {
             <label className="field"><span>Flat or department</span><input className="input" required value={f.unit} onChange={set('unit')} placeholder="A-101" /></label>
             <label className="field"><span>Mobile</span><input className="input num" required inputMode="tel" value={f.mobile} onChange={set('mobile')} placeholder="98765 43210" /></label>
           </div>
-          <label className="field"><span>Email <span className="faint">· optional</span></span><input className="input" type="email" value={f.email} onChange={set('email')} /></label>
+          <label className="field"><span>Email <span className="faint">· optional, also gets approval requests</span></span><input className="input" type="email" value={f.email} onChange={set('email')} /></label>
           {editing && host.telegram && (
             <div className="field"><span>Telegram</span>
               <div className="notice-inline"><span className="badge badge-live">Connected</span><button type="button" className="btn btn-sm btn-danger-outline" onClick={disconnect}>Disconnect</button></div>
@@ -1869,7 +1902,7 @@ function GatesManager() {
   );
 }
 
-function SettingsPage({ toast, superAdmin }) {
+function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
   const [s, setS] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1949,8 +1982,23 @@ function SettingsPage({ toast, superAdmin }) {
       </section>
 
       <section className="panel">
-        <div className="panel-head"><h2>Notifications and printing</h2></div>
+        <div className="panel-head">
+          <h2>Notifications and printing</h2>
+          <button type="button" className="btn btn-sm" onClick={() => go('messages')}>
+            Messages and prints{stats && stats.printFailed + stats.smsFailed > 0 && <span className="badge badge-bad plain">{stats.printFailed + stats.smsFailed} failed</span>}<ArrowRight />
+          </button>
+        </div>
         <div className="panel-body">
+          <div className="channel">
+            <MessageSquare />
+            <span className="grow"><strong>WhatsApp</strong><small>{ch.whatsapp ? 'Hosts get requests with Let them in / Decline buttons.' : 'Not set up.'}</small></span>
+            {ch.whatsapp ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
+          </div>
+          <div className="channel">
+            <Mail />
+            <span className="grow"><strong>Email</strong><small>{ch.email ? `Sent from ${ch.email} to every host with an email address, as well as WhatsApp or SMS. Free.` : 'Not set up. Add a mail account in the server settings (EMAIL_DRIVER) to send approval requests by email too.'}</small></span>
+            {ch.email ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
+          </div>
           <div className="channel">
             <Send />
             <span className="grow"><strong>Telegram</strong><small>{ch.telegram ? `Connected as @${ch.telegram}. Connect each host from the Hosts page.` : 'Not set up. Add a bot token in the server settings to send requests with Let them in / Decline buttons.'}</small></span>
@@ -1965,6 +2013,17 @@ function SettingsPage({ toast, superAdmin }) {
             <Printer />
             <span className="grow"><strong>Visitor passes</strong><small>{ch.printer === 'off' ? 'Printed from the guard desk through the browser, on any printer installed on that computer.' : 'Sent to the label printer automatically when a visitor is approved.'}</small></span>
             <span className="badge badge-live">On</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Data</h2></div>
+        <div className="panel-body">
+          <div className="channel">
+            <Download />
+            <span className="grow"><strong>Download visitor records</strong><small>Excel sheet, or the full record with photos. Visit history downloads exactly what its filters show.</small></span>
+            <button type="button" className="btn btn-sm" onClick={() => openExport({})}>Download</button>
           </div>
         </div>
       </section>

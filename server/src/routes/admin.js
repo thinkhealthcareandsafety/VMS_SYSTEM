@@ -9,9 +9,10 @@ const archiver = require('archiver');
 const config = require('../config');
 const { requireRole, isAdmin } = require('../middleware/auth');
 const telegram = require('../services/telegram');
+const email = require('../services/email');
 const messaging = require('../services/messaging');
 const exporter = require('../services/export');
-const { Visit, Host, Outbox, Audit, User, Invite, Block, Gate } = require('../models');
+const { Visit, Host, Outbox, Audit, User, Invite, Block, Gate, Material, Parcel, Group } = require('../models');
 const passes = require('../services/passes');
 const settings = require('../services/settings');
 const { siteDay, audit, normalizeMobile, cleanText, passwordProblem, sha256 } = require('../services/core');
@@ -29,6 +30,7 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
   if (to.success && to.data) q.visitDay = { ...(q.visitDay || {}), $lte: to.data };
   if (query.status) q.status = String(query.status);
   if (query.gate && mongoose.isValidObjectId(query.gate)) q['movements.gate'] = new mongoose.Types.ObjectId(String(query.gate));
+  if (['match', 'partial', 'mismatch', 'unread'].includes(query.idCheck)) q['idCheck.status'] = query.idCheck;
   if (query.company) q.company = new RegExp(esc(cleanText(query.company, 100)), 'i');
   if (query.name) {
     const re = new RegExp(esc(cleanText(query.name, 100)), 'i');
@@ -47,7 +49,7 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
     total, page, limit, docs: visits,
     rows: visits.map((v) => ({
       id: String(v._id), ref: v.ref, name: `${v.firstName} ${v.lastName}`, mobile: v.mobile, email: v.email ?? null, company: v.company,
-      purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status, gender: v.gender ?? null, faceMatchScore: v.faceMatchScore ?? null, mobileVerified: v.mobileVerified ?? null,
+      purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status, gender: v.gender ?? null, faceMatchScore: v.faceMatchScore ?? null, idType: v.idType || 'aadhaar', idCheck: v.idCheck?.status ? v.idCheck : null, mobileVerified: v.mobileVerified ?? null,
       dailyNumber: v.dailyNumber ?? null, dailyDay: v.dailyDay ?? null, visitDay: v.visitDay,
       createdAt: v.createdAt, decidedAt: v.decidedAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason,
       hasIdImage: Boolean(v.idImagePath),
@@ -163,6 +165,19 @@ router.get('/visits/:id/timeline', requireRole('admin'), async (req, res) => {
   res.json({ rows: rows.map((r) => ({ at: r.at, actor: r.actor, role: r.actorRole, action: r.action, details: r.details })) });
 });
 
+// What needs someone at the office now, beyond visitors: drives the Overview cards and the sidebar badges.
+async function gateWork(today) {
+  const [materialPending, materialOverdue, parcelsWaiting, parcelsOld, groupsToday, idMismatchToday] = await Promise.all([
+    Material.countDocuments({ direction: 'out', status: 'pending' }),
+    Material.countDocuments({ kind: 'returnable', status: { $in: ['out', 'partly_returned'] }, returnBy: { $lt: today } }),
+    Parcel.countDocuments({ direction: 'in', status: 'received' }),
+    Parcel.countDocuments({ direction: 'in', status: 'received', createdAt: { $lt: new Date(Date.now() - 72 * 3600e3) } }),
+    Group.countDocuments({ status: 'active', startDay: { $lte: today }, endDay: { $gte: today } }),
+    Visit.countDocuments({ visitDay: today, 'idCheck.status': 'mismatch' }),
+  ]);
+  return { materialPending, materialOverdue, parcelsWaiting, parcelsOld, groupsToday, idMismatchToday };
+}
+
 router.get('/stats', requireRole('admin'), async (req, res) => {
   const today = siteDay();
   const [inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleCut] = await Promise.all([
@@ -171,7 +186,7 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
     Visit.countDocuments({ visitDay: today, status: 'checked_out' }),
     Visit.countDocuments({ visitDay: today, status: 'force_checked_out' }),
     Outbox.countDocuments({ kind: 'print', status: 'failed' }),
-    Outbox.countDocuments({ kind: { $in: ['sms', 'telegram'] }, status: 'failed' }),
+    Outbox.countDocuments({ kind: { $in: ['sms', 'telegram', 'email'] }, status: 'failed' }),
     Visit.countDocuments({ status: 'approved', decidedAt: { $lt: new Date(Date.now() - config.maxInsideHours * 3600e3) } }),
   ]);
   const arrivals = await Visit.find({ visitDay: today }, 'createdAt').lean();
@@ -183,8 +198,9 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
   res.json({
     today, inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleInside: staleCut, arrivalsToday: arrivals.length, byHour,
     // So the console can say plainly when SMS are only logged, or no sticker printer is connected.
-    smsLive: config.sms.driver !== 'console', telegramOn: telegram.enabled(), printerOn: config.printer.mode !== 'off',
+    smsLive: config.sms.driver !== 'console', telegramOn: telegram.enabled(), emailOn: email.enabled(), printerOn: config.printer.mode !== 'off',
     expectedToday: await Invite.countDocuments({ day: today, status: 'expected' }),
+    ...(await gateWork(today)),
   });
 });
 
@@ -197,7 +213,7 @@ router.get('/stale', requireRole('admin'), async (req, res) => {
 
 router.get('/outbox', requireRole('admin'), async (req, res) => {
   const kind = req.query.kind === 'print' ? 'print' : 'sms';
-  const rows = await Outbox.find({ kind: kind === 'print' ? 'print' : { $in: ['sms', 'telegram'] } }).sort({ _id: -1 }).limit(100).populate('visit', 'ref').lean();
+  const rows = await Outbox.find({ kind: kind === 'print' ? 'print' : { $in: ['sms', 'telegram', 'whatsapp', 'email'] } }).sort({ _id: -1 }).limit(100).populate('visit', 'ref').lean();
   res.json({
     rows: rows.map((o) => ({
       id: String(o._id), ref: o.visit?.ref, status: o.status, attempts: o.attempts, lastError: o.lastError,
@@ -464,6 +480,8 @@ router.get('/settings', requireRole('admin'), async (req, res) => {
       otp: messaging.otpLive(),
       telegram: telegram.enabled() ? await telegram.botUsername().catch(() => null) || 'connected' : null,
       sms: config.sms.driver !== 'console',
+      whatsapp: require('../services/whatsapp').enabled(),
+      email: email.enabled() ? config.email.from : null,
       printer: config.printer.mode,
     },
   });

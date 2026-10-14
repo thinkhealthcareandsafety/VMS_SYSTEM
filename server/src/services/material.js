@@ -4,6 +4,7 @@ const { Material, ActionToken, Counter, Outbox, Host } = require('../models');
 const { siteDay, audit, sha256, cleanText, normalizeMobile } = require('./core');
 const telegram = require('./telegram');
 const whatsapp = require('./whatsapp');
+const email = require('./email');
 
 // Material in and out of the site, after the RGP/NRGP practice of Indian plants and hotels:
 //   out: returnable (sent for repair or loan, due back by a date) or non-returnable (scrap, sale, transfer);
@@ -74,6 +75,16 @@ async function requestApproval(m, host) {
   const link = `${config.appBaseUrl}/approve-material/${raw}`;
   const who = [m.party.name, m.party.company].filter(Boolean).join(', ');
   const text = `📦 *Gate pass ${m.number}* needs your approval\n${KIND_LABEL[m.kind]} · going out to ${who}${m.returnBy ? `\nMust come back by ${shortDay(m.returnBy)}` : ''}\n\n${itemsLine(m)}${m.purpose ? `\nPurpose: ${m.purpose}` : ''}\n\nTap a button below, or see it here: ${link}`;
+  // Email goes as well, when the approver has an address.
+  const mailed = email.enabled() && host.email;
+  if (mailed) {
+    const mail = email.approvalEmail({
+      headline: `Gate pass ${m.number} needs your approval.`,
+      rows: [['Type', KIND_LABEL[m.kind]], ['Going out to', who], ['Items', itemsLine(m)], ['Purpose', m.purpose], ['Back by', m.returnBy ? shortDay(m.returnBy) : '']],
+      link, button: 'See it and approve', valid: `${APPROVAL_HOURS} hours`, note: 'You will see the full list and can approve or reject it.',
+    });
+    await Outbox.create({ kind: 'email', material: m._id, to: host.email, body: mail.text, vars: { subject: `Gate pass ${m.number} needs your approval`, html: mail.html } });
+  }
   if (whatsapp.enabled() && host.mobile && config.approvalChannel !== 'sms') {
     await Outbox.create({ kind: 'whatsapp', material: m._id, to: host.mobile, body: text, vars: { prefix: 'm' } });
     return 'whatsapp';
@@ -82,7 +93,7 @@ async function requestApproval(m, host) {
     await Outbox.create({ kind: 'telegram', material: m._id, to: String(host.telegramChatId), body: text.replace(/\*/g, ''), vars: { prefix: 'm' } });
     return 'telegram';
   }
-  return null;
+  return mailed ? 'email' : null;
 }
 
 async function findByToken(raw) {

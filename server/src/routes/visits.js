@@ -11,6 +11,7 @@ const messaging = require('../services/messaging');
 const { retireTelegram } = require('../services/notify');
 const telegram = require('../services/telegram');
 const whatsapp = require('../services/whatsapp');
+const email = require('../services/email');
 const passes = require('../services/passes');
 const vault = require('../services/vault');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
@@ -31,6 +32,21 @@ function faceMatchFrom(b) {
   if (['no_card_face', 'no_photo_face', 'unavailable'].includes(b.faceMatch)) return { faceMatchStatus: b.faceMatch };
   return {};
 }
+const ID_TYPES = ['aadhaar', 'pan', 'dl', 'passport', 'voter', 'other'];
+const ID_TYPE_LABEL = { aadhaar: 'Aadhaar', pan: 'PAN card', dl: 'Driving licence', passport: 'Passport', voter: 'Voter ID', other: 'Other ID' };
+// The ID check is made on the guard's device too; only the outcome is kept.
+function idCheckFrom(c) {
+  if (!c || typeof c !== 'object' || !['match', 'partial', 'mismatch', 'unread'].includes(c.status)) return undefined;
+  const score = Number(c.nameScore);
+  return {
+    status: c.status,
+    ...(['qr', 'ocr'].includes(c.source) ? { source: c.source } : {}),
+    ...(c.nameScore != null && Number.isFinite(score) && score >= 0 && score <= 100 ? { nameScore: Math.round(score) } : {}),
+    ...(['match', 'mismatch'].includes(c.gender) ? { gender: c.gender } : {}),
+    ...(c.tamper === true ? { tamper: true } : {}),
+  };
+}
+const idLabelOf = (v) => (v.idType === 'other' && v.idTypeOther ? v.idTypeOther : ID_TYPE_LABEL[v.idType || 'aadhaar']);
 const publicVisit = (v, host, withMobile = false) => ({
   id: String(v._id),
   ref: v.ref,
@@ -43,7 +59,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   dailyNumber: v.dailyNumber ?? null,
   dailyDay: v.dailyDay ?? null,
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
-  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), hasFullId: Boolean(v.idFullPath), idMaskMethod: v.idMaskMethod, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
+  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), hasFullId: Boolean(v.idFullPath), idMaskMethod: v.idMaskMethod, idType: v.idType || 'aadhaar', idLabel: idLabelOf(v), idCheck: v.idCheck?.status ? v.idCheck : null, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
   decidedAt: v.decidedAt,
   checkedOutAt: v.checkedOutAt,
   validity: passes.validityLabel(v.validity),
@@ -67,6 +83,15 @@ async function issueApprovalLink(visit, host, visitorName, company) {
     ? { kind: 'telegram', to: String(host.telegramChatId), body: `🚪 ${visitorName}${from} is at the gate to meet you.\nPass asked for: ${passes.validityLabel(visit.validity)}\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.` }
     : null;
   const sms = { kind: 'sms', to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, minutes: config.approvalTtlMinutes } };
+  // Email goes as well as the main channel, to every host with an address: free, and reaches people away from their phone.
+  if (email.enabled() && host.email) {
+    const mail = email.approvalEmail({
+      headline: `${visitorName}${from} is at the gate to meet you.`,
+      rows: [['Purpose', visit.purpose], ['Pass asked for', passes.validityLabel(visit.validity)]],
+      link, button: 'See them and approve', valid: `${config.approvalTtlMinutes} minutes`,
+    });
+    await Outbox.create({ kind: 'email', visit: visit._id, to: host.email, body: mail.text, vars: { subject: `Visitor at the gate: ${visitorName}`, html: mail.html } });
+  }
   if (config.approvalChannel !== 'sms' && whatsapp.enabled() && host.mobile) {
     // If WhatsApp can't deliver, the request goes by Telegram, or by SMS once a real SMS gateway is on.
     const fallback = tg || (config.sms.driver !== 'console' ? sms : null);
@@ -250,10 +275,12 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   const photo = decodeJpeg(b.photo, MAX_PHOTO);
   if (!photo) return res.status(400).json({ error: 'A live photo is required' });
   const idImage = decodeJpeg(b.idImage, MAX_ID);
-  if (!idImage) return res.status(400).json({ error: 'Aadhaar image is required' });
-  const idMaskMethod = ['auto', 'already', 'guide'].some((m) => b.idMask === m || b.idMask === `${m}+manual`) ? b.idMask : undefined;
+  if (!idImage) return res.status(400).json({ error: 'A photo of the ID card is required' });
+  const idType = ID_TYPES.includes(b.idType) ? b.idType : 'aadhaar';
+  const idTypeOther = idType === 'other' ? cleanText(b.idTypeOther, 40) || undefined : undefined;
+  const idMaskMethod = ['auto', 'already', 'guide', 'none'].some((m) => b.idMask === m || b.idMask === `${m}+manual`) ? b.idMask : undefined;
   // The full card, for the Super Admin only. Optional: older screens do not send it, and it never blocks a visitor.
-  const idFull = (await settings.get()).fullIdCapture && b.idImageFull ? decodeJpeg(b.idImageFull, MAX_ID) : null;
+  const idFull = (await settings.get()).fullIdCapture && idType === 'aadhaar' && b.idImageFull ? decodeJpeg(b.idImageFull, MAX_ID) : null;
 
   let photoPath, idPath, idFullPath;
   try {
@@ -268,7 +295,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       host: host._id,
       status: 'pending',
       visitDay: siteDay(),
-      photoPath, idImagePath: idPath, idFullPath, idMaskMethod,
+      photoPath, idImagePath: idPath, idFullPath, idMaskMethod, idType, idTypeOther, idCheck: idCheckFrom(b.idCheck),
       ...faceMatchFrom(b), ...mobileCheck,
       validity: pass.validity,
       arrival: { gate: gate.id || undefined, gateName: gate.name, by: req.user.id, byName: req.user.fullName },

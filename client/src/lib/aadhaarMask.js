@@ -10,6 +10,7 @@
 //    asked to check; they can black out anything else by hand before sending.
 // Painting is solid fill, not blur, so nothing under it is recoverable.
 import { createWorker } from 'tesseract.js';
+import { parseAadhaarQr, readPrinted } from './idMatch.js';
 
 export const CARD_ASPECT = 85.6 / 54; // ISO/IEC 7810 ID-1 card
 export const MASK_RECT = { x: 0.16, y: 0.6, w: 0.48, h: 0.2 }; // fallback: where the number sits on the PVC card front
@@ -125,6 +126,7 @@ function findNumbers(data) {
   const boxes = [];
   let alreadyMasked = false;
   let uncertain = false;
+  let last4 = null; // the visible last group, from a clean 4-4-4 read: checked against the QR
   const lines = wordsByLine(data);
   for (const words of lines) {
     if (/[Xx×*]{4}\s*[Xx×*]{4}\s*\d{4}/.test(words.map((w) => w.text).join(' '))) alreadyMasked = true; // UIDAI's own masked Aadhaar
@@ -160,6 +162,8 @@ function findNumbers(data) {
       const uid = four[i] && four[i + 1] && tail[i + 2];
       if (vid || uid) {
         const hidden = chain.slice(i, i + (vid ? 3 : 2));
+        const kept = chain[i + (vid ? 3 : 2)];
+        if (!vid && kept.d.length === 4 && !last4) last4 = kept.d;
         boxes.push(boxOf(hidden.map((w) => w.bbox)));
         matched = true;
         i += vid ? 3 : 2;
@@ -189,7 +193,7 @@ function findNumbers(data) {
       uncertain = true;
     }
   }
-  return { boxes, alreadyMasked, uncertain };
+  return { boxes, alreadyMasked, uncertain, last4 };
 }
 
 // Grayscale, more contrast and a sensible size help OCR on phone photos.
@@ -205,38 +209,65 @@ function prepareForOcr(card, strong = false) {
   return { canvas: c, scale };
 }
 
+// QR codes on the card: where they are (to black them out) and what they say (the Aadhaar Secure QR).
+// The browser's detector where it exists, jsQR everywhere else (Chrome on Windows).
+let jsQR;
 async function findQrCodes(card) {
   try {
-    if (!('BarcodeDetector' in window)) return [];
-    const formats = await window.BarcodeDetector.getSupportedFormats();
-    if (!formats.includes('qr_code')) return [];
-    const found = await new window.BarcodeDetector({ formats: ['qr_code'] }).detect(card);
-    return found.map((f) => f.boundingBox);
+    if ('BarcodeDetector' in window && (await window.BarcodeDetector.getSupportedFormats()).includes('qr_code')) {
+      const found = await new window.BarcodeDetector({ formats: ['qr_code'] }).detect(card);
+      if (found.length) return found.map((f) => ({ box: f.boundingBox, raw: f.rawValue }));
+    }
+  } catch { /* fall through */ }
+  try {
+    if (!jsQR) jsQR = (await import('jsqr')).default;
+    const img = card.getContext('2d').getImageData(0, 0, card.width, card.height);
+    const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+    if (!r) return [];
+    const xs = [r.location.topLeftCorner.x, r.location.topRightCorner.x, r.location.bottomLeftCorner.x, r.location.bottomRightCorner.x];
+    const ys = [r.location.topLeftCorner.y, r.location.topRightCorner.y, r.location.bottomLeftCorner.y, r.location.bottomRightCorner.y];
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    return [{ box: { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }, raw: r.data }];
   } catch { return []; }
 }
 
+const textLines = (data) => wordsByLine(data).map((ws) => ws.map((w) => w.text).join(' ')).filter((l) => l.trim());
+
 // ---------------------------------------------------------------- Masking
-// Paints the card in place and returns { dataUrl, method, numbers, qr }.
-// method: 'auto' (number found and hidden), 'already' (card was already masked), 'guide' (fallback box).
-export async function maskCard(card) {
+// Reads the card, then paints it in place. Returns { dataUrl, method, numbers, qr, check, read }.
+// method: 'auto' (number found and hidden), 'already' (card was already masked), 'guide' (fallback box),
+// 'none' (not an Aadhaar: nothing is hidden automatically; the guard can black out by hand).
+// read: what the card says, for checking the name and gender (see idMatch.js). Only words, never the number.
+export async function maskCard(card, idType = 'aadhaar') {
+  const aadhaar = idType === 'aadhaar';
   const ctx = card.getContext('2d');
   let numbers = [];
   let uncertain = false;
   let alreadyMasked = false;
+  let ocrLast4 = null;
+  let lines = [];
   try {
     const worker = await withTimeout(getWorker(), 25000);
-    for (const strong of [false, true]) {
+    for (const strong of aadhaar ? [false, true] : [false]) {
       const { canvas, scale } = prepareForOcr(card, strong);
       const { data } = await withTimeout(worker.recognize(canvas, {}, { blocks: true }), 15000);
+      if (!lines.length) lines = textLines(data);
+      if (!aadhaar) break;
       const found = findNumbers(data);
       alreadyMasked = alreadyMasked || found.alreadyMasked;
       uncertain = found.uncertain;
+      ocrLast4 = ocrLast4 || found.last4;
       numbers = found.boxes.map((b) => ({ x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale }));
-      if (numbers.length || alreadyMasked) break;
+      if (numbers.length || alreadyMasked) { lines = textLines(data); break; }
     }
   } catch { /* engine unavailable or too slow: fall back below */ }
 
-  const qr = await findQrCodes(card);
+  const codes = aadhaar ? await findQrCodes(card) : [];
+  const qr = codes.map((c) => c.box);
+  let fromQr = null;
+  for (const c of codes) { fromQr = fromQr || (await parseAadhaarQr(c.raw)); }
+  const read = fromQr ? { ...fromQr, ocrLast4 } : { ...readPrinted(lines), ocrLast4 };
 
   ctx.fillStyle = '#000';
   for (const b of numbers) {
@@ -250,8 +281,8 @@ export async function maskCard(card) {
     ctx.fillRect(b.x - p, b.y - p, b.width + p * 2, b.height + p * 2);
   }
 
-  let method = 'auto';
-  if (!numbers.length) {
+  let method = aadhaar ? 'auto' : 'none';
+  if (aadhaar && !numbers.length) {
     if (alreadyMasked) method = 'already';
     else {
       method = 'guide';
@@ -260,7 +291,7 @@ export async function maskCard(card) {
       ctx.fillRect(MASK_RECT.x * w, MASK_RECT.y * h, MASK_RECT.w * w, MASK_RECT.h * h);
     }
   }
-  return { dataUrl: card.toDataURL('image/jpeg', 0.82), method, numbers: numbers.length, qr: qr.length, check: method === 'guide' || (method === 'auto' && uncertain) };
+  return { dataUrl: card.toDataURL('image/jpeg', 0.82), method, numbers: numbers.length, qr: qr.length, check: method === 'guide' || (method === 'auto' && uncertain), read };
 }
 
 // The guard's own touch-ups: paints rectangles (in image pixels) onto an already masked image.

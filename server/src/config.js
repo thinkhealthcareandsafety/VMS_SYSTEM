@@ -49,6 +49,17 @@ module.exports = {
   // on = the guard's waiting screen also offers "Send on WhatsApp": it opens WhatsApp on the gate device with the
   // host's number and the approval link filled in, and the guard presses send. No WhatsApp API or template needed.
   approvalWhatsapp: env.APPROVAL_WHATSAPP === 'on',
+  // Email approvals, sent as well as WhatsApp / SMS to every host with an email address. Free.
+  //   smtp:  any mail server (Gmail with an app password, Microsoft 365, Zoho, Brevo SMTP)
+  //   brevo: Brevo's HTTP API (free 300 a day; works where SMTP ports are closed)
+  //   off:   no email (default)
+  email: {
+    driver: env.EMAIL_DRIVER || 'off',
+    from: env.EMAIL_FROM || env.SMTP_USER || '',          // the sending address
+    fromName: env.EMAIL_FROM_NAME || 'Security desk',
+    smtp: { host: env.SMTP_HOST || 'smtp.gmail.com', port: Number(env.SMTP_PORT || 465), user: env.SMTP_USER || '', pass: env.SMTP_PASS || '' },
+    brevoKey: env.BREVO_API_KEY || '',
+  },
   sms: {
     driver: env.SMS_DRIVER || 'console',   // console | http | msg91
     // msg91: approval text sent through a DLT-approved template. The template's variables, in order, receive

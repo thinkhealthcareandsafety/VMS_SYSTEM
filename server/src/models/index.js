@@ -62,7 +62,16 @@ const visitSchema = new Schema({
   dailyNumber: { type: Number },                             // 1,2,3... resets each day
   photoPath: { type: String },
   idImagePath: { type: String },                             // MASKED Aadhaar image only
-  idMaskMethod: { type: String },                            // auto | already | guide, + "+manual" if the guard blacked out more
+  idMaskMethod: { type: String },                            // auto | already | guide | none, + "+manual" if the guard blacked out more
+  idType: { type: String, enum: ['aadhaar', 'pan', 'dl', 'passport', 'voter', 'other'] }, // absent on visits from before the choice existed (all Aadhaar)
+  idTypeOther: { type: String },                             // what "other" was, as typed by the guard
+  idCheck: {                                                 // the card against the typed name and gender, read on the guard's device; advice only
+    status: { type: String, enum: ['match', 'partial', 'mismatch', 'unread'] },
+    source: { type: String, enum: ['qr', 'ocr'] },             // Aadhaar Secure QR, or the printed text
+    nameScore: { type: Number },
+    gender: { type: String, enum: ['match', 'mismatch'] },
+    tamper: { type: Boolean },                               // the QR's last 4 digits differ from the printed number
+  },
   idImagePurgedAt: { type: Date },
   idFullPath: { type: String },                             // FULL Aadhaar image, AES-256-GCM encrypted (services/vault); Super Admin only
   // Live photo vs the face on the Aadhaar card, compared on the guard's device. Only the score is kept, never a face template.
@@ -106,7 +115,7 @@ const counterSchema = new Schema({
 }, { versionKey: false });
 
 const outboxSchema = new Schema({
-  kind: { type: String, enum: ['sms', 'telegram', 'whatsapp', 'print'], required: true, index: true },
+  kind: { type: String, enum: ['sms', 'telegram', 'whatsapp', 'print', 'email'], required: true, index: true },
   visit: { type: Schema.Types.ObjectId, ref: 'Visit' },          // a visitor's approval request...
   material: { type: Schema.Types.ObjectId, ref: 'Material' },    // ...or a material gate pass approval...
   parcel: { type: Schema.Types.ObjectId, ref: 'Parcel' },        // ...or a courier notice

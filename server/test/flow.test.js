@@ -1457,3 +1457,71 @@ test('couriers: logged at the gate, the recipient gets a pickup code, handed ove
   book.getWorksheet('Couriers').eachRow((row, i) => { if (i > 1) awbs.push(row.getCell(6).text); });
   assert.ok(awbs.includes('BD12345678') && awbs.includes('BD777'));
 });
+
+test('ID type and the on-device ID check: stored cleanly, filterable, counted on the overview', async () => {
+  const { Visit } = require('../src/models');
+  const body = (mobile, extra) => ({ firstName: 'Kiran', lastName: 'Bedi', gender: 'female', company: 'KB Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), mobile, ...extra });
+  const pan = await call('POST', '/api/visits', body('9733311111', { idType: 'pan', idMask: 'none', idCheck: { status: 'mismatch', source: 'ocr', nameScore: 12.4, gender: 'mismatch', tamper: true, extra: 'x' } }), guard);
+  assert.equal(pan.status, 201, JSON.stringify(pan.body));
+  const v = await Visit.findById(pan.body.id).lean();
+  assert.equal(v.idType, 'pan');
+  assert.equal(v.idMaskMethod, 'none');
+  assert.deepEqual(v.idCheck, { status: 'mismatch', source: 'ocr', nameScore: 12, gender: 'mismatch', tamper: true });
+
+  const other = await call('POST', '/api/visits', body('9733311112', { idType: 'other', idTypeOther: 'Company ID', idCheck: { status: 'bogus' } }), guard);
+  const o = await Visit.findById(other.body.id).lean();
+  assert.equal(o.idTypeOther, 'Company ID');
+  assert.equal(o.idCheck, undefined, 'an unknown status is not stored');
+  const junk = await call('POST', '/api/visits', body('9733311113', { idType: 'ration', idCheck: { status: 'match', nameScore: 900, gender: 'yes' } }), guard);
+  const j = await Visit.findById(junk.body.id).lean();
+  assert.equal(j.idType, 'aadhaar');
+  assert.deepEqual(j.idCheck, { status: 'match' });
+
+  const asAdmin = await call('GET', `/api/visits/${other.body.id}`, null, admin);
+  assert.equal(asAdmin.body.idLabel, 'Company ID');
+  assert.equal((await call('GET', `/api/visits/${pan.body.id}`, null, admin)).body.idCheck.status, 'mismatch');
+  const flagged = await call('GET', '/api/admin/visits?idCheck=mismatch', null, admin);
+  assert.ok(flagged.body.rows.every((r) => r.idCheck?.status === 'mismatch') && flagged.body.rows.some((r) => r.id === pan.body.id));
+  const stats = await call('GET', '/api/admin/stats', null, admin);
+  assert.ok(stats.body.idMismatchToday >= 1);
+  for (const k of ['materialPending', 'materialOverdue', 'parcelsWaiting', 'parcelsOld', 'groupsToday']) assert.equal(typeof stats.body[k], 'number', k);
+});
+
+test('email approvals: sent as well as the main channel to hosts with an address, link only, no photo', async () => {
+  const config = require('../src/config');
+  const { Host, Outbox } = require('../src/models');
+  const { processOutbox } = require('../src/services/worker');
+  const saved = { ...config.email };
+  Object.assign(config.email, { driver: 'brevo', brevoKey: 'test-key', from: 'desk@example.com', fromName: 'Security desk' });
+  await Host.updateOne({ _id: hostIds.asha }, { email: 'asha@example.com' });
+  const realFetch = global.fetch;
+  const sent = [];
+  global.fetch = async (url, opts) => {
+    if (String(url).startsWith('https://api.brevo.com/')) { sent.push(JSON.parse(opts.body)); return new Response(JSON.stringify({ messageId: '<m1@brevo>' }), { status: 201 }); }
+    return realFetch(url, opts);
+  };
+  try {
+    const r = await call('POST', '/api/visits', { firstName: 'Meera', lastName: 'Nair', gender: 'female', company: 'Nair & Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), mobile: '9733322221' }, guard);
+    assert.equal(r.status, 201);
+    const job = await Outbox.findOne({ visit: r.body.id, kind: 'email' }).lean();
+    assert.ok(job, 'an email job is queued next to the SMS');
+    assert.ok(await Outbox.findOne({ visit: r.body.id, kind: 'sms' }).lean(), 'the main channel still goes');
+    await Outbox.updateMany({ _id: { $ne: job._id }, status: 'queued' }, { nextAttemptAt: new Date(Date.now() + 3600e3) }); // just this job
+    await processOutbox();
+    assert.equal((await Outbox.findById(job._id).lean()).lastError, undefined);
+    const mail = sent.find((m) => m.to[0].email === 'asha@example.com');
+    assert.ok(mail);
+    assert.match(mail.subject, /Meera Nair/);
+    assert.match(mail.htmlContent, /\/approve\/[\w-]+/);
+    assert.equal(mail.attachment, undefined, 'no photo or ID in the mailbox');
+    assert.equal((await Outbox.findById(job._id).lean()).status, 'sent');
+    // The approve link in the email only opens the page; it never decides on its own.
+    const token = /\/approve\/([\w-]+)/.exec(mail.htmlContent)[1];
+    await fetch(`${base}/approve/${token}`);
+    assert.equal((await require('../src/models').Visit.findById(r.body.id).lean()).status, 'pending');
+  } finally {
+    global.fetch = realFetch;
+    Object.assign(config.email, saved);
+    await Host.updateOne({ _id: hostIds.asha }, { $unset: { email: 1 } });
+  }
+});

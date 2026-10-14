@@ -4,6 +4,7 @@ const { Visit, Outbox, ApprovalToken } = require('../models');
 const { sendSms, buildStickerZpl, deliverZpl } = require('./messaging');
 const telegram = require('./telegram');
 const whatsapp = require('./whatsapp');
+const email = require('./email');
 const { audit } = require('./core');
 const { publish } = require('./events');
 const settings = require('./settings');
@@ -37,6 +38,8 @@ async function processOutbox() {
         if (!token) throw new Error('Approval link missing from message');
         const visit = job.visit ? await Visit.findById(job.visit, 'photoPath').lean() : null;
         job.providerRef = await whatsapp.sendApproval(job.to, job.body, token, visit?.photoPath, job.vars?.prefix || '');
+      } else if (job.kind === 'email') {
+        job.providerRef = await email.send(job.to, job.vars?.subject || 'Security desk', job.vars?.html, job.body);
       } else if (job.kind === 'print') {
         const visit = await Visit.findById(job.visit).populate('host').lean();
         if (!visit) throw new Error('Visit not found');

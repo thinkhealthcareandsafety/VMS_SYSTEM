@@ -67,6 +67,8 @@ function records(docs) {
       entries: moves.entries || 0,
       note: v.forceReason || '',
       faceMatch: v.faceMatchScore ?? null,
+      idType: v.idType === 'other' && v.idTypeOther ? v.idTypeOther : ID_LABEL[v.idType || 'aadhaar'],
+      idCheck: v.idCheck?.status ? ID_CHECK_LABEL[v.idCheck.status] + (v.idCheck.gender === 'mismatch' ? ', gender differs' : '') + (v.idCheck.tamper ? ', QR differs from card' : '') : '',
       folder: `${v.visitDay}/${v.ref} ${safe(`${v.firstName} ${v.lastName}`)}`,
       photoPath: v.photoPath || null,
       idImagePath: v.idImagePath || null,
@@ -74,6 +76,9 @@ function records(docs) {
     };
   });
 }
+
+const ID_LABEL = { aadhaar: 'Aadhaar', pan: 'PAN card', dl: 'Driving licence', passport: 'Passport', voter: 'Voter ID', other: 'Other ID' };
+const ID_CHECK_LABEL = { match: 'Matches', partial: 'Partly matches', mismatch: 'Does not match', unread: 'Not readable' };
 
 // ---------------------------------------------------------------- Excel
 // `files`: null for a sheet on its own; { aadhaar } when the sheet sits in the ZIP next to the folders.
@@ -110,6 +115,8 @@ async function workbook(recs, { files = null, meta }) {
     { header: 'Pass for', key: 'passFor', width: 12 },
     { header: 'Pass valid till', key: 'validUntil', width: 18, style: when },
     { header: 'Checkout note', key: 'note', width: 30 },
+    { header: 'ID shown', key: 'idType', width: 15 },
+    { header: 'Name on ID', key: 'idCheck', width: 22 },
     { header: 'Face match %', key: 'faceMatch', width: 13 },
     ...(files ? [{ header: 'Photo', key: 'photo', width: 10 }, { header: 'Aadhaar (masked)', key: 'aadhaar', width: 18 }] : []),
   ];
@@ -186,7 +193,7 @@ function report(recs, { meta, aadhaar }) {
           ${r.letIn ? `<dt>Let in</dt><dd>${esc(human(r.letIn))}${r.entryGate ? ` · ${esc(r.entryGate)}${r.entryBy ? `, ${esc(r.entryBy)}` : ''}` : ''}</dd>` : ''}
           ${r.left ? `<dt>Left</dt><dd>${esc(human(r.left))}${r.exitGate ? ` · ${esc(r.exitGate)}${r.exitBy ? `, ${esc(r.exitBy)}` : ''}` : ''}${r.minutes != null ? ` (${duration(r.minutes)} inside)` : ''}</dd>` : ''}
           ${r.validUntil ? `<dt>Pass</dt><dd>${esc(r.passFor)}, valid till ${esc(human(r.validUntil))}${r.entries > 1 ? ` · ${r.entries} entries` : ''}</dd>` : ''}
-          ${r.faceMatch != null ? `<dt>Face match</dt><dd>${r.faceMatch}% (photo vs Aadhaar card)</dd>` : ''}
+          ${r.faceMatch != null ? `<dt>Face match</dt><dd>${r.faceMatch}% (photo vs ID card)</dd>` : ''}
           ${r.note ? `<dt>Note</dt><dd>${esc(r.note)}</dd>` : ''}
         </dl>
       </div>

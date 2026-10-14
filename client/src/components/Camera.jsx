@@ -8,7 +8,7 @@ import ImageViewer from './ImageViewer.jsx';
 // mode="face": live photo. mode="aadhaar": the card is read on this device, the number is found and
 // painted out, and the masked image is handed back (onCapture(dataUrl, info)). With `keepFull`, info.full
 // also carries the unmasked card, which the server stores encrypted for the Super Admin only.
-export default function Camera({ mode, onCapture, captured, onRetake, info, onEdit, keepFull = false }) {
+export default function Camera({ mode, onCapture, captured, onRetake, info, onEdit, keepFull = false, idType = 'aadhaar', idLabel = 'Aadhaar' }) {
   const videoRef = useRef(null);
   const boxRef = useRef(null);
   const [error, setError] = useState('');
@@ -62,7 +62,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
         copy.getContext('2d').drawImage(card, 0, 0);
         const full = keepFull ? copy.toDataURL('image/jpeg', 0.82) : undefined;
         const face = describeCard(copy).catch(() => 'unavailable');
-        const result = await maskCard(card);
+        const result = await maskCard(card, idType);
         onCapture(result.dataUrl, { ...result, face: await face, ...(full ? { full } : {}) });
       } finally {
         setBusy(false);
@@ -80,7 +80,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
   };
 
   if (captured) {
-    if (mode === 'aadhaar') return <MaskedCard image={captured} info={info} onRetake={onRetake} onEdit={onEdit} />;
+    if (mode === 'aadhaar') return <MaskedCard image={captured} info={info} onRetake={onRetake} onEdit={onEdit} label={idLabel} />;
     return <PhotoShot image={captured} onRetake={onRetake} />;
   }
 
@@ -90,7 +90,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
       {ready && mode === 'face' && <div className="face-guide" />}
       {ready && mode === 'aadhaar' && !busy && (
         <>
-          <span className="cam-tip">Fit the card in the frame. The number is hidden automatically.</span>
+          <span className="cam-tip">{idType === 'aadhaar' ? 'Fit the card in the frame. The number is hidden automatically.' : `Fit the ${idLabel.toLowerCase()} in the frame.`}</span>
           <div className="card-guide" style={{ width: `${GUIDE_WIDTH * 100}%`, aspectRatio: `${CARD_ASPECT}` }}>
             <i /><i /><i /><i />
           </div>
@@ -99,8 +99,8 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
       {busy && (
         <div className="cam-busy" role="status">
           <Spinner size={26} />
-          <strong>Hiding the Aadhaar number…</strong>
-          <span>Reading the card on this device. Nothing unmasked is sent.</span>
+          <strong>{idType === 'aadhaar' ? 'Hiding the Aadhaar number…' : 'Reading the card…'}</strong>
+          <span>{idType === 'aadhaar' ? 'Reading the card on this device. Nothing unmasked is sent.' : 'Checking the name on this device.'}</span>
         </div>
       )}
       {error && (
@@ -124,7 +124,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
 
 // The masked card. Tap it to open it full size and check the mask; "Black out more" opens the
 // big view straight in drawing mode, where small text is easy to cover.
-function MaskedCard({ image, info, onRetake, onEdit }) {
+function MaskedCard({ image, info, onRetake, onEdit, label }) {
   const [viewer, setViewer] = useState(null); // null | { drawing }
   const [history, setHistory] = useState([]);
 
@@ -136,7 +136,9 @@ function MaskedCard({ image, info, onRetake, onEdit }) {
         ? { tone: 'ok', text: 'Card was already masked' }
         : info?.method === 'guide'
           ? { tone: 'warn', text: 'Could not read the number. Check the first 8 digits are hidden, or black them out.' }
-          : { tone: 'ok', text: 'Masked on this device' };
+          : info?.method === 'none'
+            ? { tone: 'ok', text: `${label} captured` }
+            : { tone: 'ok', text: 'Masked on this device' };
 
   const paint = async (rect) => {
     const next = await paintBoxes(image, [rect]);
@@ -152,8 +154,8 @@ function MaskedCard({ image, info, onRetake, onEdit }) {
 
   return (
     <div className="shot card-shot">
-      <button type="button" className="shot-open" onClick={() => setViewer({ drawing: false })} aria-label="Open the masked Aadhaar full size to check it">
-        <img src={image} alt="Captured Aadhaar card, number masked" draggable={false} />
+      <button type="button" className="shot-open" onClick={() => setViewer({ drawing: false })} aria-label={`Open the ${label} full size to check it`}>
+        <img src={image} alt={`Captured ${label}`} draggable={false} />
       </button>
       <span className={`ok-tag ${status.tone === 'warn' ? 'warn-tag' : ''}`}>
         {status.tone === 'warn' ? <AlertTriangle /> : <CheckCircle2 />}{status.text}
@@ -166,8 +168,8 @@ function MaskedCard({ image, info, onRetake, onEdit }) {
         open={Boolean(viewer)}
         onClose={() => setViewer(null)}
         src={image}
-        alt="Masked Aadhaar card"
-        title="Masked Aadhaar"
+        alt={label}
+        title={label}
         status={status}
         editable
         drawing={Boolean(viewer?.drawing)}

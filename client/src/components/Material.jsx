@@ -92,7 +92,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0 }) {
       <MaterialForm direction={form} admin={admin} units={data?.units || UNITS} onClose={() => setForm(null)}
         onDone={(m) => {
           setForm(null);
-          toast(m.direction === 'in' ? `${m.number} recorded.` : m.status === 'approved' ? `${m.number} approved.` : m.approvalSentBy ? `${m.number} sent to ${m.approver?.name} for approval.` : `${m.number} raised. ${m.approver?.name} cannot be reached by WhatsApp or Telegram: an admin must approve it.`, m.direction === 'out' && !m.approvalSentBy && m.status === 'pending' ? 'info' : 'ok');
+          toast(m.direction === 'in' ? `${m.number} recorded.` : m.status === 'approved' ? `${m.number} approved.` : m.approvalSentBy ? `${m.number} sent to ${m.approver?.name} for approval.` : `${m.number} raised. ${m.approver?.name} cannot be reached by WhatsApp, Telegram or email: an admin must approve it.`, m.direction === 'out' && !m.approvalSentBy && m.status === 'pending' ? 'info' : 'ok');
           load();
           setOpenId(m.id);
         }} />
@@ -274,7 +274,7 @@ function MaterialDetail({ id, admin, liveTick, onClose, onChanged }) {
   };
   const resend = async () => {
     setBusy('resend');
-    try { const r = await api(`/api/material/${id}/resend`, { method: 'POST' }); toast(r.approvalSentBy ? `Sent again by ${r.approvalSentBy === 'whatsapp' ? 'WhatsApp' : 'Telegram'}.` : 'The approver cannot be reached by WhatsApp or Telegram. An admin must decide.', r.approvalSentBy ? 'ok' : 'info'); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(''); }
+    try { const r = await api(`/api/material/${id}/resend`, { method: 'POST' }); toast(r.approvalSentBy ? `Sent again by ${({ whatsapp: 'WhatsApp', telegram: 'Telegram', email: 'email' })[r.approvalSentBy]}.` : 'The approver cannot be reached by WhatsApp, Telegram or email. An admin must decide.', r.approvalSentBy ? 'ok' : 'info'); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(''); }
   };
 
   return (

@@ -19,11 +19,12 @@ import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
+import { checkId, splitCardName } from '../lib/idMatch.js';
 
 const DRAFT_KEY = 'vms-guard-draft';
 const DISMISS_KEY = 'vms-guard-dismissed';
 const AUTOPRINT_KEY = 'vms-guard-autoprint';
-const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '', validity: '8h', validUntilDay: '' };
+const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '', validity: '8h', validUntilDay: '', idType: 'aadhaar', idTypeOther: '' };
 // How long a pass lasts. Hours count from when the host lets the visitor in; days run to 11:59 pm on the last day.
 const VALIDITY = [['2h', '2 hours'], ['4h', '4 hours'], ['8h', '8 hours'], ['today', 'Today'], ['3d', '3 days'], ['7d', '7 days'], ['10d', '10 days'], ['20d', '20 days'], ['30d', '30 days'], ['date', 'Pick a date']];
 const VALIDITY_HOURS = { '2h': 2, '4h': 4, '8h': 8 };
@@ -40,6 +41,9 @@ function validityPreview(v, day) {
   return '';
 }
 const GENDERS = [['male', 'Male'], ['female', 'Female'], ['other', 'Other']];
+// The ID the visitor shows. Only Aadhaar is masked automatically (the law requires it); every card is checked against the name typed.
+const ID_TYPES = [['aadhaar', 'Aadhaar'], ['pan', 'PAN card'], ['dl', 'Driving licence'], ['passport', 'Passport'], ['voter', 'Voter ID'], ['other', 'Other']];
+const ID_LABEL = Object.fromEntries(ID_TYPES);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
 const MOBILE_RE = /^[6-9]\d{9}$/;
@@ -409,6 +413,10 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
     return () => { live = false; };
   }, [photo, idImage, idInfo, photoFace]);
   const sec = { visitor: useRef(null), host: useRef(null), capture: useRef(null) };
+  const idType = form.idType || 'aadhaar';
+  const idLabel = idType === 'other' ? (form.idTypeOther?.trim() || 'ID card') : ID_LABEL[idType];
+  // The card read against what was typed: name and gender. Recomputed as the guard types.
+  const idCheck = useMemo(() => checkId(idInfo?.read, form), [idInfo, form.firstName, form.lastName, form.gender]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const update = (patch) => setForm((f) => { const next = { ...f, ...patch }; store.save(next); return next; });
   const digits = form.mobile.replace(/\D/g, '');
@@ -489,7 +497,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
     ['host', Boolean(host), 'whom to meet'],
     ['host', (form.validity || '8h') !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass'],
     ['capture', Boolean(photo), 'photo'],
-    ['capture', Boolean(idImage), 'Aadhaar'],
+    ['capture', Boolean(idImage), 'ID card'],
   ];
   const missing = checks.filter(([, ok]) => !ok);
   const done = (s) => checks.every(([k, ok]) => k !== s || ok);
@@ -534,7 +542,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
         body: {
           ...form, mobile: digits, hostId: host.id, photo, idImage, ...(keepFullId && idInfo?.full ? { idImageFull: idInfo.full } : {}),
           ...(verify === 'skipped' ? { otpSkip: true } : {}),
-          ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}),
+          ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, idType, ...(idType === 'other' && form.idTypeOther?.trim() ? { idTypeOther: form.idTypeOther.trim() } : {}),
+          ...(idCheck ? { idCheck: { status: idCheck.status, source: idCheck.source, nameScore: idCheck.nameScore, gender: idCheck.gender, tamper: idCheck.tamper } } : {}), ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}),
           validity: form.validity || '8h', ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}) },
       });
       store.clear();
@@ -678,12 +687,23 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
               : <CamTile icon={UserRound} label="Take photo" onClick={() => setCam('face')} />}
           </div>
           <div className="field">
-            <span>Aadhaar card <span className="faint">· first 8 digits blacked out</span></span>
+            <span id="lbl-idtype">ID card <span className="faint">· {idType === 'aadhaar' ? 'first 8 digits blacked out' : 'front of the card'}</span></span>
+            <div className="chips id-types" role="radiogroup" aria-labelledby="lbl-idtype">
+              {ID_TYPES.map(([key, label]) => (
+                <button type="button" role="radio" aria-checked={idType === key} key={key} className="chip" aria-pressed={idType === key}
+                  onClick={() => { if (key === idType) return; update({ idType: key }); if (idImage) { setIdImage(null); setIdInfo(null); setCam('aadhaar'); } }}>{label}</button>
+              ))}
+            </div>
+            {idType === 'other' && (
+              <input className="input" placeholder="Which ID? e.g. company ID" aria-label="Which ID" maxLength={40}
+                value={form.idTypeOther || ''} onChange={(e) => update({ idTypeOther: e.target.value })} />
+            )}
             {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" keepFull={keepFullId} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
-              : <CamTile icon={CreditCard} label="Scan Aadhaar" onClick={() => setCam('aadhaar')} />}
+              ? <Camera mode="aadhaar" idType={idType} idLabel={idLabel} key={idType} keepFull={keepFullId && idType === 'aadhaar'} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
+              : <CamTile icon={CreditCard} label={`Scan ${idLabel}`} onClick={() => setCam('aadhaar')} />}
           </div>
         </div>
+        <IdCheck check={idCheck} idLabel={idLabel} onUse={(c) => update({ ...splitCardName(c.cardName), ...(c.cardGender ? { gender: c.cardGender } : {}) })} />
         <FaceMatch match={match} />
       </section>
 
@@ -717,6 +737,32 @@ function FaceMatch({ match }) {
     <div className={`alert face-match ${tone}`} role="status" aria-label={`Face match ${match.score} percent`}>
       <span className="pct num">{match.score}%</span>
       <span className="grow"><strong>Face match</strong></span>
+    </div>
+  );
+}
+
+// The card against what was typed. Advice for the guard, like the face match: the visit goes ahead either way.
+const GENDER_WORD = { male: 'Male', female: 'Female', other: 'Transgender' };
+function IdCheck({ check, idLabel, onUse }) {
+  if (!check) return null;
+  const from = check.source === 'qr' ? 'Aadhaar QR' : idLabel;
+  if (check.status === 'unread') {
+    return <div className="alert id-check" role="status"><ScanFace /><span className="grow">Could not read the name on the {idLabel}. Compare it by eye.</span></div>;
+  }
+  const tone = { match: 'alert-ok', partial: 'alert-warn', mismatch: 'alert-bad' }[check.status];
+  const lines = [];
+  if (check.tamper) lines.push('The QR does not belong to this card, check it carefully');
+  if (check.name === 'match') lines.push(`Name matches the ${from}`);
+  else if (check.name === 'partial') lines.push(check.cardName ? `Name only partly matches. Card: ${check.cardName}` : `Only part of the name was found on the ${idLabel}`);
+  else if (check.name === 'mismatch') lines.push(check.cardName ? `Name does not match. Card: ${check.cardName}` : `Name not found on the ${idLabel}`);
+  if (check.gender === 'match') lines.push('gender matches');
+  else if (check.gender === 'mismatch') lines.push(`gender does not match: card says ${GENDER_WORD[check.cardGender]}`);
+  const canUse = check.cardName && (check.name !== 'match' || check.gender === 'mismatch');
+  return (
+    <div className={`alert id-check ${tone}`} role="status">
+      {check.status === 'match' ? <CheckCircle2 /> : <AlertTriangle />}
+      <span className="grow"><strong>{lines[0][0].toUpperCase() + lines[0].slice(1)}</strong>{lines.length > 1 && <>{', '}{lines.slice(1).join(', ')}</>}.</span>
+      {canUse && <button type="button" className="btn btn-sm" onClick={() => onUse(check)}>Use card details</button>}
     </div>
   );
 }
