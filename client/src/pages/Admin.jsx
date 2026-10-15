@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
@@ -16,6 +16,7 @@ import { printEvacuation } from '../lib/evacuation.js';
 import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
+import BulkImport from '../components/BulkImport.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle, PoweredBy } from '../components/ui.jsx';
 
 const TZ = 'Asia/Kolkata';
@@ -45,7 +46,7 @@ const NAV = [
 // Page titles. "messages" has no menu entry: it opens from the failure alert and from Settings.
 const TITLES = {
   overview: 'Overview', inside: 'On premises', history: 'Visit history', messages: 'Messages and prints', audit: 'Audit log',
-  hosts: 'Hosts', staff: 'Staff accounts', expected: 'Expected visitors', groups: 'Groups and events', material: 'Material',
+  hosts: 'Hosts', staff: 'Staff accounts', expected: 'Expected visitors', groups: 'Events', material: 'Material',
   couriers: 'Couriers', blocked: 'Blocked visitors', settings: 'Settings',
 };
 
@@ -57,17 +58,46 @@ const hourNow = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: TZ, ho
 const fmtHour = (h) => `${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}`;
 const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== '' && v != null)).toString();
 const photoUrl = (id) => `/api/visits/${id}/photo`;
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 export default function Admin({ user, onLogout }) {
   const toast = useToast();
   const [params, setParams] = useSearchParams();
   const section = TITLES[params.get('s')] ? params.get('s') : 'overview';
-  const go = (s, extra = {}) => { setParams(s === 'overview' ? {} : { s, ...extra }); window.scrollTo(0, 0); };
+  const [navOpen, setNavOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  // Something a page should do once it opens (find a host, open an event, start an import), sent from the search box.
+  const [intent, setIntent] = useState(null);
+  const go = (s, extra = {}, then = null) => {
+    setParams(s === 'overview' ? {} : { s, ...extra });
+    setNavOpen(false);
+    if (then) setIntent({ ...then, section: s, n: Date.now() });
+    window.scrollTo(0, 0);
+  };
   const [stats, setStats] = useState(null);
   const [tick, setTick] = useState(0); // bumps on every live event; pages reload on change
   const [visitId, setVisitId] = useState(null);
   const [exportOpts, setExportOpts] = useState(null);
   const [pwOpen, setPwOpen] = useState(false);
+
+  // Ctrl+K (⌘K on a Mac) or "/" opens search from anywhere, unless the admin is typing in a field.
+  useEffect(() => {
+    const onKey = (e) => {
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+      if ((e.key === 'k' && (e.ctrlKey || e.metaKey)) || (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey)) {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const esc = (e) => e.key === 'Escape' && setNavOpen(false);
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [navOpen]);
 
   const loadStats = useCallback(() => api('/api/admin/stats').then(setStats).catch(() => {}), []);
   const timer = useRef(null);
@@ -84,12 +114,18 @@ export default function Admin({ user, onLogout }) {
 
   const title = TITLES[section];
   useTitle(title);
-  const page = { tick, refresh, go, openVisit: setVisitId, toast, stats, openExport: setExportOpts, params };
+  const myIntent = intent?.section === section ? intent : null;
+  const page = { tick, refresh, go, openVisit: setVisitId, toast, stats, openExport: setExportOpts, params, intent: myIntent };
+  const alerts = stats ? (stats.printFailed + stats.smsFailed + stats.materialOverdue + (stats.parcelsOld ? 1 : 0)) : 0;
 
   return (
     <div className="console">
-      <aside className="sidebar" aria-label="Admin navigation">
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden="true" />}
+      <aside className={`sidebar ${navOpen ? 'open' : ''}`} aria-label="Admin navigation">
         <Logo />
+        <button type="button" className="find-btn" onClick={() => { setNavOpen(false); setFindOpen(true); }}>
+          <Search /><span className="grow">Search</span><kbd>{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+        </button>
         {NAV.map((g) => (
           <div key={g.group} style={{ display: 'contents' }}>
             <span className="group">{g.group}</span>
@@ -117,12 +153,18 @@ export default function Admin({ user, onLogout }) {
 
       <main className="admin-main">
         <header className="page-head">
-          <div>
-            {section === 'messages' && <button className="btn btn-ghost btn-sm back-link" onClick={() => go('settings')}><ChevronLeft />Settings</button>}
-            <h1>{title}</h1>
+          <div className="page-title">
+            <button type="button" className="btn btn-ghost btn-icon nav-toggle" onClick={() => setNavOpen(true)} aria-label="Menu" aria-expanded={navOpen}>
+              <Menu />{alerts > 0 && <span className="dot-alert" aria-hidden="true" />}
+            </button>
+            <div>
+              {section === 'messages' && <button className="btn btn-ghost btn-sm back-link" onClick={() => go('settings')}><ChevronLeft />Settings</button>}
+              <h1>{title}</h1>
+            </div>
           </div>
           <div className="right">
             <span className={`conn ${connected ? '' : 'off'}`} title={connected ? 'Updates as it happens' : 'Reconnecting'}><span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}</span>
+            <button type="button" className="btn btn-ghost btn-icon find-icon" onClick={() => setFindOpen(true)} aria-label="Search"><Search /></button>
           </div>
         </header>
         <div className="page">
@@ -142,10 +184,105 @@ export default function Admin({ user, onLogout }) {
         </div>
       </main>
 
+      <QuickFind open={findOpen} onClose={() => setFindOpen(false)} go={go} openVisit={setVisitId} openExport={setExportOpts} stats={stats} toast={toast} />
       <VisitDrawer id={visitId} tick={tick} superAdmin={user.role === 'superadmin'} onClose={() => setVisitId(null)} onChanged={refresh} />
       <ExportDialog opts={exportOpts} onClose={() => setExportOpts(null)} />
       <PasswordDialog open={pwOpen} onClose={() => setPwOpen(false)} />
     </div>
+  );
+}
+
+// ================================================================= Search everything
+// One box for the whole console: a visitor by name, mobile, visitor ID or today's pass number; a host; an event;
+// a staff member; or a page and the common actions. Arrow keys and Enter, or tap.
+const ACTIONS_QUICK = [
+  { label: 'Add an expected visitor', icon: CalendarCheck, to: ['expected', {}, { action: 'add' }] },
+  { label: 'Import expected visitors from a sheet', icon: Upload, to: ['expected', {}, { action: 'import' }] },
+  { label: 'Add a host', icon: UserPlus, to: ['hosts', {}, { action: 'add' }] },
+  { label: 'Import hosts from a sheet', icon: Upload, to: ['hosts', {}, { action: 'import' }] },
+  { label: 'Add a staff account', icon: UserCog, to: ['staff', {}, { action: 'add' }] },
+  { label: 'New event or group', icon: PartyPopper, to: ['groups', {}, { action: 'add' }] },
+  { label: 'Download visitor data', icon: Download, run: ({ openExport }) => openExport({}) },
+  { label: 'Print the evacuation list', icon: Siren, run: ({ toast }) => printEvacuation({ onError: (m) => toast(m, 'bad') }) },
+];
+function QuickFind({ open, onClose, go, openVisit, openExport, toast }) {
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(0);
+  const listRef = useRef(null);
+  useEffect(() => { if (open) { setQ(''); setFound(null); setActive(0); } }, [open]);
+
+  const term = q.trim();
+  useEffect(() => {
+    if (!open || !term) { setFound(null); setLoading(false); return undefined; }
+    let live = true;
+    setLoading(true);
+    const t = setTimeout(() => {
+      api(`/api/admin/search?q=${encodeURIComponent(term)}`)
+        .then((r) => live && setFound(r)).catch(() => live && setFound({ visits: [], hosts: [], groups: [], staff: [] }))
+        .finally(() => live && setLoading(false));
+    }, 160);
+    return () => { live = false; clearTimeout(t); };
+  }, [term, open]);
+
+  // Everything the admin can pick, in the order shown. Pages and actions match on their words.
+  const items = useMemo(() => {
+    const low = term.toLowerCase();
+    const has = (label) => !low || label.toLowerCase().includes(low);
+    const pages = NAV.flatMap((g) => g.items).filter((p) => has(p.label) || has(TITLES[p.id]))
+      .map((p) => ({ key: `p:${p.id}`, group: 'Go to', icon: p.icon, title: TITLES[p.id], pick: () => go(p.id) }));
+    const actions = ACTIONS_QUICK.filter((a) => has(a.label))
+      .map((a) => ({ key: `a:${a.label}`, group: 'Do', icon: a.icon, title: a.label, pick: () => (a.run ? a.run({ openExport, toast }) : go(...a.to)) }));
+    const f = found || { visits: [], hosts: [], groups: [], staff: [] };
+    const visits = f.visits.map((v) => ({
+      key: `v:${v.id}`, group: 'Visitors', photo: photoUrl(v.id), title: v.name,
+      sub: `${v.ref}${v.dailyNumber != null ? ` · pass ${passLabel(v)}` : ''} · ${v.host}${v.unit ? `, ${v.unit}` : ''} · ${fmtDate(v.createdAt)}`,
+      badge: v.status, pick: () => openVisit(v.id),
+    }));
+    const hosts = f.hosts.map((h) => ({ key: `h:${h.id}`, group: 'Hosts', icon: Building2, title: h.name, sub: `${h.unit}${h.active ? '' : ' · does not receive visitors'}`, pick: () => go('hosts', {}, { action: 'find', value: h.name }) }));
+    const groups = f.groups.map((g) => ({ key: `g:${g.id}`, group: 'Events', icon: PartyPopper, title: g.name, sub: g.status === 'cancelled' ? 'Cancelled' : g.days, pick: () => go('groups', {}, { action: 'open', value: g.id }) }));
+    const staff = f.staff.map((u) => ({ key: `u:${u.id}`, group: 'Staff', icon: UserCog, title: u.name, sub: `${u.username} · ${ROLE_INFO[u.role]?.[0] || u.role}${u.active ? '' : ' · switched off'}`, pick: () => go('staff', {}, { action: 'find', value: u.username }) }));
+    return term ? [...visits, ...hosts, ...groups, ...staff, ...pages, ...actions] : [...actions.slice(0, 6), ...pages];
+  }, [term, found, go, openVisit, openExport, toast]);
+
+  useEffect(() => { setActive(0); }, [found, term]);
+  useEffect(() => { listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }, [active]);
+  const pick = (it) => { onClose(); it.pick(); };
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(items.length - 1, a + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+    else if (e.key === 'Enter' && items[active]) { e.preventDefault(); pick(items[active]); }
+  };
+
+  let lastGroup = null;
+  return (
+    <Modal open={open} onClose={onClose} label="Search" className="dialog finder">
+      <div className="finder-input">
+        <Search />
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder="Visitor, mobile, pass number, host, event, staff…"
+          aria-label="Search everything" role="combobox" aria-expanded="true" aria-controls="finder-list" aria-activedescendant={items[active] ? `fi-${active}` : undefined} autoComplete="off" spellCheck={false} />
+        {loading ? <Spinner /> : <kbd>Esc</kbd>}
+      </div>
+      <div className="finder-list" id="finder-list" role="listbox" ref={listRef}>
+        {term && found && !loading && items.length === 0 && <div className="finder-none">Nothing matches “{term}”. Try a mobile number or visitor ID.</div>}
+        {items.map((it, i) => {
+          const head = it.group !== lastGroup ? it.group : null;
+          lastGroup = it.group;
+          return (
+            <div key={it.key}>
+              {head && <div className="finder-group">{head}</div>}
+              <button type="button" id={`fi-${i}`} role="option" aria-selected={i === active} className="finder-item" onMouseMove={() => setActive(i)} onClick={() => pick(it)}>
+                {it.photo ? <Avatar src={it.photo} name={it.title} size={30} square /> : <span className="finder-icon"><it.icon /></span>}
+                <span className="grow"><span className="t">{it.title}</span>{it.sub && <span className="s">{it.sub}</span>}</span>
+                {it.badge && <StatusBadge status={it.badge} />}
+                {i === active && <CornerDownLeft className="finder-enter" />}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 
@@ -159,7 +296,7 @@ function Attention({ stats, go }) {
   }
   if (stats.idMismatchToday) items.push({ tone: 'bad', icon: ShieldCheck, to: ['history', { idCheck: 'mismatch' }], text: `${plural(stats.idMismatchToday, 'visitor', 'visitors')} today with an ID that does not match the name or gender typed`, hint: 'Look at the card and the photo' });
   if (stats.materialOverdue) items.push({ tone: 'bad', icon: Package, to: ['material'], text: `${plural(stats.materialOverdue, 'returnable gate pass is', 'returnable gate passes are')} overdue`, hint: 'Items not back by the agreed day' });
-  if (stats.staleInside) items.push({ tone: 'warn', icon: Clock, to: ['inside'], text: `${plural(stats.staleInside, 'visitor has', 'visitors have')} been inside unusually long`, hint: 'The guard may have missed the exit' });
+  if (stats.staleInside) items.push({ tone: 'warn', icon: Clock, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.staleInside, 'visitor is', 'visitors are')} still inside after the pass ended`, hint: 'The guard may have missed the exit. Select them and check them out together.' });
   if (stats.materialPending) items.push({ tone: 'warn', icon: Package, to: ['material'], text: `${plural(stats.materialPending, 'gate pass waits', 'gate passes wait')} for approval`, hint: 'Remind the head of department, or decide' });
   if (stats.parcelsOld) items.push({ tone: 'warn', icon: Mail, to: ['couriers'], text: `${plural(stats.parcelsOld, 'parcel has', 'parcels have')} waited more than 3 days`, hint: 'Call the recipient or return it' });
   if (!items.length) return null;
@@ -204,16 +341,12 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
       <Attention stats={stats} go={go} />
 
       <section className="panel kpis" aria-label="Today in numbers">
-        <Kpi icon={Users} label="On premises" value={stats.inside} note={stats.staleInside ? `${stats.staleInside} long stay` : 'Right now'} />
-        <Kpi icon={LogIn} label="Arrivals today" value={stats.arrivalsToday} note={stats.arrivalsToday ? `Busiest ${fmtHour(peak)}–${fmtHour((peak + 1) % 24)}` : 'None yet'} />
-        <Kpi icon={Clock} label="Awaiting host" value={stats.pending} note={stats.pending ? 'Request sent, no reply yet' : stats.expectedToday ? `${stats.expectedToday} expected later today` : 'Nobody waiting'} />
-        <Kpi icon={LogOut} label="Left today" value={left} note={stats.forceToday ? `${stats.forceToday} checked out by admin` : 'Checked out at the gate'} />
+        <Kpi icon={Users} label="On premises" value={stats.inside} note={stats.staleInside ? `${stats.staleInside} past their pass` : 'Right now'} onClick={() => go('inside')} />
+        <Kpi icon={LogIn} label="Arrivals today" value={stats.arrivalsToday} note={stats.arrivalsToday ? `Busiest ${fmtHour(peak)}–${fmtHour((peak + 1) % 24)}` : 'None yet'} onClick={() => go('history', { range: 'today' })} />
+        <Kpi icon={Clock} label="Awaiting host" value={stats.pending} note={stats.pending ? 'Request sent, no reply yet' : 'Nobody waiting'} onClick={stats.pending ? () => document.getElementById('pend-h')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) : undefined} />
+        <Kpi icon={LogOut} label="Left today" value={left} note={stats.forceToday ? `${stats.forceToday} checked out by admin` : 'Checked out at the gate'} onClick={() => go('history', { range: 'today', status: 'checked_out' })} />
       </section>
-      <section className="panel kpis kpis-gate" aria-label="At the gate today">
-        <Kpi icon={PartyPopper} label="Events today" value={stats.groupsToday} note={stats.groupsToday ? 'Guests let in by pass' : 'None today'} onClick={() => go('groups')} />
-        <Kpi icon={Package} label="Gate passes to approve" value={stats.materialPending} note={stats.materialOverdue ? `${stats.materialOverdue} overdue` : 'Material going out'} onClick={() => go('material')} />
-        <Kpi icon={Mail} label="Parcels to collect" value={stats.parcelsWaiting} note={stats.parcelsOld ? `${stats.parcelsOld} over 3 days` : 'At the gate'} onClick={() => go('couriers')} />
-      </section>
+      <GateStrip stats={stats} go={go} />
 
       <div className="overview-grid">
         <section className="panel" aria-labelledby="chart-h">
@@ -260,6 +393,24 @@ function Overview({ stats, tick, go, openVisit, toast, refresh }) {
         )}
       </section>
     </>
+  );
+}
+
+// The rest of today's gate work on one quiet line, and only what has a number: nothing to do, nothing shown.
+function GateStrip({ stats, go }) {
+  const bits = [
+    stats.expectedToday > 0 && { icon: CalendarCheck, text: `${stats.expectedToday} expected today`, to: 'expected' },
+    stats.groupsToday > 0 && { icon: PartyPopper, text: `${stats.groupsToday} ${stats.groupsToday === 1 ? 'event' : 'events'} today`, to: 'groups' },
+    stats.materialPending > 0 && { icon: Package, text: `${stats.materialPending} gate ${stats.materialPending === 1 ? 'pass' : 'passes'} to approve`, to: 'material' },
+    stats.parcelsWaiting > 0 && { icon: Mail, text: `${stats.parcelsWaiting} ${stats.parcelsWaiting === 1 ? 'parcel' : 'parcels'} to collect`, to: 'couriers' },
+  ].filter(Boolean);
+  if (!bits.length) return null;
+  return (
+    <nav className="gate-strip" aria-label="Also today">
+      {bits.map((b) => (
+        <button type="button" key={b.to} className="gate-bit" onClick={() => go(b.to)}><b.icon />{b.text}<ChevronRight /></button>
+      ))}
+    </nav>
   );
 }
 
@@ -360,16 +511,43 @@ function useWidth() {
 }
 
 // ================================================================= On premises
-function InsidePage({ tick, openVisit, refresh, toast }) {
+// Past the pass, or (passes from before validity existed) inside longer than the site allows.
+const overstaying = (v, staleAfter) => v.passExpired || (!v.validUntil && minutesSince(v.lastIn?.at || v.decidedAt) >= staleAfter * 60);
+
+function InsidePage({ tick, openVisit, refresh, toast, intent }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [force, setForce] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [sweep, setSweep] = useState(false);
   useTick(30000);
   useEffect(() => { api('/api/visits/inside?all=1').then(setData).catch(() => {}); }, [tick]);
+  // Someone who left (or was checked out elsewhere) drops out of the selection.
+  useEffect(() => {
+    if (!data) return;
+    const ids = new Set(data.visits.map((v) => v.id));
+    setPicked((s) => (([...s].every((id) => ids.has(id))) ? s : new Set([...s].filter((id) => ids.has(id)))));
+  }, [data]);
 
   const term = q.trim().toLowerCase();
   const rows = (data?.visits || []).filter((v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref} ${v.mobile}`.toLowerCase().includes(term));
-  const long = (data?.visits || []).filter((v) => v.insideMinutes >= data.staleAfterHours * 60).length;
+  const over = (data?.visits || []).filter((v) => overstaying(v, data.staleAfterHours));
+  // Arrived from the "still inside after the pass ended" alert: those people are ticked, ready to check out.
+  const applied = useRef(null);
+  useEffect(() => {
+    if (intent?.action !== 'overstay' || !data || applied.current === intent.n) return;
+    applied.current = intent.n;
+    setPicked(new Set(over.map((v) => v.id)));
+  }, [intent, data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allShown = rows.length > 0 && rows.every((v) => picked.has(v.id));
+  const toggleAll = () => setPicked((s) => {
+    const n = new Set(s);
+    rows.forEach((v) => (allShown ? n.delete(v.id) : n.add(v.id)));
+    return n;
+  });
+  const chosen = (data?.visits || []).filter((v) => picked.has(v.id));
 
   return (
     <section className="panel">
@@ -379,9 +557,12 @@ function InsidePage({ tick, openVisit, refresh, toast }) {
           <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, flat, mobile" aria-label="Search on premises" />
         </div>
         <span className="muted num" style={{ alignSelf: 'center' }}>
-          {data ? `${data.count} inside${long ? ` · ${long} long stay` : ''}${data.groups?.length ? ` · ${data.groups.reduce((n, g) => n + g.inside, 0)} event guests` : ''}` : ''}
+          {data ? `${data.count} inside${data.groups?.length ? ` · ${data.groups.reduce((n, g) => n + g.inside, 0)} event guests` : ''}` : ''}
         </span>
         <span className="spacer-x" />
+        {over.length > 0 && (
+          <button className="btn btn-sm" onClick={() => setPicked(new Set(over.map((v) => v.id)))}><AlertTriangle />Select {over.length} past their pass</button>
+        )}
         <button className="btn btn-sm btn-danger-outline" onClick={() => printEvacuation({ onError: (m) => toast(m, 'bad') })}><Siren />Evacuation list</button>
       </div>
       {!data ? <ListSkeleton /> : rows.length === 0 ? (
@@ -389,14 +570,23 @@ function InsidePage({ tick, openVisit, refresh, toast }) {
           {data.count ? 'Try a pass number or flat.' : 'Approved visitors appear here until they check out.'}
         </Empty>
       ) : (
-        <InsideTable rows={rows} staleAfter={data.staleAfterHours} openVisit={openVisit} onForce={setForce} />
+        <InsideTable rows={rows} staleAfter={data.staleAfterHours} openVisit={openVisit} onForce={setForce} picked={picked} onToggle={toggle} allPicked={allShown} onToggleAll={toggleAll} />
+      )}
+      {picked.size > 0 && (
+        <div className="pick-bar" role="region" aria-label="Selected visitors">
+          <span><strong className="num">{picked.size}</strong> selected</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => setSweep(true)}><LogOut />Check out {picked.size}</button>
+        </div>
       )}
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={refresh} />
+      <ForceDialog many={sweep ? chosen : null} onClose={() => setSweep(false)} onDone={() => { setPicked(new Set()); refresh(); }} />
     </section>
   );
 }
 
-function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
+function InsideTable({ rows, staleAfter, openVisit, onForce, compact, picked, onToggle, allPicked, onToggleAll }) {
+  const selectable = Boolean(onToggle) && !compact;
   const toast = useToast();
   const reprint = async (e, v) => {
     e.stopPropagation();
@@ -407,6 +597,7 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
       <table className="table">
         <thead>
           <tr>
+            {selectable && <th className="pick-col"><input type="checkbox" checked={allPicked} onChange={onToggleAll} aria-label="Select everyone shown" /></th>}
             <th>Pass</th><th>Visitor</th><th>Meeting</th><th>Let in</th><th>Inside for</th><th>Pass valid till</th>
             {!compact && <th className="r"><span className="sr-only">Actions</span></th>}
           </tr>
@@ -416,8 +607,14 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
             const since = v.lastIn?.at || v.decidedAt;
             const mins = minutesSince(since);
             const isLong = !v.validUntil && mins >= staleAfter * 60;
+            const on = selectable && picked.has(v.id);
             return (
-              <tr key={v.id} className="clickable" onClick={() => openVisit(v.id)}>
+              <tr key={v.id} className={`clickable${on ? ' row-picked' : ''}`} onClick={() => openVisit(v.id)}>
+                {selectable && (
+                  <td className="pick-col" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={on} onChange={() => onToggle(v.id)} aria-label={`Select ${v.firstName} ${v.lastName}`} />
+                  </td>
+                )}
                 <td><span className="pass-chip">{passLabel(v)}</span></td>
                 <td>
                   <div className="person">
@@ -432,7 +629,7 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
                   {isLong && <div><span className="badge badge-warn">Long stay</span></div>}
                 </td>
                 <td className="num">
-                  {v.passExpired ? <span className="badge badge-bad">Expired {fmtUntil(v.validUntil)}</span> : v.validUntil ? fmtUntil(v.validUntil) : <span className="faint">—</span>}
+                  {v.passExpired ? <span className="badge badge-bad">Pass ended {fmtUntil(v.validUntil)}</span> : v.validUntil ? fmtUntil(v.validUntil) : <span className="faint">—</span>}
                   {v.validity && <div className="meta-line">{v.validity}</div>}
                 </td>
                 {!compact && (
@@ -453,44 +650,59 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact }) {
 }
 
 const FORCE_REASONS = ['Guard missed the exit', 'Left by another gate', 'Confirmed on CCTV', 'Host confirmed they left'];
-function ForceDialog({ visit, onClose, onDone }) {
+const SWEEP_REASONS = ['End of day check', 'Guard missed the exit', 'Confirmed on CCTV', 'Left by another gate'];
+// One visitor (`visit`) or several at once (`many`): the same reason goes on each record, each audited on its own.
+function ForceDialog({ visit, many, onClose, onDone }) {
   const toast = useToast();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setReason(''); }, [visit?.id]);
+  const open = Boolean(visit) || Boolean(many?.length);
+  useEffect(() => { if (open) setReason(''); }, [visit?.id, open]);
   const name = visit ? `${visit.firstName || ''} ${visit.lastName || ''}`.trim() || visit.name : '';
+  const n = many?.length || 0;
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
-      await api(`/api/visits/${visit.id}/force-checkout`, { method: 'POST', body: { reason } });
-      toast(`${name} checked out. Reason saved to the audit log.`);
+      if (visit) {
+        await api(`/api/visits/${visit.id}/force-checkout`, { method: 'POST', body: { reason } });
+        toast(`${name} checked out. Reason saved to the audit log.`);
+      } else {
+        const r = await api('/api/visits/force-checkout', { method: 'POST', body: { ids: many.map((v) => v.id), reason } });
+        toast(`${r.checkedOut} checked out${r.skipped ? `. ${r.skipped} had already left` : ''}. Reason saved to each record.`);
+      }
       onClose();
       onDone();
     } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
   };
 
   return (
-    <Modal open={Boolean(visit)} onClose={onClose} label="Check out visitor">
-      {visit && (
+    <Modal open={open} onClose={onClose} label="Check out visitor">
+      {open && (
         <form onSubmit={submit}>
           <div className="dialog-head">
-            <h2>Check out {name}?</h2>
-            <p>Use this when the guard did not mark the exit. The reason is kept in the audit log.</p>
+            <h2>{visit ? `Check out ${name}?` : `Check out ${n} ${n === 1 ? 'visitor' : 'visitors'}?`}</h2>
+            <p>{visit ? 'Use this when the guard did not record the exit. ' : ''}Pick a reason or type your own, then press Check out. The reason is saved on {n > 1 ? 'each visitor’s record' : 'the record'} and in the audit log.</p>
           </div>
           <div className="dialog-body">
+            {!visit && (
+              <ul className="sweep-list">
+                {many.slice(0, 8).map((v) => <li key={v.id}><span className="pass-chip">{passLabel(v)}</span>{v.firstName} {v.lastName}<span className="faint"> · {v.host?.name}</span></li>)}
+                {n > 8 && <li className="faint">and {n - 8} more</li>}
+              </ul>
+            )}
             <div className="chips">
-              {FORCE_REASONS.map((r) => <button type="button" key={r} className="chip" aria-pressed={reason === r} onClick={() => setReason(r)}>{r}</button>)}
+              {(visit ? FORCE_REASONS : SWEEP_REASONS).map((r) => <button type="button" key={r} className="chip" aria-pressed={reason === r} onClick={() => setReason(r)}>{r}</button>)}
             </div>
             <label className="field">
-              <span>Reason</span>
+              <span>Why are you checking {visit || n === 1 ? 'them' : 'these visitors'} out?</span>
               <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} minLength={5} maxLength={200} required placeholder="Pick one above or type your own" />
             </label>
           </div>
           <div className="dialog-foot">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn btn-danger" disabled={busy || reason.trim().length < 5}>{busy ? <Spinner /> : <LogOut />}Check out</button>
+            <button className="btn btn-danger" disabled={busy || reason.trim().length < 5}>{busy ? <Spinner /> : <LogOut />}{visit ? 'Check out' : `Check out ${n}`}</button>
           </div>
         </form>
       )}
@@ -507,8 +719,11 @@ const RANGES = [
 ];
 const ID_CHECKS = [['mismatch', 'Does not match'], ['partial', 'Partly matches'], ['match', 'Matches'], ['unread', 'Not readable']];
 function HistoryPage({ tick, openVisit, openExport, params }) {
+  // Opened from an Overview number or alert: start on what was clicked.
   const preset = ID_CHECKS.some(([k]) => k === params.get('idCheck')) ? params.get('idCheck') : '';
-  const [f, setF] = useState({ name: '', host: '', company: '', status: '', gate: '', idCheck: preset, from: preset ? daysAgo(0) : daysAgo(6), to: '' });
+  const presetStatus = STATUS[params.get('status')] ? params.get('status') : '';
+  const todayOnly = Boolean(preset) || params.get('range') === 'today';
+  const [f, setF] = useState({ name: '', host: '', company: '', status: presetStatus, gate: '', idCheck: preset, from: todayOnly ? daysAgo(0) : daysAgo(6), to: todayOnly ? daysAgo(0) : '' });
   const [gates, setGates] = useState([]);
   useEffect(() => { api('/api/admin/gates').then((r) => setGates(r.rows)).catch(() => {}); }, []);
   const [applied, setApplied] = useState(f);
@@ -640,6 +855,25 @@ const ACTIONS = {
   'host.created': ['Host added', ''],
   'host.updated': ['Host updated', ''],
   'host.imported': ['Hosts imported', ''],
+  'invite.imported': ['Expected visitors imported', ''],
+  'visit.went_out': ['Went out on a valid pass', ''],
+  'visit.reentered': ['Let in again on the same pass', 'ok'],
+  'visit.pass_ended': ['Pass ended early', ''],
+  'visit.pass_expired': ['Pass ran out while outside', ''],
+  'visit.auto_checked_out': ['Checked out automatically: event ended', ''],
+  'id_image_full.viewed': ['Full Aadhaar viewed (Super Admin)', 'warn'],
+  'gate.created': ['Gate added', ''],
+  'gate.updated': ['Gate changed', ''],
+  'group.created': ['Event created', ''],
+  'group.updated': ['Event changed', ''],
+  'group.cancelled': ['Event cancelled', 'warn'],
+  'group.guests_added': ['Guests added to an event', ''],
+  'group.guest_removed': ['Guest taken off the list', ''],
+  'group.walk_in': ['Walk-in added at the gate', ''],
+  'group.checked_out_all': ['Everyone in an event checked out', ''],
+  'whatsapp.failed': ['WhatsApp could not be sent', 'bad'],
+  'telegram.failed': ['Telegram message failed', 'bad'],
+  'email.failed': ['Email could not be sent', 'bad'],
   'auth.login': ['Signed in', ''],
   'auth.password_changed': ['Changed their password', ''],
   'otp.sent': ['Verification code sent', ''],
@@ -899,8 +1133,8 @@ function MessagesPage({ tick, stats }) {
           <Info />
           <span className="grow">
             {stats.telegramOn
-              ? <><strong>Hosts who connected Telegram get requests there.</strong> For everyone else, SMS are only logged here (no SMS provider is connected): open the approval link below, or connect them on the Hosts page.</>
-              : <><strong>SMS are logged here, not delivered yet.</strong> No SMS provider is connected. To approve a visitor, open the approval link below, or share it with the host.</>}
+              ? <><strong>Hosts who connected Telegram get requests there.</strong> Text messages are not switched on yet, so other hosts receive nothing. To approve for them, press “Open approval link” below and share it, or connect them to Telegram on the Hosts page.</>
+              : <><strong>Text messages are not switched on yet, so hosts receive nothing.</strong> To approve a visitor, press “Open approval link” below and share it with the host. Ask GateSmartX support to switch text messages on.</>}
           </span>
         </div>
       )}
@@ -960,11 +1194,31 @@ const AUDIT_FILTERS = [
   { id: 'id_image', label: 'Aadhaar views' }, { id: 'export', label: 'Downloads' }, { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' }, { id: 'block', label: 'Blocked' }, { id: 'invite.', label: 'Expected' }, { id: 'settings', label: 'Settings' },
 ];
 const ROLE_LABEL = { admin: 'Administrator', guard: 'Guard' };
-const DETAIL_KEYS = { dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', errors: 'errors', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors' };
+const DETAIL_KEYS = { dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', updated: 'updated', errors: 'not added', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors', count: 'how many' };
 function AuditPage({ tick, openVisit }) {
   const [filter, setFilter] = useState('');
+  const [q, setQ] = useState('');
+  const [term, setTerm] = useState('');
   const [rows, setRows] = useState(null);
-  useEffect(() => { api(`/api/admin/audit?${qs({ action: filter })}`).then((d) => setRows(d.rows)).catch(() => setRows([])); }, [filter, tick]);
+  const [more, setMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 250); return () => clearTimeout(t); }, [q]);
+  // Live updates refresh the newest page; older pages the admin opened stay as they are.
+  useEffect(() => {
+    let live = true;
+    api(`/api/admin/audit?${qs({ action: filter, q: term })}`)
+      .then((d) => { if (live) { setRows(d.rows); setMore(d.more); } })
+      .catch(() => live && setRows([]));
+    return () => { live = false; };
+  }, [filter, term, tick]);
+  const older = async () => {
+    setLoadingMore(true);
+    try {
+      const d = await api(`/api/admin/audit?${qs({ action: filter, q: term, before: rows.at(-1)?._id })}`);
+      setRows((rs) => [...rs, ...d.rows]);
+      setMore(d.more);
+    } catch { /* the button stays for another try */ } finally { setLoadingMore(false); }
+  };
 
   const detail = (r) => {
     const d = { ...(r.details || {}) };
@@ -979,8 +1233,12 @@ function AuditPage({ tick, openVisit }) {
         <div className="seg seg-wrap" role="group" aria-label="Filter">
           {AUDIT_FILTERS.map((f) => <button key={f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
         </div>
+        <div className="input-group field wide">
+          <Search />
+          <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Person, visitor ID, mobile or reason" aria-label="Search the audit log" />
+        </div>
       </div>
-      {!rows ? <ListSkeleton /> : rows.length === 0 ? <Empty icon={ScrollText} title="No entries">Nothing recorded for this filter yet.</Empty> : (
+      {!rows ? <ListSkeleton /> : rows.length === 0 ? <Empty icon={ScrollText} title="No entries">{term ? 'Nothing matches that search.' : 'Nothing recorded for this filter yet.'}</Empty> : (
         <div className="table-scroll">
           <table className="table">
             <thead><tr><th>When</th><th>Who</th><th>What</th><th>Visitor</th><th>Details</th></tr></thead>
@@ -1000,6 +1258,12 @@ function AuditPage({ tick, openVisit }) {
               })}
             </tbody>
           </table>
+          {more && (
+            <div className="pager">
+              <span className="num faint">{rows.length} shown</span>
+              <button type="button" className="btn btn-sm" onClick={older} disabled={loadingMore}>{loadingMore ? <Spinner /> : <ChevronDown />}Show older</button>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -1007,7 +1271,17 @@ function AuditPage({ tick, openVisit }) {
 }
 
 // ================================================================= Hosts
-function HostsPage({ toast, stats }) {
+// Sent from the search box: find someone, or start adding or importing.
+function useIntent(intent, handlers) {
+  const done = useRef(null);
+  useEffect(() => {
+    if (!intent || done.current === intent.n) return;
+    done.current = intent.n;
+    handlers[intent.action]?.(intent.value);
+  }, [intent]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+function HostsPage({ toast, stats, intent }) {
   const [rows, setRows] = useState(null);
   const [connecting, setConnecting] = useState(null); // host being connected to Telegram
   const [editingHost, setEditingHost] = useState(null);
@@ -1016,6 +1290,7 @@ function HostsPage({ toast, stats }) {
   const [importing, setImporting] = useState(false);
   const load = useCallback(() => api('/api/admin/hosts').then((d) => setRows(d.rows)).catch(() => setRows([])), []);
   useEffect(() => { load(); }, [load]);
+  useIntent(intent, { find: setQ, add: () => setAdding(true), import: () => setImporting(true) });
 
   const toggle = async (h) => {
     setRows((rs) => rs.map((r) => (r.id === h.id ? { ...r, active: !h.active } : r))); // optimistic
@@ -1032,7 +1307,7 @@ function HostsPage({ toast, stats }) {
         <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, flat, mobile" aria-label="Search hosts" /></div>
         <span className="muted num" style={{ alignSelf: 'center' }}>{rows ? `${active} active of ${rows.length}` : ''}</span>
         <span className="spacer-x" />
-        <button className="btn btn-sm" onClick={() => setImporting(true)}><Upload />Import CSV</button>
+        <button className="btn btn-sm" onClick={() => setImporting(true)}><Upload />Import from Excel</button>
         <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add host</button>
       </div>
       {!rows ? <ListSkeleton /> : shown.length === 0 ? (
@@ -1067,7 +1342,21 @@ function HostsPage({ toast, stats }) {
       <ConnectTelegramDialog host={connecting} live={rows?.find((r) => r.id === connecting?.id)} onClose={() => setConnecting(null)} onRefresh={load} />
       <AddHostDialog open={adding} onClose={() => setAdding(false)} onDone={load} />
       <AddHostDialog open={Boolean(editingHost)} host={editingHost} onClose={() => setEditingHost(null)} onDone={load} />
-      <ImportDialog open={importing} onClose={() => setImporting(false)} onDone={load} />
+      <BulkImport
+        open={importing} onClose={() => setImporting(false)} onDone={load}
+        title="Import hosts" noun={['host', 'hosts']} endpoint="/api/admin/hosts/import"
+        intro="A sheet with the name, flat or department, mobile and (optional) email of each host. Someone already listed is recognised by their mobile and updated, never added twice."
+        placeholder={'Asha Verma\tA-101\t98765 43210\tasha@example.com\nRahul Mehta\tB-302\t98200 11223'}
+        template={'Name,Flat or department,Mobile,Email\r\nAsha Verma,A-101,98765 43210,asha@example.com\r\n'} templateName="hosts"
+        columns={[
+          { label: 'Name', cell: (r) => r.fullName },
+          { label: 'Flat / dept', cell: (r) => r.unit },
+          { label: 'Mobile', cell: (r) => <span className="num">{fmtMobile(r.mobile)}</span> },
+          { label: 'Email', cell: (r) => r.email },
+        ]}
+        status={(r) => (r.action === 'add' ? ['New', 'badge-live'] : r.action === 'update' ? ['Will be updated', 'badge-warn'] : ['Already up to date', ''])}
+        done={(r) => `${r.created} ${r.created === 1 ? 'host' : 'hosts'} added${r.updated ? `, ${r.updated} updated` : ''}${r.same ? `, ${r.same} already up to date` : ''}.`}
+      />
     </section>
   );
 }
@@ -1125,48 +1414,6 @@ function AddHostDialog({ open, host, onClose, onDone }) {
           <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : editing ? <CheckCircle2 /> : <UserPlus />}{editing ? 'Save changes' : 'Add host'}</button>
         </div>
       </form>
-    </Modal>
-  );
-}
-
-function ImportDialog({ open, onClose, onDone }) {
-  const toast = useToast();
-  const [csv, setCsv] = useState('');
-  const [result, setResult] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const fileRef = useRef(null);
-  useEffect(() => { if (open) { setCsv(''); setResult(null); } }, [open]);
-  const lines = csv.split(/\r?\n/).filter((l) => l.trim()).length;
-
-  const readFile = async (file) => { if (file) setCsv((await file.text()).replace(/^﻿/, '')); };
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const r = await api('/api/admin/hosts/import', { method: 'POST', body: { csv } });
-      setResult(r);
-      if (r.created) { toast(`${r.created} ${r.created === 1 ? 'host' : 'hosts'} added.`); onDone(); }
-      if (!r.errors.length) onClose();
-    } catch (e) { setResult({ created: 0, errors: [{ line: '-', error: e.message }] }); } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} label="Import hosts">
-      <div className="dialog-head"><h2>Import hosts</h2><p>One host per line: <span className="mono">name, flat, mobile, email</span>. Email is optional.</p></div>
-      <div className="dialog-body">
-        <button type="button" className="dropzone" onClick={() => fileRef.current?.click()}
-          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]); }}>
-          <Upload /><strong>Choose a CSV file</strong><span className="faint">or drop it here, or paste below</span>
-        </button>
-        <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" hidden onChange={(e) => readFile(e.target.files[0])} />
-        <textarea className="textarea" value={csv} onChange={(e) => setCsv(e.target.value)} rows={6} placeholder={'Asha Verma, A-101, 9000000001\nRahul Mehta, B-302, 9000000002'} aria-label="Hosts CSV" />
-        {result?.errors?.length > 0 && (
-          <div className="alert alert-warn"><AlertTriangle /><span className="grow">{result.created} added. Fix {result.errors.length === 1 ? 'line' : 'lines'} {result.errors.map((x) => x.line).join(', ')}: {result.errors[0].error}</span></div>
-        )}
-      </div>
-      <div className="dialog-foot">
-        <button type="button" className="btn btn-ghost" onClick={onClose}>Close</button>
-        <button className="btn btn-primary" disabled={!lines || busy} onClick={submit}>{busy ? <Spinner /> : <Upload />}Import {lines || ''} {lines === 1 ? 'host' : 'hosts'}</button>
-      </div>
     </Modal>
   );
 }
@@ -1298,11 +1545,12 @@ function GatePicker({ value, onChange, gates }) {
   );
 }
 
-function StaffPage({ toast, user }) {
+function StaffPage({ toast, user, intent }) {
   const gates = useGates();
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
+  useIntent(intent, { find: setQ, add: () => setAdding(true) });
   const [editing, setEditing] = useState(null);
   const [canSuper, setCanSuper] = useState(false);
   const load = useCallback(() => api('/api/admin/users').then((d) => { setRows(d.rows); setCanSuper(Boolean(d.canAppointSuper)); }).catch(() => setRows([])), []);
@@ -1606,16 +1854,31 @@ const dayLabel = (day, today) => {
   return fmtDate(`${day}T12:00:00+05:30`);
 };
 
-function ExpectedPage({ toast, tick, openVisit, refresh }) {
+function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
   const [data, setData] = useState(null);
   const [view, setView] = useState('upcoming');
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [batch, setBatch] = useState({ day: daysAgo(0), host: null }); // the day and host for an imported list
+  const [picked, setPicked] = useState(() => new Set());
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [busy, setBusy] = useState(false);
   const load = useCallback(() => api('/api/admin/invites').then(setData).catch(() => setData({ today: daysAgo(0), rows: [] })), []);
   useEffect(() => { load(); }, [load, tick]);
+  useIntent(intent, { add: () => setAdding(true), import: () => setImporting(true) });
+  useEffect(() => { if (importing) setBatch({ day: daysAgo(0), host: null }); }, [importing]);
 
   const cancel = async (r) => {
     try { await api(`/api/admin/invites/${r.id}`, { method: 'PATCH', body: { status: 'cancelled' } }); toast(`${r.firstName} ${r.lastName} is no longer expected.`); load(); refresh(); } catch (e) { toast(e.message, 'bad'); }
+  };
+  const cancelPicked = async () => {
+    setBusy(true);
+    try {
+      const r = await api('/api/admin/invites/cancel', { method: 'POST', body: { ids: [...picked] } });
+      toast(`${r.cancelled} ${r.cancelled === 1 ? 'visitor is' : 'visitors are'} no longer expected. If they come, the guard asks their host as usual.`);
+      setPicked(new Set()); setConfirmCancel(false); load(); refresh();
+    } catch (e) { toast(e.message, 'bad'); } finally { setBusy(false); }
   };
 
   const today = data?.today;
@@ -1624,6 +1887,11 @@ function ExpectedPage({ toast, tick, openVisit, refresh }) {
     .filter((r) => (view === 'today' ? r.day === today : r.status !== 'cancelled' || r.day === today))
     .filter((r) => !term || `${r.firstName} ${r.lastName} ${r.mobile} ${r.company} ${r.host?.name} ${r.host?.unit}`.toLowerCase().includes(term));
   const todayCount = (data?.rows || []).filter((r) => r.day === today && r.status === 'expected').length;
+  const open = rows.filter((r) => r.status === 'expected');
+  const allPicked = open.length > 0 && open.every((r) => picked.has(r.id));
+  const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => setPicked((s) => { const n = new Set(s); open.forEach((r) => (allPicked ? n.delete(r.id) : n.add(r.id))); return n; });
+  useEffect(() => { setConfirmCancel(false); }, [picked]);
 
   return (
     <section className="panel">
@@ -1634,23 +1902,33 @@ function ExpectedPage({ toast, tick, openVisit, refresh }) {
         </div>
         <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, mobile, host" aria-label="Search expected visitors" /></div>
         <span className="spacer-x" />
-        <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add expected visitor</button>
+        <button className="btn btn-sm" onClick={() => setImporting(true)}><Upload />Import a list</button>
+        <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add one visitor</button>
       </div>
       <div className="notice">
         <Info />
-        <span className="grow">At the gate the guard types their mobile number; the form fills in and they get a pass <strong>without waiting for the host</strong>. Their photo and Aadhaar are still taken.</span>
+        <span className="grow">People added here <strong>do not wait for the host</strong>. At the gate the guard types their mobile number, the form fills in, and they get their pass at once. Their photo and ID are still taken.</span>
       </div>
       {!data ? <ListSkeleton /> : rows.length === 0 ? (
-        <Empty icon={CalendarCheck} title="No expected visitors" action={<button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add expected visitor</button>}>
-          Add a guest, a delivery or a contractor you know is coming.
+        <Empty icon={CalendarCheck} title={term ? 'No match' : 'Nobody expected yet'} action={term ? null : (
+          <div className="empty-actions">
+            <button className="btn btn-sm" onClick={() => setImporting(true)}><Upload />Import a list</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}><Plus />Add one visitor</button>
+          </div>
+        )}>
+          {term ? 'Try another name or number.' : 'Add a guest, an interview candidate or a contractor you know is coming. For many people at once, import them from an Excel sheet.'}
         </Empty>
       ) : (
         <div className="table-scroll">
           <table className="table">
-            <thead><tr><th>Day</th><th>Visitor</th><th>Meeting</th><th>Note</th><th>Status</th><th className="r"><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr>
+              <th className="pick-col">{open.length > 0 && <input type="checkbox" checked={allPicked} onChange={toggleAll} aria-label="Select everyone still expected" />}</th>
+              <th>Day</th><th>Visitor</th><th>Meeting</th><th>Note for the guard</th><th>Status</th><th className="r"><span className="sr-only">Actions</span></th>
+            </tr></thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className={r.status === 'cancelled' ? 'row-off' : ''}>
+                <tr key={r.id} className={`${r.status === 'cancelled' ? 'row-off' : ''}${picked.has(r.id) ? ' row-picked' : ''}`}>
+                  <td className="pick-col">{r.status === 'expected' && <input type="checkbox" checked={picked.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Select ${r.firstName} ${r.lastName}`} />}</td>
                   <td className={r.day === today ? 'day-today' : ''}>{dayLabel(r.day, today)}</td>
                   <td>
                     <div className="name">{r.firstName} {r.lastName}</div>
@@ -1673,7 +1951,42 @@ function ExpectedPage({ toast, tick, openVisit, refresh }) {
           </table>
         </div>
       )}
+      {picked.size > 0 && (
+        <div className="pick-bar" role="region" aria-label="Selected visitors">
+          <span><strong className="num">{picked.size}</strong> selected</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
+          {confirmCancel
+            ? <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={cancelPicked}>{busy ? <Spinner /> : <CheckCircle2 />}Yes, cancel {picked.size}</button>
+            : <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmCancel(true)}><X />Cancel {picked.size}</button>}
+        </div>
+      )}
       <ExpectedDialog open={adding} onClose={() => setAdding(false)} onDone={() => { load(); refresh(); }} />
+      <BulkImport
+        open={importing} onClose={() => setImporting(false)} onDone={() => { load(); refresh(); }}
+        title="Import expected visitors" noun={['visitor', 'visitors']} endpoint="/api/admin/invites/import"
+        intro="For a group you know is coming: interview candidates, a delegation, a contractor crew. 1. Pick the day and whom they meet. 2. Upload the sheet or paste the rows. 3. Check the lines, then add them."
+        body={{ day: batch.day, hostId: batch.host?.id }}
+        settings={(
+          <div className="import-settings">
+            <label className="field"><span>Day they come</span>
+              <input className="input" type="date" min={daysAgo(0)} max={daysAgo(-90)} value={batch.day} onChange={(e) => setBatch({ ...batch, day: e.target.value })} />
+            </label>
+            <div className="field"><span>Whom they meet</span><HostPicker value={batch.host} onChange={(host) => setBatch({ ...batch, host })} /></div>
+            <span className="hint">People on different days or with different hosts? Add a <strong>Date</strong> or <strong>Host</strong> column to the sheet (the host's name or flat). The sheet's column is used for that person instead of these two boxes.</span>
+          </div>
+        )}
+        placeholder={'Kavya Iyer\t98765 43210\tTCS\nArjun Rao\t98200 11223\tInfosys'}
+        template={'Name,Mobile,Company,Purpose,Note for the guard,Date,Host\r\nKavya Iyer,98765 43210,TCS,Interview,,,\r\n'} templateName="expected visitors"
+        columns={[
+          { label: 'Name', cell: (r) => r.name },
+          { label: 'Mobile', cell: (r) => <span className="num">{fmtMobile(r.mobile)}</span> },
+          { label: 'Company', cell: (r) => r.company },
+          { label: 'Day', cell: (r) => (/^\d{4}-\d{2}-\d{2}$/.test(r.day || '') && today ? dayLabel(r.day, today) : r.day) },
+          { label: 'Meeting', cell: (r) => (r.host ? `${r.host.name}, ${r.host.unit}` : '') },
+        ]}
+        status={() => ['Ready', 'badge-live']}
+        done={(r) => `${r.created} ${r.created === 1 ? 'visitor is' : 'visitors are'} now expected. The guard sees them as soon as their mobile number is typed at the gate.`}
+      />
     </section>
   );
 }
@@ -1977,7 +2290,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
           </label>
           <div className={`alert ${ch.otp ? 'alert-ok' : 'alert-warn'}`}>
             {ch.otp ? <CheckCircle2 /> : <AlertTriangle />}
-            <span className="grow">{ch.otp ? 'SMS provider connected: codes are texted to visitors.' : 'No SMS provider connected yet (MSG91 key and template are missing on the server). Codes are only written to the server log, so visitors would not receive them. Keep this Off until it is connected.'}</span>
+            <span className="grow">{ch.otp ? 'Text messages are on: visitors receive the code on their phone.' : 'Text messages are not switched on yet, so visitors would not receive the code. Keep this Off until GateSmartX support switches text messages on.'}</span>
           </div>
         </div>
       </section>
@@ -1992,23 +2305,23 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
         <div className="panel-body">
           <div className="channel">
             <MessageSquare />
-            <span className="grow"><strong>WhatsApp</strong><small>{ch.whatsapp ? 'Hosts get requests with Let them in / Decline buttons.' : 'Not set up.'}</small></span>
+            <span className="grow"><strong>WhatsApp</strong><small>{ch.whatsapp ? 'Hosts get requests with Let them in / Decline buttons.' : 'Off. Ask GateSmartX support to set up your WhatsApp business number.'}</small></span>
             {ch.whatsapp ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
           </div>
           <div className="channel">
             <Mail />
-            <span className="grow"><strong>Email</strong><small>{ch.email ? `Sent from ${ch.email} to every host with an email address, as well as WhatsApp or SMS. Free.` : 'Not set up. Add a mail account in the server settings (EMAIL_DRIVER) to send approval requests by email too.'}</small></span>
+            <span className="grow"><strong>Email</strong><small>{ch.email ? `Sent from ${ch.email} to every host with an email address, as well as WhatsApp or SMS. Free.` : 'Off. Ask GateSmartX support to connect a mail account, so hosts also get requests by email.'}</small></span>
             {ch.email ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
           </div>
           <div className="channel">
             <Send />
-            <span className="grow"><strong>Telegram</strong><small>{ch.telegram ? `Connected as @${ch.telegram}. Connect each host from the Hosts page.` : 'Not set up. Add a bot token in the server settings to send requests with Let them in / Decline buttons.'}</small></span>
+            <span className="grow"><strong>Telegram</strong><small>{ch.telegram ? `Connected as @${ch.telegram}. Connect each host from the Hosts page.` : 'Off. Ask GateSmartX support to set it up, so hosts can approve with one tap in Telegram.'}</small></span>
             {ch.telegram ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
           </div>
           <div className="channel">
             <MessageSquare />
-            <span className="grow"><strong>SMS</strong><small>{ch.sms ? 'Connected to your SMS provider.' : 'No SMS provider connected: messages are logged under Messages and prints.'}</small></span>
-            {ch.sms ? <span className="badge badge-live">On</span> : <span className="badge">Logged only</span>}
+            <span className="grow"><strong>SMS</strong><small>{ch.sms ? 'On: hosts get approval requests by text message.' : 'Off: hosts get no text message. Ask GateSmartX support to switch it on. Until then, requests are listed under Messages and prints.'}</small></span>
+            {ch.sms ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
           </div>
           <div className="channel">
             <Printer />
@@ -2030,7 +2343,13 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
       </section>
 
       {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
-      <div><button className="btn btn-primary" disabled={busy || !changed.length}>{busy ? <Spinner /> : <Save />}Save changes</button></div>
+      {changed.length > 0 && (
+        <div className="save-bar" role="region" aria-label="Unsaved changes">
+          <span className="grow">You changed {changed.length === 1 ? 'a setting' : `${changed.length} settings`}. Save to apply {changed.length === 1 ? 'it' : 'them'}.</span>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { setF(Object.fromEntries(Object.keys(f).map((k) => [k, s[k]]))); setErr(''); }}>Undo</button>
+          <button className="btn btn-primary btn-sm" disabled={busy}>{busy ? <Spinner /> : <Save />}Save changes</button>
+        </div>
+      )}
     </form>
   );
 }

@@ -278,7 +278,7 @@ const admitReply = async (outcome, guest, group) => ({
   visit: outcome.visit ? { id: String(outcome.visit._id), dailyNumber: outcome.visit.dailyNumber, validUntil: outcome.visit.validUntil } : null,
 });
 
-// A scanned pass (QR, scanner gun) or a typed code.
+// A scanned event pass (QR, scanner gun) or a typed code. Older screens; the gate scanner now uses /api/visits/scan.
 router.post('/scan', requireRole('guard', 'admin'), async (req, res) => {
   const code = groups.readCode(req.body?.code);
   if (!code) return res.status(400).json({ result: 'unknown', ok: false, message: 'That is not a guest pass. Check the code, or check them in as a visitor.' });
@@ -306,6 +306,34 @@ router.post('/:id/admit-many', requireRole('guard', 'admin'), async (req, res) =
   const results = [];
   for (const guest of list) results.push(await admitReply(await groups.admit(guest, g, req.user), guest, g));
   res.json({ results, letIn: results.filter((r) => r.ok).length });
+});
+
+// A family or a team leaving together: each guest out at this gate, on their own record. A pass that runs
+// past today stays valid (they can come back on it), exactly as when they are checked out one by one.
+router.post('/:id/checkout-many', requireRole('guard', 'admin'), async (req, res) => {
+  const g = await loadGroup(req, res);
+  if (!g) return;
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).filter(isId).slice(0, 200);
+  if (!ids.length) return res.status(400).json({ error: 'Pick the guests who are leaving' });
+  const list = await Guest.find({ _id: { $in: ids }, group: g._id, visit: { $exists: true } }, 'visit').lean();
+  const gate = await passes.gateOf(req.user.id);
+  const now = new Date();
+  let out = 0;
+  for (const x of list) {
+    const v = await Visit.findOne({ _id: x.visit, status: 'approved' }, 'validity validUntil ref').lean();
+    if (!v) continue;
+    const keep = passes.staysOpen(v.validity, v.validUntil, now);
+    const exit = passes.movement('out', gate, req.user, now);
+    const r = await Visit.updateOne(
+      { _id: v._id, status: 'approved' },
+      keep ? { status: 'away', $push: { movements: exit } } : { status: 'checked_out', checkedOutAt: now, checkedOutBy: req.user.id, $push: { movements: exit } },
+    );
+    if (r.modifiedCount) {
+      out += 1;
+      audit(req.user, keep ? 'visit.went_out' : 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name, group: g.name } });
+    }
+  }
+  res.json({ ok: true, checkedOut: out });
 });
 
 // Someone not on the list, when the admin allowed walk-ins for this group.

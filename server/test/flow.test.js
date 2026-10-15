@@ -179,7 +179,7 @@ test('admin can download visits as an Excel-safe sheet and as a ZIP with photos'
   assert.equal(lines.length, 4, 'header + 3 visits');
   assert.match(lines[0], /"Visitor ID","Date","Pass no"/);
   assert.match(sheet.toString('utf8'), /"98765 43210"/, 'mobile written as text, not +91… (Excel would mangle it)');
-  assert.match(sheet.toString('utf8'), /"Force checked out".*"Guard forgot to mark exit"/);
+  assert.match(sheet.toString('utf8'), /"Checked out by admin".*"Guard forgot to mark exit"/);
 
   const zip = await fetch(`${base}/api/admin/visits.zip?name=Kiran`, { headers: { Cookie: admin } });
   assert.equal(zip.status, 200);
@@ -1524,4 +1524,250 @@ test('email approvals: sent as well as the main channel to hosts with an address
     Object.assign(config.email, saved);
     await Host.updateOne({ _id: hostIds.asha }, { $unset: { email: 1 } });
   }
+});
+
+test('host import: preview first, a second import updates people instead of adding them twice', async () => {
+  const { Host } = require('../src/models');
+  const sheet = 'Name,Flat,Phone,Email\nNina Rao,C-501,9700000101,nina@example.com\n"Omar Jr",C-502,9700000102,\nBad Line,,9700000103,\nNo Number,C-504,,\nDup Nina,C-505,9700000101,\nBad Mail,C-506,9700000106,not-an-email';
+  const dry = await call('POST', '/api/admin/hosts/import', { text: sheet, dryRun: true }, admin);
+  assert.equal(dry.status, 200);
+  assert.equal(dry.body.add, 2);
+  assert.deepEqual(dry.body.errors.map((e) => e.line), [4, 5, 6, 7]);
+  assert.equal(await Host.countDocuments({ mobile: '+919700000101' }), 0, 'a preview saves nothing');
+
+  const first = await call('POST', '/api/admin/hosts/import', { text: sheet }, admin);
+  assert.equal(first.body.created, 2);
+  assert.equal(first.body.errors.length, 4);
+  // The same directory again, with one person moved: one update, nothing doubled.
+  const again = await call('POST', '/api/admin/hosts/import', { text: 'Nina Rao,D-101,9700000101\nOmar Jr,C-502,9700000102' }, admin);
+  assert.equal(again.body.created, 0);
+  assert.equal(again.body.updated, 1);
+  assert.equal(again.body.same, 1);
+  assert.equal(await Host.countDocuments({ mobile: '+919700000101' }), 1);
+  const nina = await Host.findOne({ mobile: '+919700000101' }).lean();
+  assert.equal(nina.unit, 'D-101');
+  assert.equal(nina.email, 'nina@example.com', 'an empty email cell keeps the address on file');
+  // The old request shape (csv) still works.
+  assert.equal((await call('POST', '/api/admin/hosts/import', { csv: 'Pia Sen,E-1,9700000107' }, admin)).body.created, 1);
+  assert.equal((await call('POST', '/api/admin/hosts/import', { text: sheet }, guard)).status, 403);
+});
+
+test('expected visitors in bulk: preview, per-line reasons, own dates and hosts, then cancel several at once', async () => {
+  const { Invite } = require('../src/models');
+  const { siteDay } = require('../src/services/core');
+  const { addDays } = require('../src/services/passes');
+  const today = siteDay();
+  const [y, m, d] = addDays(today, 2).split('-');
+  await call('POST', '/api/admin/blocks', { mobile: '9700000209', reason: 'Not allowed on site' }, admin);
+  const text = [
+    'Name\tMobile\tCompany\tDate\tHost',
+    'Kavya Iyer\t9700000201\tTCS\t\t',
+    `Arjun Rao\t9700000202\tInfosys\t${d}/${m}/${y}\tB-303`,
+    'Solo\t9700000203\t\t\t',
+    'Lata Menon\t12345\t\t\t',
+    'Ravi Bose\t9700000209\t\t\t',
+    'Kavya Iyer\t9700000201\tTCS\t\t',
+    'Neha Shah\t9700000206\t\t\tNobody Here',
+    'Old Date\t9700000207\t\t01/01/2020\t',
+  ].join('\n');
+  const dry = await call('POST', '/api/admin/invites/import', { text, day: today, hostId: hostIds.asha, dryRun: true }, admin);
+  assert.equal(dry.status, 200);
+  assert.equal(dry.body.add, 2);
+  const why = Object.fromEntries(dry.body.errors.map((e) => [e.line, e.error]));
+  assert.match(why[4], /first and last name/);
+  assert.match(why[5], /not a valid mobile/);
+  assert.equal(why[6], 'On the blocked list');
+  assert.equal(why[7], 'Already expected that day');
+  assert.match(why[8], /No host called/);
+  assert.match(why[9], /90 days/);
+  const arjun = dry.body.rows.find((r) => r.name === 'Arjun Rao');
+  assert.equal(arjun.day, addDays(today, 2), 'day-first dates are read the Indian way');
+  assert.equal(arjun.host.name, 'Rahul K Mehta', 'a flat in the Host column picks that host');
+  assert.equal(await Invite.countDocuments({ mobile: '+919700000201' }), 0);
+
+  const saved = await call('POST', '/api/admin/invites/import', { text, day: today, hostId: hostIds.asha }, admin);
+  assert.equal(saved.body.created, 2);
+  const lookup = await call('GET', '/api/visits/lookup?mobile=9700000201', null, guard);
+  assert.equal(lookup.body.invite.host.name, 'Asha Verma', 'expected today, ready at the gate');
+  // Importing the same list again adds nobody.
+  assert.equal((await call('POST', '/api/admin/invites/import', { text, day: today, hostId: hostIds.asha }, admin)).body.created, 0);
+  assert.equal((await call('POST', '/api/admin/invites/import', { text: 'A B,9700000299' }, admin)).body.errors[0].error, 'No day. Go back and pick the day, or add a Date column');
+
+  const ids = (await Invite.find({ mobile: { $in: ['+919700000201', '+919700000202'] } }).lean()).map((i) => String(i._id));
+  const off = await call('POST', '/api/admin/invites/cancel', { ids }, admin);
+  assert.equal(off.body.cancelled, 2);
+  assert.equal((await call('GET', '/api/visits/lookup?mobile=9700000201', null, guard)).body.invite, null);
+});
+
+test('end-of-day sweep: several visitors checked out together with one reason; overstay counts only passes that ended', async () => {
+  const { Visit } = require('../src/models');
+  const ids = [];
+  for (const [first, mobile] of [['Sweep', '9700000301'], ['Sweepy', '9700000302']]) {
+    const r = await checkIn(first, hostIds.asha, mobile);
+    await call('POST', `/api/approvals/${await tokenFor(r.body.id)}/decision`, { decision: 'approve' });
+    ids.push(r.body.id);
+  }
+  // A multi-day pass holder let in eleven hours ago is not overstaying; one whose pass ended is.
+  await Visit.updateOne({ _id: ids[0] }, { decidedAt: new Date(Date.now() - 11 * 3600e3), validUntil: new Date(Date.now() + 5 * 86400e3) });
+  await Visit.updateOne({ _id: ids[1] }, { validUntil: new Date(Date.now() - 60e3) });
+  const stale = await call('GET', '/api/admin/stale', null, admin);
+  assert.deepEqual(stale.body.rows.map((r) => r.id).filter((id) => ids.includes(id)), [ids[1]]);
+
+  assert.equal((await call('POST', '/api/visits/force-checkout', { ids, reason: 'x' }, admin)).status, 400);
+  assert.equal((await call('POST', '/api/visits/force-checkout', { ids, reason: 'End of day sweep' }, guard)).status, 403);
+  const swept = await call('POST', '/api/visits/force-checkout', { ids: [...ids, ids[0]], reason: 'End of day sweep' }, admin);
+  assert.equal(swept.body.checkedOut, 2);
+  const after = await Visit.find({ _id: { $in: ids } }).lean();
+  assert.ok(after.every((v) => v.status === 'force_checked_out' && v.forceReason === 'End of day sweep'));
+  const timeline = await call('GET', `/api/admin/visits/${ids[0]}/timeline`, null, admin);
+  assert.ok(timeline.body.rows.some((t) => t.action === 'visit.force_checked_out'), 'each visit keeps its own audit entry');
+});
+
+test('admin search finds visitors, hosts and staff from one box; the audit log searches and pages', async () => {
+  const r = await call('GET', '/api/admin/search?q=Sweepy', null, admin);
+  assert.equal(r.body.visits[0].name, 'Sweepy Sharma');
+  assert.equal((await call('GET', '/api/admin/search?q=Sweepy%20Sha', null, admin)).body.visits[0].name, 'Sweepy Sharma', 'first and last name together');
+  assert.equal((await call('GET', '/api/admin/search?q=00302', null, admin)).body.visits[0].name, 'Sweepy Sharma', 'by the end of the mobile');
+  assert.equal((await call('GET', '/api/admin/search?q=asha', null, admin)).body.hosts[0].name, 'Asha Verma');
+  assert.equal((await call('GET', '/api/admin/search?q=gate%20guard', null, admin)).body.staff[0].username, 'guard1');
+  assert.equal((await call('GET', '/api/admin/search?q=asha', null, guard)).status, 403);
+
+  const page1 = await call('GET', '/api/admin/audit', null, admin);
+  assert.equal(page1.body.rows.length, 100);
+  assert.equal(page1.body.more, true);
+  const page2 = await call('GET', `/api/admin/audit?before=${page1.body.rows.at(-1)._id}`, null, admin);
+  assert.ok(page2.body.rows.length > 0);
+  assert.ok(page2.body.rows[0]._id < page1.body.rows.at(-1)._id);
+  const found = await call('GET', '/api/admin/audit?q=End%20of%20day', null, admin);
+  assert.ok(found.body.rows.length >= 2 && found.body.rows.every((x) => x.details.reason === 'End of day sweep'));
+});
+
+test('event guests leave together: check out the selected guests at the gate', async () => {
+  const { siteDay } = require('../src/services/core');
+  const { addDays } = require('../src/services/passes');
+  const today = siteDay();
+  const grp = await call('POST', '/api/groups', { name: 'Team offsite', hostId: hostIds.asha, startDay: today, endDay: today }, admin);
+  await call('POST', `/api/groups/${grp.body.id}/guests`, { text: 'Tara Das,9700000401\nVik Das,9700000402\nZed Das' }, admin);
+  const list = (await call('GET', `/api/groups/${grp.body.id}/guests`, null, guard)).body.rows;
+  const ids = list.map((g) => g.id);
+  assert.equal((await call('POST', `/api/groups/${grp.body.id}/admit-many`, { ids: ids.slice(0, 2) }, guard)).body.letIn, 2);
+  const out = await call('POST', `/api/groups/${grp.body.id}/checkout-many`, { ids }, guard);
+  assert.equal(out.body.checkedOut, 2, 'the guest who never came in is left alone');
+  const after = (await call('GET', `/api/groups/${grp.body.id}/guests`, null, guard)).body.rows;
+  assert.deepEqual(after.map((g) => g.status).sort(), ['expected', 'left', 'left']);
+
+  // A multi-day event: leaving keeps the pass, so they can come back tomorrow.
+  const multi = await call('POST', '/api/groups', { name: 'Two-day summit', hostId: hostIds.asha, startDay: today, endDay: addDays(today, 1) }, admin);
+  await call('POST', `/api/groups/${multi.body.id}/guests`, { text: 'Uma Pai,9700000411' }, admin);
+  const uma = (await call('GET', `/api/groups/${multi.body.id}/guests`, null, guard)).body.rows[0];
+  await call('POST', `/api/groups/${multi.body.id}/guests/${uma.id}/admit`, {}, guard);
+  await call('POST', `/api/groups/${multi.body.id}/checkout-many`, { ids: [uma.id] }, guard);
+  assert.equal((await call('GET', `/api/groups/${multi.body.id}/guests`, null, guard)).body.rows[0].status, 'out');
+});
+
+test('gate scan: one scan lets a visitor out, a double scan changes nothing, a mistake can be undone', async () => {
+  const { Visit } = require('../src/models');
+  const back = (id, ms = 2 * 60e3) => Visit.updateOne({ _id: id }, { $set: { 'movements.$[].at': new Date(Date.now() - ms) } });
+  const r = await checkIn('Scan', hostIds.asha, '9700000501');
+  await call('POST', `/api/approvals/${await tokenFor(r.body.id)}/decision`, { decision: 'approve' });
+  const v = (await call('GET', `/api/visits/${r.body.id}`, null, guard)).body;
+  assert.match(v.passCode, /^[A-HJ-NP-Z2-9]{8}$/, 'every pass carries a code for its QR');
+  const scan = (code) => call('POST', '/api/visits/scan', { code }, guard);
+
+  // Scanned again right after entering (a guard double-checking): nothing changes.
+  const bounce = await scan(v.passCode);
+  assert.equal(bounce.body.result, 'just_in');
+  assert.equal((await Visit.findById(r.body.id).lean()).status, 'approved');
+
+  await back(r.body.id);
+  const typed = `${v.passCode.slice(0, 4).toLowerCase()}-${v.passCode.slice(4)}`;
+  const out = await scan(typed);
+  assert.equal(out.body.result, 'out', 'a typed code with a dash and small letters works too');
+  assert.equal(out.body.visit.name, 'Scan Sharma');
+  assert.equal(out.body.undo.action, 'out');
+  assert.equal((await Visit.findById(r.body.id).lean()).status, 'checked_out', 'a same-day pass closes at exit');
+
+  // Wrong person scanned: undo puts them back inside, with the exit taken off the record.
+  const undo = await call('POST', `/api/visits/${r.body.id}/undo-scan`, { action: 'out' }, guard);
+  assert.equal(undo.body.status, 'approved');
+  const restored = await Visit.findById(r.body.id).lean();
+  assert.equal(restored.checkedOutAt, undefined);
+  assert.equal(restored.movements.at(-1).kind, 'in');
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/undo-scan`, { action: 'out' }, guard)).status, 409, 'nothing left to undo');
+
+  const out2 = await scan(v.passCode);
+  assert.equal(out2.body.result, 'out');
+  assert.equal((await scan(v.passCode)).body.result, 'just_out');
+  await back(r.body.id);
+  const used = await scan(v.passCode);
+  assert.equal(used.body.result, 'ended', 'a closed pass cannot be used to come back in');
+  // Too late to undo.
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/undo-scan`, { action: 'out' }, guard)).status, 409);
+
+  assert.equal((await scan('ZZZZ-ZZZZ')).body.result, 'unknown');
+  assert.equal((await scan('hello')).body.result, 'unknown');
+  assert.equal((await call('POST', '/api/visits/scan', { code: v.passCode })).status, 401, 'staff only');
+
+  // Waiting for the host: the pass is not valid yet.
+  const p = await checkIn('Waits', hostIds.asha, '9700000502');
+  const pending = await Visit.findById(p.body.id).lean();
+  assert.equal((await scan(pending.passCode)).body.result, 'waiting');
+});
+
+test('gate scan: a multi-day pass goes out and back in on scans; a blocked holder is stopped at the door', async () => {
+  const { Visit } = require('../src/models');
+  const back = (id) => Visit.updateOne({ _id: id }, { $set: { 'movements.$[].at': new Date(Date.now() - 2 * 60e3) } });
+  const r = await call('POST', '/api/visits', {
+    firstName: 'Multi', lastName: 'Day', gender: 'male', mobile: '9700000511', company: 'Contractor', hostId: hostIds.asha,
+    photo: jpeg(), idImage: jpeg(), validity: '3d',
+  }, guard);
+  await call('POST', `/api/approvals/${await tokenFor(r.body.id)}/decision`, { decision: 'approve' });
+  const { passCode } = await Visit.findById(r.body.id).lean();
+  const scan = () => call('POST', '/api/visits/scan', { code: passCode }, guard);
+
+  await back(r.body.id);
+  const out = await scan();
+  assert.equal(out.body.result, 'out');
+  assert.match(out.body.message, /They keep the pass/);
+  assert.equal((await Visit.findById(r.body.id).lean()).status, 'away');
+
+  await back(r.body.id);
+  const inAgain = await scan();
+  assert.equal(inAgain.body.result, 'in');
+  assert.equal((await Visit.findById(r.body.id).lean()).movements.length, 3);
+  // Let back in by mistake: undo returns them to "outside, pass valid".
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/undo-scan`, { action: 'in' }, guard)).body.status, 'away');
+
+  await call('POST', '/api/admin/blocks', { mobile: '9700000511', reason: 'Barred after incident' }, admin);
+  await back(r.body.id);
+  const stopped = await scan();
+  assert.equal(stopped.body.result, 'blocked');
+  assert.equal(stopped.body.ok, false);
+  assert.equal((await Visit.findById(r.body.id).lean()).status, 'away', 'still outside');
+});
+
+test('gate scan: event passes too; old passes get a code at start-up', async () => {
+  const { Visit, Guest } = require('../src/models');
+  const { siteDay } = require('../src/services/core');
+  const today = siteDay();
+  const grp = await call('POST', '/api/groups', { name: 'Scan gala', hostId: hostIds.asha, startDay: today, endDay: today }, admin);
+  await call('POST', `/api/groups/${grp.body.id}/guests`, { text: 'Gala Guest,9700000521' }, admin);
+  const guest = await Guest.findOne({ group: grp.body.id }).lean();
+  const scan = () => call('POST', '/api/visits/scan', { code: `http://localhost/g/${guest.code}` }, guard);
+
+  const first = await scan();
+  assert.equal(first.body.result, 'in');
+  assert.match(first.body.message, /Scan gala/);
+  const visitId = first.body.visit.id;
+  assert.equal((await call('POST', `/api/visits/${visitId}/undo-scan`, { action: 'in' }, guard)).status, 409, 'a first entry is not undone');
+  assert.equal((await scan()).body.result, 'just_in');
+  await Visit.updateOne({ _id: visitId }, { $set: { 'movements.$[].at': new Date(Date.now() - 2 * 60e3) } });
+  assert.equal((await scan()).body.result, 'out');
+  assert.equal((await Visit.findById(visitId).lean()).status, 'checked_out');
+
+  // A pass printed before codes existed.
+  const old = await Visit.findOne({ status: 'approved' }).lean();
+  await Visit.updateOne({ _id: old._id }, { $unset: { passCode: 1 } });
+  await require('../src/services/gate').backfillPassCodes();
+  assert.match((await Visit.findById(old._id).lean()).passCode, /^[A-HJ-NP-Z2-9]{8}$/);
 });

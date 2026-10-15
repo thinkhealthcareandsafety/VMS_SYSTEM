@@ -13,6 +13,7 @@ const telegram = require('../services/telegram');
 const whatsapp = require('../services/whatsapp');
 const email = require('../services/email');
 const passes = require('../services/passes');
+const gate = require('../services/gate');
 const vault = require('../services/vault');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
@@ -65,6 +66,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   validity: passes.validityLabel(v.validity),
   validUntil: v.validUntil ?? null,
   groupId: v.group ? String(v.group) : null,
+  passCode: ['approved', 'away'].includes(v.status) ? v.passCode ?? null : null,
   ...passes.entryExit(v),
   ...(withMobile ? { movements: (v.movements || []).map((m) => ({ kind: m.kind, at: m.at, gate: m.gateName, by: m.byName })) } : {}),
 });
@@ -316,7 +318,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
         await visit.save();
         if (config.printer.mode !== 'off') await Outbox.create({ kind: 'print', visit: visit._id });
         audit(req.user, 'visit.approved', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, dailyNumber: number, via: 'expected' }, ip: req.ip });
-        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number, validUntil: visit.validUntil });
+        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number, validUntil: visit.validUntil, passCode: visit.passCode });
       }
     }
     const share = await issueApprovalLink(visit, host, visitorName, company);
@@ -326,6 +328,19 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     console.error('check-in failed', err);
     res.status(500).json({ error: 'Could not register visitor. Please retry.' });
   }
+});
+
+// One scan at any gate: in, out, or a plain reason why not. See services/gate.js.
+router.post('/scan', requireRole('guard', 'admin'), async (req, res) => {
+  const out = await gate.scan(req.body?.code, req.user, req.ip);
+  res.status(out.result === 'unknown' ? 404 : 200).json(out);
+});
+
+// A scan made by mistake, taken back within 30 seconds.
+router.post('/:id/undo-scan', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id) || !['in', 'out'].includes(req.body?.action)) return res.status(400).json({ error: 'Nothing to undo' });
+  const { status, body } = await gate.undo(req.params.id, req.body.action, req.user, req.ip);
+  res.status(status).json(body);
 });
 
 // Status poll used by the guard screen while waiting for the host.
@@ -563,6 +578,28 @@ router.post('/:id/force-checkout', requireRole('admin'), async (req, res) => {
   if (!v) return res.status(409).json({ error: 'Visitor is not currently inside or holding a pass' });
   audit(req.user, 'visit.force_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, reason }, ip: req.ip });
   res.json({ ok: true, status: v.status });
+});
+
+// End-of-day sweep: several visitors the gate missed, checked out together with one reason, each audited on its own.
+router.post('/force-checkout', requireRole('admin'), async (req, res) => {
+  const reason = cleanText(req.body?.reason, 200);
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).filter(isId).slice(0, 500);
+  if (!ids.length) return res.status(400).json({ error: 'Pick the visitors to check out' });
+  if (reason.length < 5) return res.status(400).json({ error: 'Give a reason (at least 5 characters)' });
+  const now = new Date();
+  const due = await Visit.find({ _id: { $in: ids }, status: { $in: ['approved', 'away'] } }, '_id ref').lean();
+  let done = 0;
+  for (const v of due) {
+    const r = await Visit.updateOne(
+      { _id: v._id, status: { $in: ['approved', 'away'] } },
+      { status: 'force_checked_out', checkedOutAt: now, checkedOutBy: req.user.id, forceReason: reason },
+    );
+    if (r.modifiedCount) {
+      done += 1;
+      audit(req.user, 'visit.force_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, reason, bulk: true }, ip: req.ip });
+    }
+  }
+  res.json({ ok: true, checkedOut: done, skipped: ids.length - done });
 });
 
 // Re-queues the sticker print (printer jammed / offline).

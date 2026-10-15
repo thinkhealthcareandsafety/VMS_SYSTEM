@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Info, LogIn, LogOut, ScanLine, Search, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, Info, LogIn, LogOut, ScanLine, Search, UserPlus, Users } from 'lucide-react';
 import { api, fmtTime } from '../api.js';
 import { cue } from '../lib/notify.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
@@ -17,7 +17,7 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('');
   const [filter, setFilter] = useState('all');
-  const [picked, setPicked] = useState(() => new Set());
+  const [picked, setPicked] = useState(() => new Map()); // guest id -> guest, kept while the guard searches for the next name
   const [busy, setBusy] = useState(null); // guest id, or 'many'
   const [walkIn, setWalkIn] = useState(false);
 
@@ -52,15 +52,43 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
   const admitPicked = async () => {
     setBusy('many');
     try {
-      const r = await api(`/api/groups/${groupId}/admit-many`, { method: 'POST', body: { ids: [...picked] } });
+      const r = await api(`/api/groups/${groupId}/admit-many`, { method: 'POST', body: { ids: pickedOut.map((g) => g.id) } });
       const refused = r.results.filter((x) => !x.ok);
       if (r.letIn) cue.approved(); else cue.rejected();
-      toast(`${r.letIn} let in${refused.length ? `. Not let in: ${refused.map((x) => `${x.guest.name} (${x.message})`).join('; ')}` : '.'}`, refused.length ? 'info' : 'ok');
-      setPicked(new Set());
+      const names = r.results.filter((x) => x.ok).map((x) => x.guest.name);
+      const who = names.length && names.length <= 3 ? names.join(', ') : `${r.letIn} guests`;
+      toast(`${r.letIn ? `${who} let in.` : 'Nobody was let in.'}${refused.length ? ` Not let in: ${refused.map((x) => `${x.guest.name} (${x.message})`).join('; ')}` : ''}`, refused.length ? 'info' : 'ok');
+      setPicked(new Map());
       load();
     } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
   };
-  const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const leavePicked = async () => {
+    setBusy('many');
+    try {
+      const r = await api(`/api/groups/${groupId}/checkout-many`, { method: 'POST', body: { ids: pickedIn.map((g) => g.id) } });
+      toast(r.checkedOut === pickedIn.length && pickedIn.length <= 3
+        ? `${pickedIn.map((g) => `${g.firstName} ${g.lastName}`.trim()).join(', ')} checked out.`
+        : `${r.checkedOut} ${r.checkedOut === 1 ? 'guest' : 'guests'} checked out.`);
+      setPicked(new Map());
+      load();
+    } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
+  };
+  const toggle = (g) => setPicked((m) => { const n = new Map(m); if (n.has(g.id)) n.delete(g.id); else n.set(g.id, g); return n; });
+  // Fresh statuses for ticked guests as the list reloads (another gate may have let them in).
+  useEffect(() => {
+    if (!rows) return;
+    setPicked((m) => {
+      if (!m.size) return m;
+      let changed = false;
+      const n = new Map(m);
+      for (const r of rows) if (n.has(r.id) && n.get(r.id).status !== r.status) { n.set(r.id, r); changed = true; }
+      return changed ? n : m;
+    });
+  }, [rows]);
+  // A ticked guest is let in or checked out depending on where they are now.
+  const pickedRows = [...picked.values()];
+  const pickedIn = pickedRows.filter((g) => g.status === 'inside');
+  const pickedOut = pickedRows.filter((g) => g.status !== 'inside');
 
   if (!group) return <div className="card" style={{ padding: 24 }}><Spinner /></div>;
   return (
@@ -75,8 +103,8 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
           <span><strong className="num">{group.arrived}</strong> of {group.guests} arrived</span>
           <span><strong className="num">{group.inside}</strong> inside</span>
         </div>
-        {group.status === 'cancelled' && <div className="alert alert-bad"><Info /><span className="grow">This group was cancelled. Do not let guests in on it.</span></div>}
-        {!group.today && group.status !== 'cancelled' && <div className="alert alert-warn"><Info /><span className="grow">This group is for {group.days}, not today.</span></div>}
+        {group.status === 'cancelled' && <div className="alert alert-bad"><Info /><span className="grow">This event was cancelled. Do not let guests in on it.</span></div>}
+        {!group.today && group.status !== 'cancelled' && <div className="alert alert-warn"><Info /><span className="grow">This event is on {group.days}, not today. Do not let guests in on it today.</span></div>}
         {group.note && <div className="alert"><Info /><span className="grow">{group.note}</span></div>}
         <div className="group-actions">
           <button type="button" className="btn btn-primary" onClick={onScan}><ScanLine />Scan passes</button>
@@ -89,6 +117,7 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
           <Search />
           <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, last digits of mobile, or pass code" aria-label="Find a guest" autoFocus />
         </div>
+        <p className="faint gate-hint">Tap <strong>Let in</strong> for one guest. For a family or a team, tick each person, then press the button at the bottom.</p>
         <div className="chips" role="group" aria-label="Show">
           {FILTERS.map(([k, l]) => <button key={k} type="button" className="chip" aria-pressed={filter === k} onClick={() => setFilter(k)}>{l}</button>)}
         </div>
@@ -103,9 +132,7 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
               const [label, cls] = STATUS[g.status];
               return (
                 <li key={g.id} className={`guest-row ${g.status}`}>
-                  {canAdmit(g) ? (
-                    <input type="checkbox" checked={picked.has(g.id)} onChange={() => toggle(g.id)} aria-label={`Select ${g.firstName} ${g.lastName}`} />
-                  ) : <span className="guest-tick"><CheckCircle2 /></span>}
+                  <input type="checkbox" checked={picked.has(g.id)} onChange={() => toggle(g)} aria-label={`Select ${g.firstName} ${g.lastName}`} />
                   <div className="guest-who">
                     <strong>{g.firstName} {g.lastName}</strong>
                     <span className="faint">
@@ -132,11 +159,12 @@ export default function GroupGate({ groupId, liveTick, onBack, onScan }) {
         )}
       </div>
 
-      {picked.size > 0 && (
+      {pickedRows.length > 0 && (
         <div className="pick-bar">
-          <span><strong>{picked.size}</strong> selected</span>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
-          <button type="button" className="btn btn-success" disabled={busy !== null} onClick={admitPicked}>{busy === 'many' ? <Spinner /> : <LogIn />}Let in {picked.size}</button>
+          <span><strong>{pickedRows.length}</strong> selected</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicked(new Map())}>Clear</button>
+          {pickedOut.length > 0 && <button type="button" className="btn btn-success btn-sm" disabled={busy !== null} onClick={admitPicked}>{busy === 'many' ? <Spinner /> : <LogIn />}Let in {pickedOut.length}</button>}
+          {pickedIn.length > 0 && <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={leavePicked}>{busy === 'many' ? <Spinner /> : <LogOut />}Check out {pickedIn.length}</button>}
         </div>
       )}
 

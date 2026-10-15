@@ -17,18 +17,26 @@ const copy = async (text, toast, what) => {
   try { await navigator.clipboard.writeText(text); toast(`${what} copied.`); } catch { window.prompt('Copy this:', text); }
 };
 
-export default function GroupsPage({ tick }) {
+export default function GroupsPage({ tick, intent }) {
   const [openId, setOpenId] = useState(null);
+  const [creating, setCreating] = useState(false);
+  // From the admin search box: open an event, or start a new one.
+  const done = useRef(null);
+  useEffect(() => {
+    if (!intent || done.current === intent.n) return;
+    done.current = intent.n;
+    if (intent.action === 'open') setOpenId(intent.value);
+    if (intent.action === 'add') { setOpenId(null); setCreating(true); }
+  }, [intent]);
   if (openId) return <GroupDetail id={openId} tick={tick} onBack={() => setOpenId(null)} />;
-  return <GroupList tick={tick} onOpen={setOpenId} />;
+  return <GroupList tick={tick} onOpen={setOpenId} creating={creating} setCreating={setCreating} />;
 }
 
 // ----------------------------------------------------------------------------- list
-function GroupList({ tick, onOpen }) {
+function GroupList({ tick, onOpen, creating, setCreating }) {
   const [rows, setRows] = useState(null);
   const [view, setView] = useState('current');
   const [q, setQ] = useState('');
-  const [creating, setCreating] = useState(false);
   const load = useCallback(() => api('/api/groups').then((r) => setRows(r.rows)).catch(() => setRows([])), []);
   useEffect(() => { load(); }, [load, tick]);
 
@@ -45,18 +53,18 @@ function GroupList({ tick, onOpen }) {
         <div className="seg" role="group" aria-label="Which groups">
           {[['current', 'Today and upcoming'], ['past', 'Past and cancelled'], ['all', 'All']].map(([k, l]) => <button key={k} aria-pressed={view === k} onClick={() => setView(k)}>{l}</button>)}
         </div>
-        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Group, host or purpose" aria-label="Search groups" /></div>
+        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Event, host or purpose" aria-label="Search events" /></div>
         <span className="spacer-x" />
-        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Plus />New group</button>
+        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Plus />New event</button>
       </div>
       {!rows ? <div style={{ padding: 18 }}><div className="skeleton" style={{ height: 120, borderRadius: 12 }} /></div> : shown.length === 0 ? (
-        <Empty icon={PartyPopper} title={view === 'current' ? 'No groups coming up' : 'Nothing here'}>
-          For a wedding, banquet or conference: add the guest list once, and each guest gets a pass any gate can scan.
+        <Empty icon={PartyPopper} title={view === 'current' ? 'No events coming up' : 'Nothing here'} action={view === 'current' ? <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Plus />New event</button> : null}>
+          For a wedding, banquet or conference: create the event, add the guest list once, and each guest gets a pass that any gate can scan.
         </Empty>
       ) : (
         <div className="table-scroll">
           <table className="table">
-            <thead><tr><th>Group</th><th>Days</th><th>Host</th><th className="r">Guests</th><th className="r">Arrived</th><th className="r">Inside</th><th>Status</th></tr></thead>
+            <thead><tr><th>Event</th><th>Days</th><th>Host</th><th className="r">Guests</th><th className="r">Arrived</th><th className="r">Inside</th><th>Status</th></tr></thead>
             <tbody>
               {shown.map((g) => (
                 <tr key={g.id} className="clickable" onClick={() => onOpen(g.id)}>
@@ -113,11 +121,11 @@ function GroupDialog({ open, group, onClose, onDone }) {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   return (
-    <Modal open={open} onClose={onClose} label={group ? 'Edit group' : 'New group'}>
+    <Modal open={open} onClose={onClose} label={group ? 'Edit event' : 'New event'}>
       <form onSubmit={submit}>
         <div className="dialog-head">
-          <h2>{group ? 'Edit group' : 'New group'}</h2>
-          <p>{group ? 'Changes apply at every gate straight away.' : 'A wedding, banquet, conference or team. Setting it up is the approval: guests on the list need no host request at the gate.'}</p>
+          <h2>{group ? 'Edit event' : 'New event'}</h2>
+          <p>{group ? 'Changes apply at every gate straight away.' : 'A wedding, banquet, conference or team visit. Creating the event is the approval: guests on its list are let in at the gate without asking the host.'}</p>
         </div>
         <div className="dialog-body">
           <label className="field"><span>Name</span><input className="input" required value={f.name} onChange={set('name')} placeholder="e.g. Sharma wedding, Grand Ballroom" maxLength={80} autoFocus /></label>
@@ -143,7 +151,7 @@ function GroupDialog({ open, group, onClose, onDone }) {
         </div>
         <div className="dialog-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || f.name.trim().length < 2 || !host}>{busy ? <Spinner /> : group ? <Check /> : <Plus />}{group ? 'Save' : 'Create group'}</button>
+          <button className="btn btn-primary" disabled={busy || f.name.trim().length < 2 || !host}>{busy ? <Spinner /> : group ? <Check /> : <Plus />}{group ? 'Save' : 'Create event'}</button>
         </div>
       </form>
     </Modal>
@@ -198,7 +206,7 @@ function GroupDetail({ id, tick, onBack }) {
       <section className="panel">
         <div className="panel-head">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <button className="btn btn-ghost btn-sm" onClick={onBack}><ArrowLeft />Groups</button>
+            <button className="btn btn-ghost btn-sm" onClick={onBack}><ArrowLeft />All events</button>
             <div style={{ minWidth: 0 }}>
               <h2 style={{ fontSize: 18 }}>{g.name} {g.status === 'cancelled' && <span className="badge badge-bad">Cancelled</span>}</h2>
               <span className="sub">{g.days} · {g.host?.name}, {g.host?.unit}{g.purpose ? ` · ${g.purpose}` : ''}</span>
@@ -220,18 +228,18 @@ function GroupDetail({ id, tick, onBack }) {
           <span className="spacer-x" />
           {g.inside > 0 && <button className="btn btn-sm btn-danger-outline" onClick={() => setConfirm('checkout')}><LogOut />Check out everyone</button>}
           {g.status === 'active'
-            ? <button className="btn btn-sm btn-ghost" onClick={() => setConfirm('cancel')}><Ban />Cancel group</button>
-            : <button className="btn btn-sm btn-ghost" onClick={() => patch({ status: 'active' }, 'Group is active again.')}><RotateCcw />Reactivate</button>}
+            ? <button className="btn btn-sm btn-ghost" onClick={() => setConfirm('cancel')}><Ban />Cancel event</button>
+            : <button className="btn btn-sm btn-ghost" onClick={() => patch({ status: 'active' }, 'Event is active again. Its passes work again.')}><RotateCcw />Reactivate</button>}
         </div>
         {confirm && (
           <div className="alert alert-warn" style={{ margin: '0 18px 16px' }}>
             <AlertTriangle />
             <span className="grow">{confirm === 'checkout'
               ? `Check out all ${g.inside} guests still inside? Use this when the event is over.`
-              : 'Cancel this group? Every guest pass stops working at all gates at once.'}</span>
+              : 'Cancel this event? Every guest pass stops working at all gates at once.'}</span>
             <button className="btn btn-sm" onClick={() => setConfirm(null)}>Keep</button>
-            <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => (confirm === 'checkout' ? checkoutAll() : patch({ status: 'cancelled' }, 'Group cancelled. Its passes no longer work.').then(() => setConfirm(null)))}>
-              {busy ? <Spinner /> : confirm === 'checkout' ? 'Check out all' : 'Cancel group'}
+            <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => (confirm === 'checkout' ? checkoutAll() : patch({ status: 'cancelled' }, 'Event cancelled. Its passes no longer work.').then(() => setConfirm(null)))}>
+              {busy ? <Spinner /> : confirm === 'checkout' ? 'Check out all' : 'Cancel event'}
             </button>
           </div>
         )}
@@ -281,7 +289,7 @@ function GroupDetail({ id, tick, onBack }) {
         )}
       </section>
 
-      <GroupDialog open={editing} group={g} onClose={() => setEditing(false)} onDone={() => { setEditing(false); toast('Group updated.'); load(); }} />
+      <GroupDialog open={editing} group={g} onClose={() => setEditing(false)} onDone={() => { setEditing(false); toast('Event updated.'); load(); }} />
       <AddGuestsDialog open={adding} groupId={id} onClose={() => setAdding(false)} onDone={load} />
     </div>
   );

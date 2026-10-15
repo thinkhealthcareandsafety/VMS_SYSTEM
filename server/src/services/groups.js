@@ -1,9 +1,9 @@
 const crypto = require('node:crypto');
-const ExcelJS = require('exceljs');
 const config = require('../config');
 const { Visit, Guest, Block } = require('../models');
 const { siteDay, nextDailyNumber, nextVisitorRef, audit, normalizeMobile, cleanText, tidyName } = require('./core');
 const passes = require('./passes');
+const { parseDelimited, readCells, key } = require('./sheets');
 
 const MAX_ROWS = 1000;    // per upload
 const MAX_GUESTS = 2000;  // per group
@@ -32,44 +32,6 @@ const HEAD = {
   mobile: ['mobile', 'phone', 'mobileno', 'mobilenumber', 'phonenumber', 'phoneno', 'contact', 'contactno', 'contactnumber', 'number', 'whatsapp', 'whatsappnumber', 'cell'],
   company: ['company', 'organisation', 'organization', 'org', 'firm', 'from', 'companyname', 'side', 'note', 'remarks', 'designation'],
 };
-const key = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
-
-// RFC 4180 CSV (quoted fields, commas and line breaks inside quotes); tabs work too, for text pasted from Excel.
-function parseDelimited(text) {
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let quoted = false;
-  const delim = (text.split('\n')[0].match(/\t/g) || []).length > (text.split('\n')[0].match(/,/g) || []).length ? '\t' : ',';
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (quoted) {
-      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false; else cell += ch;
-    } else if (ch === '"' && cell === '') quoted = true;
-    else if (ch === delim) { row.push(cell); cell = ''; }
-    else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && text[i + 1] === '\n') i += 1;
-      row.push(cell); rows.push(row); row = []; cell = '';
-    } else cell += ch;
-  }
-  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
-  return rows.filter((r) => r.some((c) => String(c).trim() !== ''));
-}
-
-async function parseXlsx(buffer) {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
-  const ws = wb.worksheets.find((w) => w.actualRowCount > 0);
-  if (!ws) return [];
-  const rows = [];
-  ws.eachRow({ includeEmpty: false }, (r) => {
-    const cells = [];
-    for (let c = 1; c <= r.cellCount; c += 1) cells.push(String(r.getCell(c).text ?? '').trim());
-    if (cells.some(Boolean)) rows.push(cells);
-  });
-  return rows;
-}
-
 // Rows of cells -> [{ line, firstName, lastName, mobileRaw, company }]. With no recognisable heading row,
 // columns are taken as name, mobile, company.
 function toGuests(rows) {
@@ -97,14 +59,8 @@ function toGuests(rows) {
   });
 }
 
-async function readList({ text, file, filename }) {
-  if (file) {
-    const buf = Buffer.from(String(file), 'base64');
-    if (buf.length > 5 * 1024 * 1024) throw new Error('The file is larger than 5 MB');
-    const isXlsx = /\.xlsx$/i.test(filename || '') || buf.subarray(0, 2).toString() === 'PK';
-    return toGuests(isXlsx ? await parseXlsx(buf) : parseDelimited(buf.toString('utf8').replace(/^﻿/, '')));
-  }
-  return toGuests(parseDelimited(String(text || '')));
+async function readList(input) {
+  return toGuests(await readCells(input));
 }
 
 const splitName = (full) => {

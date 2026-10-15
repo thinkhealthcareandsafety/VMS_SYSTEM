@@ -84,7 +84,13 @@ function buildStickerZpl(visit, hostUnit, hostName, timeStr, dateStr, validTill 
     `^FO220,205^A0N,22,22^FD${ascii(visit.company, 18)}^FS`,
     `^FO20,270^A0N,24,24^FD${dateStr}  ${timeStr}^FS`,
     ...(validTill ? [`^FO20,302^A0N,24,24^FDVALID TILL ${ascii(validTill, 24)}^FS`] : []),
-    `^FO20,340^BCN,110,Y,N,N^FD${ascii(visit.ref, 20)}^FS`,
+    // The pass code as a QR: scanned at any gate to let the holder out, or back in on a multi-day pass.
+    ...(visit.passCode ? [
+      `^FO20,335^BQN,2,6^FDQA,${ascii(visit.passCode, 8)}^FS`,
+      `^FO210,370^A0N,30,30^FD${ascii(`${visit.passCode.slice(0, 4)}-${visit.passCode.slice(4)}`, 9)}^FS`,
+      `^FO210,410^A0N,22,22^FD${ascii(visit.ref, 20)}^FS`,
+      '^FO210,445^A0N,20,20^FDSCAN AT ANY GATE^FS',
+    ] : [`^FO20,340^BCN,110,Y,N,N^FD${ascii(visit.ref, 20)}^FS`]),
     '^XZ',
   ].join('\n');
 }

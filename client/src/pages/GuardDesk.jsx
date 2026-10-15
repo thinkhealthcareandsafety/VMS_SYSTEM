@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import {
-  AlertTriangle, BadgeCheck, Bell, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
+  AlertTriangle, ArrowDown, BadgeCheck, Bell, ChevronRight, Plus, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
@@ -41,6 +42,12 @@ function validityPreview(v, day) {
   return '';
 }
 const GENDERS = [['male', 'Male'], ['female', 'Female'], ['other', 'Other']];
+// What the big button says while something is still missing: always the very next step.
+const NEXT_LABEL = {
+  mobile: 'Next: mobile number', firstName: 'Next: first name', lastName: 'Next: last name', gender: 'Next: gender',
+  otp: 'Next: verify number', company: 'Next: company', email: 'Next: fix the email',
+  host: 'Next: whom they meet', validUntilDay: 'Next: last day of pass', photo: 'Next: take photo', id: 'Next: scan ID card',
+};
 // The ID the visitor shows. Only Aadhaar is masked automatically (the law requires it); every card is checked against the name typed.
 const ID_TYPES = [['aadhaar', 'Aadhaar'], ['pan', 'PAN card'], ['dl', 'Driving licence'], ['passport', 'Passport'], ['voter', 'Voter ID'], ['other', 'Other']];
 const ID_LABEL = Object.fromEntries(ID_TYPES);
@@ -145,7 +152,7 @@ export default function GuardDesk({ user, onLogout }) {
         if (autoPrintRef.current && !printingRef.current) setPrinting(r);
       }
       else if (r.status === 'rejected') { cue.rejected(); toast(`${host} declined ${who}. Do not let them in.`, 'bad'); }
-      else if (r.status === 'expired') { cue.expired(); toast(`No reply from ${host} for ${who}. Resend or cancel.`, 'info'); }
+      else if (r.status === 'expired') { cue.expired(); toast(`No reply from ${host} for ${who}. Call the host, or press Resend.`, 'info'); }
     }
   }, [queue, toast]);
 
@@ -242,7 +249,7 @@ export default function GuardDesk({ user, onLogout }) {
           <button role="tab" aria-selected={mode === 'couriers'} aria-pressed={mode === 'couriers'} onClick={() => switchMode('couriers')}><Mail size={15} /> Couriers</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {mode === 'visitors' && groups.length > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)}><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
+          {mode === 'visitors' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)} title="Scan a pass to let someone out, or back in"><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
           <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
         </div>
       </header>
@@ -295,7 +302,7 @@ export default function GuardDesk({ user, onLogout }) {
             </div>
             <div className={tab === 'inside' ? '' : 'hide-mobile'}>
               {groups.length > 0 && <TodaysGroups groups={groups} openId={groupId} onOpen={(id) => { setGroupId(id); setTab('checkin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} onScan={() => setScanning(true)} />}
-              <InsideList data={inside} onChanged={refreshInside} onPrint={printPass} onOpenGroup={(id) => { setGroupId(id); setTab('checkin'); }} />
+              <InsideList data={inside} onChanged={refreshInside} onPrint={printPass} onScan={() => setScanning(true)} onOpenGroup={(id) => { setGroupId(id); setTab('checkin'); }} />
             </div>
           </aside>
         </div>
@@ -374,6 +381,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tried, setTried] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
+  const [lookedUp, setLookedUp] = useState(0); // bumps when a mobile number has been looked up, to move the guard on
+  const rootRef = useRef(null);
   const autofill = useRef(null); // what the returning-visitor lookup filled in, and for which number
 
   // Load the on-device Aadhaar reader while the guard is still typing, so the scan is quick.
@@ -451,6 +461,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
       setActive(r.active || null);
       setBlocked(r.blocked || null);
       setOtp(r.otp || { mode: 'off', verified: null });
+      if (!r.active && !r.blocked) setLookedUp((n) => n + 1);
       if (r.invite && !r.blocked) {
         // Expected visitor: fill in what the admin entered and pick the host, ready to let in.
         setInvite(r.invite);
@@ -486,28 +497,48 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
   }, [liveTick]);
 
   const checks = [
-    ['visitor', mobileOk, 'mobile number'],
+    ['visitor', mobileOk, 'mobile number', 'mobile'],
     ['visitor', !active, ''], // explained by the warning above the fields, not in the list
     ['visitor', !blocked, ''],
-    ['visitor', NAME_RE.test(form.firstName.trim()), 'first name'],
-    ['visitor', NAME_RE.test(form.lastName.trim()), 'last name'],
-    ['visitor', Boolean(form.gender), 'gender'],
-    ['visitor', otp.mode !== 'required' || Boolean(otp.verified) || verify === 'verified' || (isAdmin && verify === 'skipped'), 'verify the mobile number'],
-    ['visitor', form.company.trim().length > 0, 'company'],
-    ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)'],
-    ['host', Boolean(host), 'whom to meet'],
-    ['host', (form.validity || '8h') !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass'],
-    ['capture', Boolean(photo), 'photo'],
-    ['capture', Boolean(idImage), 'ID card'],
+    ['visitor', NAME_RE.test(form.firstName.trim()), 'first name', 'firstName'],
+    ['visitor', NAME_RE.test(form.lastName.trim()), 'last name', 'lastName'],
+    ['visitor', Boolean(form.gender), 'gender', 'gender'],
+    ['visitor', otp.mode !== 'required' || Boolean(otp.verified) || verify === 'verified' || (isAdmin && verify === 'skipped'), 'verify the mobile number', 'otp'],
+    ['visitor', form.company.trim().length > 0, 'company', 'company'],
+    ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)', 'email'],
+    ['host', Boolean(host), 'whom to meet', 'host'],
+    ['host', (form.validity || '8h') !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass', 'validUntilDay'],
+    ['capture', Boolean(photo), 'photo', 'photo'],
+    ['capture', Boolean(idImage), 'ID card', 'id'],
   ];
   const missing = checks.filter(([, ok]) => !ok);
   const done = (s) => checks.every(([k, ok]) => k !== s || ok);
+  const nextUp = missing.find(([, , label]) => label);
+
+  // Takes the guard to what is still needed: the section scrolls into view and the field gets the cursor.
+  const goTo = ([section, , , field], { scroll = true } = {}) => {
+    if (field === 'photo') setCam('face');
+    if (field === 'id') setCam('aadhaar');
+    if (scroll) sec[section].current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const root = rootRef.current;
+    const el = field === 'mobile' ? root?.querySelector('.mobile-boxes input')
+      : field === 'host' ? sec.host.current?.querySelector('input')
+        : root?.querySelector(`[data-field="${field}"]`);
+    if (el) setTimeout(() => el.focus({ preventScroll: true }), scroll ? 380 : 0);
+  };
+  // Number typed and looked up: the cursor moves on by itself to the first thing still empty (the name for a new
+  // visitor, whom to meet for one who was recognised), unless the guard has already moved somewhere else.
+  useEffect(() => {
+    if (!lookedUp || !document.activeElement?.closest?.('.mobile-boxes')) return;
+    const next = missing.find(([, , label, field]) => label && field !== 'mobile');
+    if (next && next[0] !== 'capture') goTo(next, { scroll: next[0] !== 'visitor' });
+  }, [lookedUp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reset = () => {
     store.clear();
     autofill.current = null;
     setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null); setPhotoFace(null); setMatch(null); setVerify(null);
-    setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null);
+    setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null); setShowEmail(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -551,7 +582,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
       onSubmitted({
         id: res.id, ref: res.ref, status: res.status, whatsapp: res.whatsapp || null, firstName: form.firstName.trim(), lastName: form.lastName.trim(),
         company: form.company.trim(), host: { name: host.name, unit: host.unit }, photo, createdAt: new Date().toISOString(),
-        ...(res.status === 'approved' ? { dailyNumber: res.dailyNumber, decidedAt: new Date().toISOString(), expected: true } : {}),
+        ...(res.status === 'approved' ? { dailyNumber: res.dailyNumber, decidedAt: new Date().toISOString(), validUntil: res.validUntil, passCode: res.passCode, expected: true } : {}),
       });
     } catch (e) {
       if (e.status === 403 && e.data?.code === 'blocked') {
@@ -569,7 +600,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
   const flag = (s) => (tried && !done(s) ? 'card needs' : 'card');
 
   return (
-    <div className="checkin">
+    <div className="checkin" ref={rootRef}>
       <div className="step-title">
         <h1>New visitor</h1>
         <p>Fill in everything below, then send. The host gets a message to approve.</p>
@@ -630,23 +661,29 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
           </div>
         )}
         <div className="grid-2">
-          <label className="field"><span>First name</span><input className="input" aria-invalid={tried && !NAME_RE.test(form.firstName.trim())} value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
-          <label className="field"><span>Last name</span><input className="input" aria-invalid={tried && !NAME_RE.test(form.lastName.trim())} value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
+          <label className="field"><span>First name</span><input className="input" data-field="firstName" aria-invalid={tried && !NAME_RE.test(form.firstName.trim())} value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
+          <label className="field"><span>Last name</span><input className="input" data-field="lastName" aria-invalid={tried && !NAME_RE.test(form.lastName.trim())} value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
         </div>
         <div className="field">
           <span id="lbl-gender">Gender</span>
           <div className="chips" role="radiogroup" aria-labelledby="lbl-gender" aria-invalid={tried && !form.gender}>
-            {GENDERS.map(([key, label]) => (
-              <button type="button" role="radio" aria-checked={form.gender === key} key={key} className="chip" aria-pressed={form.gender === key} onClick={() => update({ gender: form.gender === key ? '' : key })}>{label}</button>
+            {GENDERS.map(([key, label], i) => (
+              <button type="button" role="radio" data-field={i === 0 ? 'gender' : undefined} aria-checked={form.gender === key} key={key} className="chip" aria-pressed={form.gender === key} onClick={() => update({ gender: form.gender === key ? '' : key })}>{label}</button>
             ))}
           </div>
         </div>
-        <label className="field"><span>Company or coming from</span><input className="input" aria-invalid={tried && !form.company.trim()} value={form.company} onChange={(e) => update({ company: e.target.value })} autoComplete="off" maxLength={100} placeholder="e.g. Blue Dart, Infosys, Personal" /></label>
+        <label className="field"><span>Company or coming from</span><input className="input" data-field="company" aria-invalid={tried && !form.company.trim()} value={form.company} onChange={(e) => update({ company: e.target.value })} autoComplete="off" maxLength={100} placeholder="e.g. Blue Dart, Infosys, Personal" /></label>
+        {!showEmail && !form.email ? (
+          <button type="button" className="link-add" onClick={() => { setShowEmail(true); setTimeout(() => rootRef.current?.querySelector('[data-field="email"]')?.focus(), 0); }}>
+            <Plus />Add email <span className="faint">· optional</span>
+          </button>
+        ) : (
         <label className="field">
           <span>Email <span className="faint">· optional</span></span>
-          <input className="input" type="email" inputMode="email" value={form.email} onChange={(e) => update({ email: e.target.value })} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={120} aria-invalid={Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim())} />
-          {Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim()) && <span className="hint err">That email address does not look right.</span>}
+          <input className="input" data-field="email" type="email" inputMode="email" value={form.email} onChange={(e) => update({ email: e.target.value })} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={120} aria-invalid={Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim())} />
+          {Boolean(form.email.trim()) && !EMAIL_RE.test(form.email.trim()) && <span className="hint err">That email address does not look right. Fix it or clear it.</span>}
         </label>
+        )}
         <div className="field">
           <span>Purpose <span className="faint">· optional</span></span>
           <div className="chips" role="group" aria-label="Purpose">
@@ -669,7 +706,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
             ))}
           </div>
           {form.validity === 'date' && (
-            <input className="input" type="date" style={{ maxWidth: 220 }} aria-label="Last day of the pass"
+            <input className="input" data-field="validUntilDay" type="date" style={{ maxWidth: 220 }} aria-label="Last day of the pass"
               min={today()} max={addDays(today(), MAX_PASS_DAYS)} value={form.validUntilDay || ''}
               aria-invalid={tried && !/^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || '')}
               onChange={(e) => update({ validUntilDay: e.target.value })} />
@@ -712,11 +749,21 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
 
       <div className="footer-bar">
         <div className="inner">
-          {tried && missing.some(([, , l]) => l) && <p className="need">Still needed: {missing.map(([, , l]) => l).filter(Boolean).join(', ')}</p>}
+          {(tried || digits.length === 10) && missing.some(([, , l]) => l) && !blocked && !active && (
+            <p className={`need${tried ? "" : " quiet"}`}>Still needed: {missing.map(([, , l]) => l).filter(Boolean).join(', ')}</p>
+          )}
           <button type="button" className="btn btn-xl" onClick={reset} disabled={busy}>Clear</button>
-          <button type="button" className="btn btn-primary btn-xl" disabled={busy} onClick={submit}>
-            {busy ? <><Spinner />Sending</> : invite && host && invite.host.id === host.id && !blocked ? <><CheckCircle2 />Let in: expected visitor</> : <><Send />Send for approval</>}
-          </button>
+          {blocked ? (
+            <button type="button" className="btn btn-danger btn-xl" disabled><ShieldAlert />Do not admit</button>
+          ) : active ? (
+            <button type="button" className="btn btn-primary btn-xl" disabled>{active.status === 'away' ? 'Use “Let in again” above' : 'Already here: see the message above'}</button>
+          ) : nextUp && !busy ? (
+            <button type="button" className="btn btn-primary btn-xl" onClick={() => goTo(nextUp)}><ArrowDown />{NEXT_LABEL[nextUp[3]] || `Next: ${nextUp[2]}`}</button>
+          ) : (
+            <button type="button" className="btn btn-primary btn-xl" disabled={busy} onClick={submit}>
+              {busy ? <><Spinner />Sending</> : invite && host && invite.host.id === host.id ? <><CheckCircle2 />Let in: expected visitor</> : <><Send />Send for approval</>}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -841,6 +888,15 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
                 <div><small>Visitor ID</small><span className="mono">{visit.ref}</span></div>
               </div>
               {visit.validUntil && <div className="pass-valid"><Clock size={14} />Valid till <strong>{fmtUntil(visit.validUntil)}</strong></div>}
+              {visit.passCode && (
+                <div className="pass-code">
+                  <QrImage value={visit.passCode} />
+                  <div>
+                    <strong className="mono">{showCode(visit.passCode)}</strong>
+                    <small>Scanned at the gate to let them out, or back in. No printer? They can take a photo of this code.</small>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="pass-perf" />
             <div className="pass-foot">
@@ -869,7 +925,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
       {visit.status === 'expired' && (
         <>
           <div className="state-icon warn"><Clock /></div>
-          <div><h1>No reply from {hostFirst}</h1></div>
+          <div><h1>No reply from {hostFirst}</h1><p className="lead" style={{ margin: '6px auto 0' }}>Call {hostFirst}, or send the request again. If {visit.firstName} has left, cancel the visit.</p></div>
           <div style={{ display: 'grid', gap: 8, width: '100%', maxWidth: 340 }}>
             <button className="btn btn-primary btn-xl" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>
             <button className="btn" onClick={onCancel}><X />Visitor left: cancel visit</button>
@@ -895,6 +951,16 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
       )}
     </div>
   );
+}
+
+function QrImage({ value }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let live = true;
+    passQr(value).then((d) => live && setSrc(d));
+    return () => { live = false; };
+  }, [value]);
+  return src ? <img className="pass-qr" src={src} alt={`Pass code ${showCode(value)}`} /> : <span className="pass-qr" />;
 }
 
 function PrintStatus({ status }) {
@@ -929,10 +995,17 @@ body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/
 .foot { font-size: 8.5pt; }
 .valid { border: .5mm solid #000; padding: 1.5mm 2mm; margin: 0 0 3mm; font-size: 9pt; letter-spacing: .06em; }
 .valid strong { display: block; font-size: 13pt; letter-spacing: 0; margin-top: .5mm; }
+.qr { display: block; width: 32mm; height: 32mm; margin: 0 auto 1mm; image-rendering: pixelated; }
+.code { font: 700 12pt ui-monospace, Consolas, monospace; letter-spacing: .1em; }
+.scan { font-size: 8pt; letter-spacing: .12em; margin-top: .5mm; }
 `;
 const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // The photo as a data URL, so the print page needs no further request. Never waits long: a pass without a photo still prints.
+// The pass code as a QR for the printed pass: crisp black squares, no margin (the slip has its own).
+const passQr = (code) => (code ? QRCode.toDataURL(code, { margin: 0, width: 256, errorCorrectionLevel: 'M', color: { dark: '#000000', light: '#ffffff' } }).catch(() => '') : Promise.resolve(''));
+const showCode = (c) => (c && c.length === 8 ? `${c.slice(0, 4)}-${c.slice(4)}` : c || '');
+
 // Photos for the printed pass, kept for the session so a print never waits on the network twice.
 const photoCache = new Map(); // visit id -> Promise<data URL or ''>
 function photoData(id, known) {
@@ -953,7 +1026,7 @@ async function fetchPhoto(id) {
   } catch { return ''; }
 }
 
-function passHtml(visit, siteName, photo) {
+function passHtml(visit, siteName, photo, qr) {
   const name = `${visit.firstName} ${visit.lastName}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
 <div class="logos"><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"><span></span><img src="${location.origin}/brand/stregis-print.png" alt="St. Regis"></div>
@@ -969,7 +1042,8 @@ ${photo ? `<img class="photo" src="${photo}" alt="">` : ''}
 <div class="row"><span>Flat / dept</span><strong>${escHtml(visit.host?.unit)}</strong></div>
 <div class="row"><span>Visitor ID</span><strong>${escHtml(visit.ref)}</strong></div>
 <div class="rule"></div>
-<div class="foot">${visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3 ? 'Show this pass at any gate each time you enter.' : 'Wear this pass. Return it when you leave.'}</div>
+${qr ? `<img class="qr" src="${qr}" alt=""><div class="code">${escHtml(showCode(visit.passCode))}</div><div class="scan">SCAN AT THE GATE</div><div class="rule"></div>` : ''}
+<div class="foot">${visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3 ? 'Show this pass at any gate each time you come in or go out.' : 'Wear this pass. Show it at the gate when you leave.'}</div>
 </body></html>`;
 }
 
@@ -989,7 +1063,7 @@ function PrintSheet({ visit, siteName, onDone }) {
       if (!cancelled) doneRef.current();
     };
     (async () => {
-      const photo = await photoData(visit.id, visit.photo);
+      const [photo, qr] = await Promise.all([photoData(visit.id, visit.photo), passQr(visit.passCode)]);
       if (cancelled) return;
       frame = document.createElement('iframe');
       frame.setAttribute('aria-hidden', 'true');
@@ -1008,7 +1082,7 @@ function PrintSheet({ visit, siteName, onDone }) {
         else { imgs.forEach((im) => { im.onload = im.onerror = () => { left -= 1; if (!left) go(); }; }); setTimeout(go, 1500); }
         setTimeout(finish, 5 * 60e3); // browsers that never report the end of printing
       };
-      frame.srcdoc = passHtml(visit, siteName, photo);
+      frame.srcdoc = passHtml(visit, siteName, photo, qr);
       document.body.appendChild(frame);
     })();
     return () => { cancelled = true; frame?.remove(); };
@@ -1024,8 +1098,8 @@ function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss, onP
     <div className={`tray ${rows.length ? '' : 'tray-empty'}`}>
       <div className="list-head">
         <div>
-          <h1>{rows.some((r) => r.status === 'pending') || !rows.length ? 'Waiting for host' : 'Just let in'}</h1>
-          <p className="muted">{rows.length ? 'Updates live. Visitors with a number are let in; a timer means still waiting.' : 'Nobody is waiting right now.'}</p>
+          <h1>{rows.some((r) => r.status === 'pending') || !rows.length ? 'Waiting for host' : 'Ready for their pass'}</h1>
+          <p className="muted">{rows.length ? 'A pass number means the host said yes: print the pass and let them in. A timer means the host has not replied yet.' : 'Nobody is waiting right now.'}</p>
         </div>
       </div>
       {!loaded && <div className="skeleton" style={{ height: 74, borderRadius: 16 }} />}
@@ -1060,7 +1134,7 @@ function WaitingTray({ rows, loaded, sentAt, openId, onOpen, act, onDismiss, onP
                     <button className="btn btn-sm btn-ghost btn-icon" onClick={() => onDismiss(v.id)} aria-label="Dismiss without printing" title="Dismiss without printing"><X /></button>
                   </>
                 )}
-                {v.status === 'rejected' && <button className="btn btn-sm" onClick={() => onDismiss(v.id)}><Check />Got it</button>}
+                {v.status === 'rejected' && <button className="btn btn-sm" onClick={() => onDismiss(v.id)}><Check />Done</button>}
               </div>
             </div>
           );
@@ -1079,7 +1153,7 @@ function TrayState({ v }) {
 }
 
 // ---------------------------------------------------------------- On premises
-function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
+function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
   const toast = useToast();
   useTick(30000);
   const [q, setQ] = useState('');
@@ -1089,6 +1163,11 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
   const term = q.trim().toLowerCase();
   const match = (v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref}`.toLowerCase().includes(term);
   const rows = (data?.visits || []).filter(match).slice().reverse();
+  // People who should have left: their pass ended (or, for old passes, they have been in far too long). They come
+  // first, oldest first, with a plain instruction, so nobody stays on the list by mistake.
+  const overdue = (v) => v.passExpired || (!v.validUntil && minutesSince(v.lastIn?.at || v.decidedAt) >= data.staleAfterHours * 60);
+  const late = rows.filter(overdue).reverse();
+  const current = rows.filter((v) => !overdue(v));
   const away = (data?.away || []).filter(match);
 
   // Two taps for anything that changes a visit: the first arms the button, the second does it.
@@ -1115,6 +1194,33 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
   const armed = (key, v) => confirmId === `${key}:${v.id}`;
   const disarm = (key, v) => setConfirmId((c) => (c === `${key}:${v.id}` ? null : c));
 
+  const row = (v, isLate) => {
+    const since = v.lastIn?.at || v.decidedAt;
+    const mins = minutesSince(since);
+    const day = since && new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(since)) !== today() ? `${fmtDate(since)}, ` : '';
+    return (
+      <div className={`visitor-item${isLate ? ' is-expired' : ''}`} key={v.id}>
+        <Avatar src={`/api/visits/${v.id}/photo`} name={name(v)} size={48} square />
+        <div style={{ minWidth: 0 }}>
+          <div className="top"><span className="pass-chip" title={`Pass number ${v.dailyNumber}`}>{v.dailyNumber}</span><span className="name">{name(v)}</span></div>
+          <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
+          <div className="time">
+            In {day}{fmtTime(since)}{v.lastIn?.gate ? ` · ${v.lastIn.gate}` : ''} · {fmtDuration(mins)}
+            {v.passExpired
+              ? <span className="badge badge-bad">Pass ended {fmtUntil(v.validUntil)}</span>
+              : v.validUntil ? <span className="badge">Valid till {fmtUntil(v.validUntil)}</span> : isLate && <span className="badge badge-warn">Inside a long time</span>}
+          </div>
+        </div>
+        <div className="row-actions">
+          <button type="button" className="btn btn-sm btn-icon btn-ghost" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber} again`} title="Print the pass again"><Printer /></button>
+          <button type="button" className={`btn btn-sm ${armed('out', v) ? 'btn-danger' : isLate ? 'btn-primary' : ''}`} disabled={busyId === v.id} onClick={() => checkout(v)} onBlur={() => disarm('out', v)}>
+            {busyId === v.id ? <Spinner /> : armed('out', v) ? <><CheckCircle2 />Tap again to confirm</> : <><LogOut />Check out</>}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div className="list-head">
@@ -1124,6 +1230,11 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
         </div>
         <button type="button" className="btn btn-sm btn-danger-outline" onClick={() => printEvacuation({ onError: (m) => toast(m, 'bad') })} title="Print everyone on the premises"><Siren /><span className="hide-narrow">Evacuation list</span></button>
       </div>
+      <button type="button" className="scan-cta" onClick={onScan}>
+        <ScanLine />
+        <span className="grow"><strong>Someone leaving or coming back?</strong><small>Scan their pass. No need to search the list.</small></span>
+        <ChevronRight />
+      </button>
       {data?.groups?.length > 0 && (
         <div className="group-chips">
           {data.groups.map((g) => (
@@ -1141,46 +1252,28 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup }) {
         {!data && [0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 74, borderRadius: 16 }} />)}
         {data && rows.length === 0 && (
           <div className="panel">
-            <Empty icon={data.count === 0 ? ShieldCheck : Search} title={data.count === 0 ? 'Nobody inside' : (data.visits || []).length === 0 ? 'Only group guests inside' : 'No match'}>
-              {data.count === 0 ? 'Approved visitors appear here until they leave.' : (data.visits || []).length === 0 ? 'Open a group above to see its guests.' : 'Try a pass number or flat.'}
+            <Empty icon={data.count === 0 ? ShieldCheck : Search} title={data.count === 0 ? 'Nobody inside' : (data.visits || []).length === 0 ? 'Only event guests inside' : 'No match'}>
+              {data.count === 0 ? 'Approved visitors appear here until they leave.' : (data.visits || []).length === 0 ? 'Tap an event above to see its guests.' : 'Try a pass number or flat.'}
             </Empty>
           </div>
         )}
-        {rows.map((v) => {
-          const since = v.lastIn?.at || v.decidedAt;
-          const mins = minutesSince(since);
-          const long = !v.validUntil && mins >= data.staleAfterHours * 60;
-          return (
-            <div className={`visitor-item${v.passExpired ? ' is-expired' : ''}`} key={v.id}>
-              <Avatar src={`/api/visits/${v.id}/photo`} name={name(v)} size={48} square />
-              <div style={{ minWidth: 0 }}>
-                <div className="top"><span className="pass-chip">{passLabel(v)}</span><span className="name">{name(v)}</span></div>
-                <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
-                <div className="time">
-                  In {fmtTime(since)}{v.lastIn?.gate ? ` · ${v.lastIn.gate}` : ''} · {fmtDuration(mins)}
-                  {v.passExpired
-                    ? <span className="badge badge-bad">Pass expired</span>
-                    : v.validUntil && <span className="badge">Till {fmtUntil(v.validUntil)}</span>}
-                  {long && <span className="badge badge-warn">Long stay</span>}
-                </div>
-              </div>
-              <div className="row-actions">
-                <button type="button" className="btn btn-sm btn-icon" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber}`} title="Print pass"><Printer /></button>
-                <button type="button" className={`btn btn-sm ${armed('out', v) ? 'btn-danger' : ''}`} disabled={busyId === v.id} onClick={() => checkout(v)} onBlur={() => disarm('out', v)}>
-                  {busyId === v.id ? <Spinner /> : armed('out', v) ? <><CheckCircle2 />Confirm</> : <><LogOut />Check out</>}
-                </button>
-              </div>
-            </div>
-          );
-        })}
+        {late.length > 0 && (
+          <div className="list-section bad">
+            <strong><AlertTriangle />Pass ended: {late.length === 1 ? 'check this person out' : `check these ${late.length} people out`}</strong>
+            <span>If they have left, press Check out. If they are still here, call their host.</span>
+          </div>
+        )}
+        {late.map((v) => row(v, true))}
+        {late.length > 0 && current.length > 0 && <div className="list-section"><strong>Inside now</strong></div>}
+        {current.map((v) => row(v, false))}
       </div>
 
       {data && away.length > 0 && (
         <>
           <div className="list-head" style={{ marginTop: 8 }}>
             <div>
-              <h2 className="side-title">Pass holders outside</h2>
-              <p className="muted">Multi-day passes. Let them in again without a new approval.</p>
+              <h2 className="side-title">Outside, pass still valid</h2>
+              <p className="muted">They left but their pass runs for more days. When they come back, press Let in: no new approval is needed.</p>
             </div>
           </div>
           <div className="visitor-list">
@@ -1218,10 +1311,10 @@ function TodaysGroups({ groups, openId, onOpen, onScan }) {
     <div className="todays-groups">
       <div className="list-head">
         <div>
-          <h2 className="side-title">Today’s groups</h2>
-          <p className="muted">Guests on a list: scan their pass, or find them by name.</p>
+          <h2 className="side-title">Today’s events</h2>
+          <p className="muted">Scan their pass with the Scan pass button, or tap the event to find a guest by name.</p>
         </div>
-        <button type="button" className="btn btn-sm btn-primary" onClick={onScan}><ScanLine />Scan</button>
+
       </div>
       <div className="visitor-list">
         {groups.map((g) => (

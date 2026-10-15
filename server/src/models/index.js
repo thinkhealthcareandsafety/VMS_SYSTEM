@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const mongoose = require('mongoose');
 
 const { Schema } = mongoose;
@@ -42,8 +43,14 @@ const hostSchema = new Schema({
 }, opts);
 hostSchema.index({ fullName: 'text', unit: 'text' });
 
+// A pass code: 8 characters without look-alikes (no 0/O, 1/I/L), printed as a QR and as K7M2-9QXP. Random, so a pass
+// cannot be guessed from another; the same alphabet as event passes, so one scanner reads both.
+const PASS_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const newPassCode = () => Array.from(crypto.randomBytes(8)).map((b) => PASS_ALPHABET[b % PASS_ALPHABET.length]).join('');
+
 const visitSchema = new Schema({
   ref: { type: String, required: true, unique: true },      // permanent visitor ID, e.g. V-000123
+  passCode: { type: String, default: newPassCode },          // on the printed pass: scanned at any gate to let out or back in
   firstName: { type: String, required: true, trim: true },
   lastName: { type: String, required() { return !this.group; }, trim: true, default: '' },  // group guests may have one name
   mobile: { type: String, required() { return !this.group; } },  // group guests may come without a number
@@ -100,6 +107,7 @@ visitSchema.index({ dailyDay: 1, dailyNumber: 1 }, { unique: true, partialFilter
 visitSchema.index({ status: 1, checkedOutAt: 1 });
 visitSchema.index({ mobile: 1, status: 1 }); // duplicate check-in guard
 visitSchema.index({ status: 1, validUntil: 1 }); // passes that expire while the holder is away
+visitSchema.index({ passCode: 1 }, { unique: true, sparse: true });
 
 const approvalTokenSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true, index: true },
@@ -313,6 +321,7 @@ const auditSchema = new Schema({
 }, { versionKey: false });
 
 module.exports = {
+  newPassCode,
   User: mongoose.model('User', userSchema),
   Gate: mongoose.model('Gate', gateSchema),
   Group: mongoose.model('Group', groupSchema),

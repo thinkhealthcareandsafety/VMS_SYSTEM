@@ -67,12 +67,12 @@ export function Avatar({ src, name, size = 36, square = false }) {
 export const STATUS = {
   pending: ['Awaiting host', 'badge-warn'],
   approved: ['On premises', 'badge-live'],
-  away: ['Out on pass', 'badge-ok'],
+  away: ['Outside, pass valid', 'badge-ok'],
   rejected: ['Declined', 'badge-bad'],
-  expired: ['No response', ''],
+  expired: ['Host did not reply', ''],
   cancelled: ['Cancelled', ''],
   checked_out: ['Checked out', ''],
-  force_checked_out: ['Force checked out', 'badge-warn'],
+  force_checked_out: ['Checked out by admin', 'badge-warn'],
 };
 export function StatusBadge({ status }) {
   const [label, cls] = STATUS[status] || [status, ''];

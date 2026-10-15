@@ -14,16 +14,18 @@ export default function HostPicker({ value, onChange }) {
   const [loading, setLoading] = useState(false);
   const term = q.trim();
 
+  // Only the answer to the latest search is shown: typing fast must never leave an older list on screen.
   useEffect(() => {
-    if (!term) { setRows(null); return undefined; }
+    if (!term) { setRows(null); setLoading(false); return undefined; }
+    let live = true;
     setLoading(true);
     const t = setTimeout(() => {
       api(`/api/hosts?q=${encodeURIComponent(term)}`)
-        .then((d) => { setRows(d.rows.slice(0, MAX)); setError(''); })
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false));
+        .then((d) => { if (live) { setRows(d.rows.slice(0, MAX)); setError(''); } })
+        .catch((e) => live && setError(e.message))
+        .finally(() => live && setLoading(false));
     }, 140);
-    return () => clearTimeout(t);
+    return () => { live = false; clearTimeout(t); };
   }, [term]);
 
   const pick = (h) => { onChange(h); setQ(''); };

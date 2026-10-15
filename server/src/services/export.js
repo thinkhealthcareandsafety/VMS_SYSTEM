@@ -9,8 +9,8 @@ const VERIFIED_LABEL = { otp: 'Verified by OTP', expected: 'Expected visitor', r
 const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
 
 const STATUS_LABEL = {
-  pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'No response',
-  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Checked out by admin', away: 'Out on pass',
+  pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'Host did not reply',
+  cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Checked out by admin', away: 'Outside, pass valid',
 };
 
 // Wall-clock time at the site, as a Date whose UTC fields hold the local time. Excel has no time
