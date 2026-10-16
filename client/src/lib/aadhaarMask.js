@@ -9,8 +9,10 @@
 // 4. If nothing can be read (glare, blur), the fixed guide box is painted instead and the guard is
 //    asked to check; they can black out anything else by hand before sending.
 // Painting is solid fill, not blur, so nothing under it is recoverable.
+// Every card, whatever type was picked, is also read for the holder's name and for what kind of card it
+// is: an Aadhaar scanned as "PAN" is still masked, and a PAN scanned as "Aadhaar" is not painted over.
 import { createWorker } from 'tesseract.js';
-import { parseAadhaarQr, readPrinted } from './idMatch.js';
+import { cardKind, parseAadhaarQr, readPrinted } from './idMatch.js';
 
 export const CARD_ASPECT = 85.6 / 54; // ISO/IEC 7810 ID-1 card
 export const MASK_RECT = { x: 0.16, y: 0.6, w: 0.48, h: 0.2 }; // fallback: where the number sits on the PVC card front
@@ -127,6 +129,7 @@ function findNumbers(data) {
   let alreadyMasked = false;
   let uncertain = false;
   let last4 = null; // the visible last group, from a clean 4-4-4 read: checked against the QR
+  let pattern = false; // a clean 4-4-4 (or VID) read: the card is an Aadhaar
   const lines = wordsByLine(data);
   for (const words of lines) {
     if (/[Xx×*]{4}\s*[Xx×*]{4}\s*\d{4}/.test(words.map((w) => w.text).join(' '))) alreadyMasked = true; // UIDAI's own masked Aadhaar
@@ -166,6 +169,7 @@ function findNumbers(data) {
         if (!vid && kept.d.length === 4 && !last4) last4 = kept.d;
         boxes.push(boxOf(hidden.map((w) => w.bbox)));
         matched = true;
+        pattern = true;
         i += vid ? 3 : 2;
       }
     }
@@ -193,7 +197,7 @@ function findNumbers(data) {
       uncertain = true;
     }
   }
-  return { boxes, alreadyMasked, uncertain, last4 };
+  return { boxes, alreadyMasked, uncertain, last4, pattern };
 }
 
 // Grayscale, more contrast and a sensible size help OCR on phone photos.
@@ -232,45 +236,82 @@ async function findQrCodes(card) {
   } catch { return []; }
 }
 
-const textLines = (data) => wordsByLine(data).map((ws) => ws.map((w) => w.text).join(' ')).filter((l) => l.trim());
+// How the card is looked at, tried in turn until it has given what is needed (the number, the name).
+// threshold 1 (local) copes with glare and the patterned PAN and licence backgrounds, where one threshold for
+// the whole card wipes the print out; harder contrast copes with blur. The two threshold 0 looks are the ones
+// the Aadhaar number was always found with: they still run whenever the number has not been read cleanly.
+const LOOKS = [
+  { strong: false, threshold: '1' },
+  { strong: false, threshold: '0' },
+  { strong: true, threshold: '1' },
+  { strong: true, threshold: '0' },
+];
+
+// What the card says it is wins where it is clear. An Aadhaar is always masked, whatever was picked.
+function typeFor(picked, { kind, maybeAadhaar }) {
+  if (kind === 'aadhaar') return 'aadhaar';
+  if (picked === 'aadhaar' && (maybeAadhaar || !kind)) return 'aadhaar';
+  return kind || picked;
+}
 
 // ---------------------------------------------------------------- Masking
-// Reads the card, then paints it in place. Returns { dataUrl, method, numbers, qr, check, read }.
+// Reads the card, then paints it in place. Returns { dataUrl, method, numbers, qr, check, read, idType, switched }.
 // method: 'auto' (number found and hidden), 'already' (card was already masked), 'guide' (fallback box),
 // 'none' (not an Aadhaar: nothing is hidden automatically; the guard can black out by hand).
 // read: what the card says, for checking the name and gender (see idMatch.js). Only words, never the number.
-export async function maskCard(card, idType = 'aadhaar') {
-  const aadhaar = idType === 'aadhaar';
+// idType: the type the card turned out to be; switched when that is not the type picked.
+export async function maskCard(card, picked = 'aadhaar') {
   const ctx = card.getContext('2d');
+  const codes = await findQrCodes(card);
+  let fromQr = null;
+  for (const c of codes) { fromQr = fromQr || (await parseAadhaarQr(c.raw)); }
+
   let numbers = [];
   let uncertain = false;
   let alreadyMasked = false;
   let ocrLast4 = null;
-  let lines = [];
+  let aadhaarNumber = false;
+  const texts = [];
+  const reads = [];
+  let type = typeFor(picked, cardKind([], { qr: Boolean(fromQr) }));
   try {
     const worker = await withTimeout(getWorker(), 25000);
-    for (const strong of aadhaar ? [false, true] : [false]) {
-      const { canvas, scale } = prepareForOcr(card, strong);
+    const until = Date.now() + 30000;
+    for (const look of LOOKS) {
+      if (Date.now() > until) break;
+      await worker.setParameters({ thresholding_method: look.threshold });
+      const { canvas, scale } = prepareForOcr(card, look.strong);
       const { data } = await withTimeout(worker.recognize(canvas, {}, { blocks: true }), 15000);
-      if (!lines.length) lines = textLines(data);
-      if (!aadhaar) break;
+      const lines = wordsByLine(data);
+      texts.push(...lines.flat().map((w) => w.text));
+      reads.push(readPrinted(lines));
       const found = findNumbers(data);
       alreadyMasked = alreadyMasked || found.alreadyMasked;
-      uncertain = found.uncertain;
       ocrLast4 = ocrLast4 || found.last4;
-      numbers = found.boxes.map((b) => ({ x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale }));
-      if (numbers.length || alreadyMasked) { lines = textLines(data); break; }
+      // The first look that found the number, unless a later one reads it cleanly (4-4-4) where it only guessed.
+      if (found.boxes.length && (!numbers.length || (found.pattern && !aadhaarNumber))) {
+        numbers = found.boxes.map((b) => ({ x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale }));
+        uncertain = found.uncertain;
+      }
+      aadhaarNumber = aadhaarNumber || found.pattern;
+      type = typeFor(picked, cardKind(texts, { aadhaarNumber, qr: Boolean(fromQr) }));
+      const named = fromQr || reads.some((r) => r.name);
+      if (type !== 'aadhaar' ? named : (aadhaarNumber || alreadyMasked) && (named || reads.length >= 2)) break;
     }
   } catch { /* engine unavailable or too slow: fall back below */ }
 
-  const codes = aadhaar ? await findQrCodes(card) : [];
-  const qr = codes.map((c) => c.box);
-  let fromQr = null;
-  for (const c of codes) { fromQr = fromQr || (await parseAadhaarQr(c.raw)); }
-  const read = fromQr ? { ...fromQr, ocrLast4 } : { ...readPrinted(lines), ocrLast4 };
+  const aadhaar = type === 'aadhaar';
+  const qr = aadhaar ? codes.map((c) => c.box) : [];
+  const read = fromQr ? { ...fromQr, ocrLast4 } : {
+    source: 'ocr',
+    words: [...new Set(reads.flatMap((r) => r.words))],
+    gender: reads.find((r) => r.gender)?.gender || null,
+    name: reads.find((r) => r.name)?.name || null,
+    ocrLast4,
+  };
 
   ctx.fillStyle = '#000';
-  for (const b of numbers) {
+  for (const b of aadhaar ? numbers : []) {
     const h = b.y1 - b.y0;
     const px = h * 0.25; // less than the gap between digit groups, so the last 4 stay readable
     const py = h * 0.3;
@@ -291,7 +332,10 @@ export async function maskCard(card, idType = 'aadhaar') {
       ctx.fillRect(MASK_RECT.x * w, MASK_RECT.y * h, MASK_RECT.w * w, MASK_RECT.h * h);
     }
   }
-  return { dataUrl: card.toDataURL('image/jpeg', 0.82), method, numbers: numbers.length, qr: qr.length, check: method === 'guide' || (method === 'auto' && uncertain), read };
+  return {
+    dataUrl: card.toDataURL('image/jpeg', 0.82), method, numbers: aadhaar ? numbers.length : 0, qr: qr.length,
+    check: method === 'guide' || (method === 'auto' && uncertain), read, idType: type, switched: type !== picked,
+  };
 }
 
 // The guard's own touch-ups: paints rectangles (in image pixels) onto an already masked image.
@@ -317,6 +361,9 @@ export function paintBoxes(dataUrl, rects) {
 export const __test = {
   findNumbers,
   digitsOf,
+  wordsByLine,
+  typeFor,
+  LOOKS,
   async words(card) {
     const { canvas } = prepareForOcr(card);
     const { data } = await (await getWorker()).recognize(canvas, {}, { blocks: true });

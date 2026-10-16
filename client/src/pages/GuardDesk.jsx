@@ -428,8 +428,24 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
   const idLabel = idType === 'other' ? (form.idTypeOther?.trim() || 'ID card') : ID_LABEL[idType];
   // The card read against what was typed: name and gender. Recomputed as the guard types.
   const idCheck = useMemo(() => checkId(idInfo?.read, form), [idInfo, form.firstName, form.lastName, form.gender]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nameFromCard = Boolean(idInfo?.filled && idInfo.filled.firstName === form.firstName && idInfo.filled.lastName === form.lastName);
 
   const update = (patch) => setForm((f) => { const next = { ...f, ...patch }; store.save(next); return next; });
+  // A scanned card fills in the name (and gender) when the guard has not typed one, and corrects the ID type
+  // when the card is another kind. Returns the card info, marked with the name it filled in.
+  const fromCard = (info) => {
+    const f = formRef.current;
+    const patch = info.switched && info.idType ? { idType: info.idType } : {};
+    const filled = info.read?.name && !f.firstName.trim() && !f.lastName.trim() ? splitCardName(info.read.name) : null;
+    if (filled) Object.assign(patch, filled, info.read.gender && !f.gender ? { gender: info.read.gender } : {});
+    if (Object.keys(patch).length) update(patch);
+    return filled ? { ...info, filled } : info;
+  };
+  const takeCardDetails = (c) => {
+    const filled = splitCardName(c.cardName);
+    update({ ...filled, ...(c.cardGender ? { gender: c.cardGender } : {}) });
+    setIdInfo((i) => ({ ...i, filled }));
+  };
   const digits = form.mobile.replace(/\D/g, '');
   const mobileOk = MOBILE_RE.test(digits);
 
@@ -737,11 +753,11 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
                 value={form.idTypeOther || ''} onChange={(e) => update({ idTypeOther: e.target.value })} />
             )}
             {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" idType={idType} idLabel={idLabel} key={idType} keepFull={keepFullId && idType === 'aadhaar'} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(info); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
+              ? <Camera mode="aadhaar" idType={idType} idLabel={idLabel} key={idType} keepFull={keepFullId} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(fromCard(info)); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
               : <CamTile icon={CreditCard} label={`Scan ${idLabel}`} onClick={() => setCam('aadhaar')} />}
           </div>
         </div>
-        <IdCheck check={idCheck} idLabel={idLabel} onUse={(c) => update({ ...splitCardName(c.cardName), ...(c.cardGender ? { gender: c.cardGender } : {}) })} />
+        <IdCheck check={idCheck} idLabel={idLabel} filled={nameFromCard} onUse={takeCardDetails} />
         <FaceMatch match={match} />
       </section>
 
@@ -791,7 +807,7 @@ function FaceMatch({ match }) {
 
 // The card against what was typed. Advice for the guard, like the face match: the visit goes ahead either way.
 const GENDER_WORD = { male: 'Male', female: 'Female', other: 'Transgender' };
-function IdCheck({ check, idLabel, onUse }) {
+function IdCheck({ check, idLabel, filled, onUse }) {
   if (!check) return null;
   const from = check.source === 'qr' ? 'Aadhaar QR' : idLabel;
   if (check.status === 'unread') {
@@ -800,7 +816,8 @@ function IdCheck({ check, idLabel, onUse }) {
   const tone = { match: 'alert-ok', partial: 'alert-warn', mismatch: 'alert-bad' }[check.status];
   const lines = [];
   if (check.tamper) lines.push('The QR does not belong to this card, check it carefully');
-  if (check.name === 'match') lines.push(`Name matches the ${from}`);
+  if (check.name === 'match' && filled) lines.push(`Name filled in from the ${from}${check.source === 'qr' ? '' : ', check the spelling'}`);
+  else if (check.name === 'match') lines.push(`Name matches the ${from}`);
   else if (check.name === 'partial') lines.push(check.cardName ? `Name only partly matches. Card: ${check.cardName}` : `Only part of the name was found on the ${idLabel}`);
   else if (check.name === 'mismatch') lines.push(check.cardName ? `Name does not match. Card: ${check.cardName}` : `Name not found on the ${idLabel}`);
   if (check.gender === 'match') lines.push('gender matches');

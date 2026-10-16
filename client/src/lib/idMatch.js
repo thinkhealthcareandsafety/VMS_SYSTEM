@@ -5,7 +5,8 @@
 //   'qr'  Aadhaar Secure QR (every Aadhaar since 2019, and the PVC card): UIDAI's own data, read exactly.
 //         Also the old XML QR on paper letters.
 //   'ocr' The printed text read off the card (PAN, licence, passport, voter ID, or an Aadhaar without a
-//         readable QR). Noisier, so the typed name is looked for among the words rather than extracted.
+//         readable QR). Noisier: the name is taken from its printed line only when every letter reads
+//         cleanly, and the typed name is also looked for among all the words.
 // Like the face match this is advice for the guard, never a block.
 
 // ---------------------------------------------------------------- Aadhaar Secure QR
@@ -63,12 +64,153 @@ const CARD_WORDS = new Set(`government india of the republic unique identificati
   driving transport union territory state election commission identity elector electors photo passport type code
   nationality indian surname given place expiry authority holder blood group vid enrolment download no from to`.split(/\s+/));
 
-// OCR lines -> { source:'ocr', words, gender }. Only letters are kept: no number from the card stays in memory.
+// OCR lines -> { source:'ocr', words, gender, name }. Only letters are kept: no number from the card stays in memory.
+// A line is OCR words ({ text, bbox, confidence }) or, from tests, plain text laid out one line under the other.
 export function readPrinted(lines) {
-  const text = lines.join(' ');
+  const all = toWords(lines);
+  const text = all.map((w) => w.text).join(' ');
   const g = text.match(/\b(FEMALE|MALE|TRANSGENDER)\b/i);
-  const words = lines.flatMap((l) => l.split(/[^A-Za-z]+/)).map((w) => w.toLowerCase()).filter((w) => w.length >= 2 && !CARD_WORDS.has(w));
-  return { source: 'ocr', words, gender: g ? ({ female: 'female', male: 'male', transgender: 'other' })[g[1].toLowerCase()] : null };
+  const words = all.flatMap((w) => w.text.split(/[^A-Za-z]+/)).map((w) => w.toLowerCase()).filter((w) => w.length >= 2 && !CARD_WORDS.has(w));
+  return { source: 'ocr', words, gender: g ? ({ female: 'female', male: 'male', transgender: 'other' })[g[1].toLowerCase()] : null, name: printedName(all) };
+}
+
+function toWords(lines) {
+  return lines.flatMap((line, row) => {
+    if (typeof line !== 'string') return line.filter((w) => w?.bbox && String(w.text || '').trim()).map((w) => ({ ...w, text: String(w.text).trim() }));
+    let x = 0;
+    return line.split(/\s+/).filter(Boolean).map((t) => {
+      const w = { text: t, bbox: { x0: x, x1: x + t.length * 10, y0: row * 30, y1: row * 30 + 20 } };
+      x += (t.length + 1) * 10;
+      return w;
+    });
+  });
+}
+
+// Words that sit side by side on one printed line. OCR's own lines jump around on a card (the photo and
+// the QR sit between the labels), so the lines are rebuilt from where the words are.
+const hasText = (t) => /[A-Za-z0-9]/.test(t);
+function segmentsOf(items) {
+  const segs = [];
+  for (const w of items) {
+    let best = null;
+    for (const s of segs) {
+      const last = s[s.length - 1];
+      const h = Math.max(w.h, last.h);
+      const gap = w.x0 - last.x1;
+      const ratio = w.h / last.h;
+      const sameSize = !hasText(w.text) || !hasText(last.text) || (ratio > 0.6 && ratio < 1.6); // a ":" is smaller than the letters
+      if (Math.abs(w.cy - last.cy) < h * 0.5 && sameSize && gap > -h * 0.3 && gap < h * 2.5 && (!best || gap < best.gap)) best = { s, gap };
+    }
+    if (best) best.s.push(w); else segs.push([w]);
+  }
+  return segs.map((ws) => {
+    const hs = ws.filter((w) => hasText(w.text)).map((w) => w.h).sort((a, b) => a - b);
+    return { words: ws, x0: ws[0].x0, x1: ws[ws.length - 1].x1, y0: Math.min(...ws.map((w) => w.y0)), y1: Math.max(...ws.map((w) => w.y1)), h: hs[Math.floor(hs.length / 2)] || ws[0].h };
+  });
+}
+
+// The name on a printed line, from word `from` on: "RAVI KUMAR" or "Ravi Kumar". Null when a letter reads
+// unsure, or when the line runs into a word the reader could not join to it (glare swallowed part of the
+// name): no name beats a wrong or cut-short one.
+function nameIn(seg, from, items) {
+  const used = [];
+  for (const w of seg.words.slice(from)) {
+    if (/^[:\-–.,]+$/.test(w.text)) continue; // "Name : RAVI"
+    const t = w.text.replace(/^[:.,]+|[:.,]+$/g, '');
+    if (CARD_WORDS.has(t.toLowerCase())) { if (used.length) break; return null; } // "RAVI KUMAR  Blood Group"
+    if (!/^([A-Z][a-z]+|[A-Z]+)$/.test(t) || (typeof w.confidence === 'number' && w.confidence < 60)) return null;
+    used.push(w);
+  }
+  if (!used.length || used.length > 5 || !used.some((w) => w.text.length >= 3)) return null;
+  const first = used[0];
+  const last = used[used.length - 1];
+  const cy = (Math.min(...used.map((w) => w.y0)) + Math.max(...used.map((w) => w.y1))) / 2;
+  const reach = seg.h * 1.5;
+  const stray = items.some((w) => !seg.words.includes(w) && hasText(w.text) && w.y0 <= cy && w.y1 >= cy
+    && ((w.x0 >= last.x1 - seg.h * 0.3 && w.x0 - last.x1 < reach) || (from === 0 && w.x1 <= first.x0 + seg.h * 0.3 && first.x0 - w.x1 < reach)));
+  return stray ? null : used.map((w) => w.text.replace(/^[:.,]+|[:.,]+$/g, '')).join(' ');
+}
+
+const letters = (t) => t.toLowerCase().replace(/[^a-z]/g, '');
+const isNameLabel = (t) => letters(t).length >= 3 && /^[nm][ae](m|rn|n)?e?s?$/.test(letters(t)); // Name, Name(s), and how OCR misreads it
+const isRelation = (t) => /^fa[a-z]*(th|er|ry|rs)|ther|husb|moth|guard|spou/.test(letters(t)); // Father's Name (and misreads: Faery, Fahars), Husband's Name
+const isSurname = (t) => /^s[uv]rn[ae]me$/.test(letters(t));
+// Aadhaar: "DOB: 01/01/1990", "YoB", "Year of Birth". Not "Date of Birth": on a PAN that line is under the father's name.
+const isDobLine = (s) => s.words.some((w) => /(^|[^A-Za-z])(DOB|D0B|YOB)(?![A-Za-z])/i.test(w.text))
+  || (s.words.some((w) => letters(w.text) === 'year') && s.words.some((w) => letters(w.text) === 'birth'));
+
+// The printed line just below a label (or above, for the Aadhaar DOB), starting about where the label starts.
+function nextTo(segs, label, below, items) {
+  const h = label.h;
+  const near = segs.filter((s) => s !== label && (below
+    ? s.y0 >= label.y1 - h * 0.3 && s.y0 - label.y1 <= h * 2.2 && s.x0 >= label.x0 - h * 2 && s.x0 <= label.x0 + h * 4
+    : s.y1 <= label.y0 + h * 0.3 && label.y0 - s.y1 <= h * 2.2 && Math.abs(s.x0 - label.x0) <= h * 3));
+  near.sort((a, b) => (below ? a.y0 - b.y0 : b.y1 - a.y1));
+  return near[0] ? nameIn(near[0], 0, items) : null;
+}
+
+// The card holder's name, read from where it is printed:
+//   "Name" label (PAN, voter ID, licence): the rest of that line, or the line under it. "Father's Name" is skipped.
+//   "Given Name(s)" and "Surname" labels (passport).
+//   No label (Aadhaar): the line above "DOB" / "Year of Birth".
+function printedName(words) {
+  const items = words.map((w) => ({ ...w, ...w.bbox, h: w.bbox.y1 - w.bbox.y0, cy: (w.bbox.y0 + w.bbox.y1) / 2 }))
+    .filter((w) => w.h > 0).sort((a, b) => a.x0 - b.x0);
+  const segs = segmentsOf(items);
+  const top = segs.slice().sort((a, b) => a.y0 - b.y0);
+  let given = null;
+  let surname = null;
+  let name = null;
+  for (const s of top) {
+    const i = s.words.findIndex((w) => isNameLabel(w.text) || isSurname(w.text));
+    if (i < 0) continue;
+    const before = s.words.slice(0, i);
+    if (before.some((w) => isRelation(w.text)) || s.words.slice(i + 1, i + 3).some((w) => isRelation(w.text))) continue;
+    const label = s.words[i];
+    const value = nameIn(s, i + 1, items) || nextTo(segs, s, true, items);
+    if (!value) continue;
+    if (isSurname(label.text)) surname = surname || value;
+    else if (before.some((w) => letters(w.text) === 'given')) given = given || value;
+    else name = name || value;
+  }
+  if (given || surname) return [given, surname].filter(Boolean).join(' ');
+  if (name) return name;
+  const dob = top.find(isDobLine);
+  return dob ? nextTo(segs, dob, false, items) : null;
+}
+
+// ---------------------------------------------------------------- Which card it is
+// Words only one kind of card carries, matched loosely: the reader often gets a letter or two wrong.
+const KIND_WORDS = {
+  pan: ['income', 'permanent', 'account'],
+  dl: ['driving', 'licence', 'license', 'transport'],
+  voter: ['election', 'commission', 'elector', 'electors'],
+  passport: ['passport', 'republic', 'nationality'],
+};
+const AADHAAR_WORDS = ['aadhaar', 'aadhar', 'uidai'];
+const DIGIT_LIKE = { O: '0', D: '0', Q: '0', I: '1', L: '1', S: '5', B: '8', Z: '2', G: '6', T: '7' };
+// ABCDE1234F: the 4th letter says who holds it (P a person, C a company, ...).
+const isPanNumber = (t) => {
+  const s = t.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return s.length === 10 && /^[A-Z]{3}[ABCFGHJLPT][A-Z]$/.test(s.slice(0, 5)) && /^[A-Z]$/.test(s[9])
+    && [...s.slice(5, 9)].every((c) => /\d/.test(c) || DIGIT_LIKE[c]);
+};
+
+// Words read off the card (and whether a printed Aadhaar number or Aadhaar QR was found) ->
+// { kind: 'aadhaar'|'pan'|'dl'|'voter'|'passport'|null, maybeAadhaar }. maybeAadhaar: "Government of India",
+// printed on every Aadhaar; never enough to call a card an Aadhaar, but enough to keep masking it.
+export function cardKind(texts, { aadhaarNumber = false, qr = false } = {}) {
+  const ws = texts.map(letters).filter((w) => w.length >= 4);
+  const has = (key) => ws.some((w) => w === key || (key.length >= 6 && Math.abs(w.length - key.length) <= 2 && jaroWinkler(w, key) >= 0.88));
+  if (qr || aadhaarNumber || AADHAAR_WORDS.some(has) || (has('unique') && has('identification'))) return { kind: 'aadhaar', maybeAadhaar: true };
+  const maybeAadhaar = has('government') && ws.includes('india');
+  let kind = null;
+  let best = 1;
+  for (const [k, keys] of Object.entries(KIND_WORDS)) {
+    const score = keys.filter(has).length + (k === 'pan' && texts.some(isPanNumber) ? 2 : 0);
+    if (score > best) { best = score; kind = k; }
+  }
+  return { kind, maybeAadhaar };
 }
 
 // ---------------------------------------------------------------- Name matching
@@ -168,7 +310,7 @@ export function compareNames(typedName, cardTokens, { bag = false } = {}) {
 }
 
 // ---------------------------------------------------------------- The check
-// read: what the card gave ({ source:'qr', name, gender, last4 } or readPrinted output), plus ocrLast4 for Aadhaar.
+// read: what the card gave ({ source:'qr', name, gender, last4 } or readPrinted output, whose name may be null), plus ocrLast4 for Aadhaar.
 // Returns null when there is nothing to compare yet.
 export function checkId(read, { firstName, lastName, gender }) {
   if (!read) return null;
@@ -178,7 +320,13 @@ export function checkId(read, { firstName, lastName, gender }) {
 
   let name = null;
   if (read.source === 'qr') name = compareNames(typed, nameTokens(read.name));
-  else if (read.words.length >= 3) name = compareNames(typed, read.words, { bag: true });
+  else {
+    // The name line read off the card, or failing that, the typed name looked for among all the words.
+    const printed = read.name ? compareNames(typed, nameTokens(read.name)) : null;
+    const anywhere = read.words.length >= 3 ? compareNames(typed, read.words, { bag: true }) : null;
+    const rank = (r) => (r ? ['mismatch', 'partial', 'match'].indexOf(r.status) * 1000 + r.score : -1);
+    name = rank(anywhere) > rank(printed) ? anywhere : printed;
+  }
   const sex = read.gender && gender ? (read.gender === gender ? 'match' : 'mismatch') : null;
 
   let status;
@@ -195,7 +343,7 @@ export function checkId(read, { firstName, lastName, gender }) {
     name: name?.status ?? null,
     gender: sex,
     tamper: Boolean(tamper),
-    cardName: read.source === 'qr' ? read.name : null,
+    cardName: read.name || null,
     cardGender: read.gender || null,
   };
 }

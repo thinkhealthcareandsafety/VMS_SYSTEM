@@ -6,8 +6,9 @@ import { Spinner } from './ui.jsx';
 import ImageViewer from './ImageViewer.jsx';
 
 // mode="face": live photo. mode="aadhaar": the card is read on this device, the number is found and
-// painted out, and the masked image is handed back (onCapture(dataUrl, info)). With `keepFull`, info.full
-// also carries the unmasked card, which the server stores encrypted for the Super Admin only.
+// painted out, and the masked image is handed back (onCapture(dataUrl, info)). info.idType is what the card
+// turned out to be. With `keepFull`, info.full also carries the unmasked card when it is an Aadhaar, which
+// the server stores encrypted for the Super Admin only.
 export default function Camera({ mode, onCapture, captured, onRetake, info, onEdit, keepFull = false, idType = 'aadhaar', idLabel = 'Aadhaar' }) {
   const videoRef = useRef(null);
   const boxRef = useRef(null);
@@ -63,7 +64,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
         const full = keepFull ? copy.toDataURL('image/jpeg', 0.82) : undefined;
         const face = describeCard(copy).catch(() => 'unavailable');
         const result = await maskCard(card, idType);
-        onCapture(result.dataUrl, { ...result, face: await face, ...(full ? { full } : {}) });
+        onCapture(result.dataUrl, { ...result, face: await face, ...(full && result.idType === 'aadhaar' ? { full } : {}) });
       } finally {
         setBusy(false);
       }
@@ -128,7 +129,7 @@ function MaskedCard({ image, info, onRetake, onEdit, label }) {
   const [viewer, setViewer] = useState(null); // null | { drawing }
   const [history, setHistory] = useState([]);
 
-  const status = info?.method === 'auto' && info.check
+  const found = info?.method === 'auto' && info.check
     ? { tone: 'warn', text: 'Number hidden. Check that no digit is still showing.' }
     : info?.method === 'auto'
       ? { tone: 'ok', text: `Aadhaar number found and hidden${info.numbers > 1 ? ` (${info.numbers} places)` : ''}${info.qr ? ', QR hidden' : ''}` }
@@ -139,6 +140,10 @@ function MaskedCard({ image, info, onRetake, onEdit, label }) {
           : info?.method === 'none'
             ? { tone: 'ok', text: `${label} captured` }
             : { tone: 'ok', text: 'Masked on this device' };
+  // The card is not the type that was picked: the type has been changed to match it.
+  const status = !info?.switched ? found
+    : info.method === 'none' ? { tone: 'ok', text: `${label} found, ID type changed` }
+      : { ...found, text: `Aadhaar found, ID type changed. ${found.text}` };
 
   const paint = async (rect) => {
     const next = await paintBoxes(image, [rect]);
