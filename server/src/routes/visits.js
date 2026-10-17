@@ -142,15 +142,21 @@ const blockMessage = (b) => `Do not admit${b.name ? ` ${b.name}` : ''}. This num
 // An expected visitor for today: let in without waiting for the host.
 const inviteFor = (mobile) => Invite.findOne({ mobile, day: siteDay(), status: 'expected' }).sort({ createdAt: -1 }).populate('host').lean();
 
-// Latest message status per visit (SMS, Telegram or WhatsApp), in one query.
+// Message status per visit, in one query: the latest phone message (SMS, Telegram or WhatsApp),
+// except that a failed one whose email went through reads 'email', so the guard is not told nobody was reached.
 async function smsStatusFor(visitIds) {
   if (!visitIds.length) return new Map();
   const rows = await Outbox.aggregate([
-    { $match: { kind: { $in: ['sms', 'telegram', 'whatsapp'] }, visit: { $in: visitIds } } },
+    { $match: { kind: { $in: ['sms', 'telegram', 'whatsapp', 'email'] }, visit: { $in: visitIds } } },
     { $sort: { _id: -1 } },
-    { $group: { _id: '$visit', status: { $first: '$status' } } },
+    { $group: { _id: { visit: '$visit', mail: { $eq: ['$kind', 'email'] } }, status: { $first: '$status' } } },
   ]);
-  return new Map(rows.map((r) => [String(r._id), r]));
+  const phone = new Map(), mail = new Map();
+  for (const r of rows) (r._id.mail ? mail : phone).set(String(r._id.visit), r.status);
+  const out = new Map();
+  for (const [id, status] of phone) out.set(id, { status: status === 'failed' && mail.get(id) === 'sent' ? 'email' : status });
+  for (const [id, status] of mail) if (!phone.has(id)) out.set(id, { status: status === 'sent' ? 'email' : status });
+  return out;
 }
 
 // ---------- Mobile verification by OTP ----------

@@ -875,6 +875,9 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
               <AlertTriangle /><span className="grow">Not delivered. Call {hostFirst} or resend.</span>
             </div>
           )}
+          {visit.smsStatus === 'email' && (
+            <p className="muted" style={{ margin: 0 }}>Sent to {hostFirst} by email. Call them if no reply soon.</p>
+          )}
           <div className="outcome-actions">
             {whatsapp && <a className="btn btn-whatsapp btn-lg" href={whatsapp} target="_blank" rel="noopener noreferrer"><MessageCircle />Send to {hostFirst} on WhatsApp</a>}
             <button className="btn btn-primary btn-lg" onClick={onNext}><UserPlus />Check in next visitor</button>
@@ -1166,6 +1169,7 @@ function TrayState({ v }) {
   if (v.status === 'rejected') return <span className="tray-state bad"><XCircle />Declined</span>;
   if (v.status === 'expired') return <span className="tray-state warn"><Clock />No reply</span>;
   if (v.smsStatus === 'failed') return <span className="tray-state bad"><AlertTriangle />Not delivered</span>;
+  if (v.smsStatus === 'email') return <span className="tray-state wait"><span className="live-dot" />Emailed · {clock(secondsSince(v.createdAt))}</span>;
   return <span className="tray-state wait"><span className="live-dot" />{clock(secondsSince(v.createdAt))}</span>;
 }
 
