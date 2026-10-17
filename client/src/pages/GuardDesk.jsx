@@ -604,6 +604,12 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
       if (e.status === 403 && e.data?.code === 'blocked') {
         setBlocked({ message: e.message });
         sec.visitor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (e.status === 409 && e.data?.code === 'verify_required') {
+        // The earlier check of this number ran out: bring the code box back instead of a dead end.
+        setOtp((o) => ({ ...o, verified: null }));
+        setVerify(null);
+        setError('The number check ran out. Send a new code to the visitor, then send for approval again.');
+        sec.visitor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else if (e.status === 409 && e.data?.code === 'already_active') {
         setActive({ ...e.data.visit, message: e.message });
         sec.visitor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });

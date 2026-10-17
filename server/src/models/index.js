@@ -304,6 +304,7 @@ const otpSchema = new Schema({
   expiresAt: { type: Date, required: true },
   attempts: { type: Number, default: 0 },
   verifiedAt: { type: Date },
+  usedAt: { type: Date },            // a check-in counted this verification; the next visit asks again
   createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
   createdAt: { type: Date, default: () => new Date(), index: { expireAfterSeconds: 2 * 86400 } },
 }, { versionKey: false });

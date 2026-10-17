@@ -416,10 +416,13 @@ test('mobile OTP: off by default, then optional and required modes, limits and e
     messaging.sendOtp = async () => { throw new Error('gateway down'); };
     assert.equal((await call('POST', '/api/visits/otp/send', { mobile: '9855500007' }, guard)).status, 502);
 
-    // Right after the code, the same check-in is not asked again; on a later visit the code is asked every time.
-    assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, 'otp', 'still fresh right after the code');
-    await Otp.updateMany({ mobile: '+91' + mobile }, { verifiedAt: new Date(Date.now() - 3600e3) });
+    // The check-in used the code: the next visit asks again.
     assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, null, 'asked again on the next visit');
+    // A code verified an hour ago and not yet used still counts: the guard was slow to finish the form.
+    await Otp.updateMany({ mobile: '+91' + mobile }, { verifiedAt: new Date(Date.now() - 3600e3), $unset: { usedAt: 1 } });
+    assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, 'otp', 'a slow form still goes through');
+    await Otp.updateMany({ mobile: '+91' + mobile }, { verifiedAt: new Date(Date.now() - 4 * 3600e3) });
+    assert.equal((await call('GET', `/api/visits/lookup?mobile=${mobile}`, null, guard)).body.otp.verified, null, 'too old');
     // A site that sets OTP_VERIFIED_DAYS trusts a number verified within that many days.
     const config = require('../src/config');
     config.otp.verifiedDays = 90;

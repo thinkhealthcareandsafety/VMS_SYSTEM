@@ -163,13 +163,13 @@ async function smsStatusFor(visitIds) {
 const OTP_RESEND_GAP = 30e3;     // seconds between two codes to the same number
 const OTP_PER_HOUR = 5;          // codes per number per hour
 const OTP_MAX_TRIES = 3;
-const OTP_FRESH_MS = 15 * 60e3;  // a verification counts for this long, so the guard can finish the check-in
+const OTP_FRESH_MS = 3 * 3600e3; // a verification holds until a check-in uses it, at most this long, so a slow form still goes through
 const otpHash = (mobile, code) => sha256(`otp:${mobile}:${code}:${process.env.JWT_SECRET}`);
 
 // Was this number already proven recently? Returns how, or null. `invite`: an expected visitor the admin entered.
 async function verifiedVia(mobile, invite) {
   if (invite) return 'expected'; // the host gave us this number
-  if (await Otp.exists({ mobile, verifiedAt: { $gte: new Date(Date.now() - OTP_FRESH_MS) } })) return 'otp';
+  if (await Otp.exists({ mobile, verifiedAt: { $gte: new Date(Date.now() - OTP_FRESH_MS) }, usedAt: { $exists: false } })) return 'otp';
   if (config.otp.verifiedDays > 0) {
     const since = new Date(Date.now() - config.otp.verifiedDays * 86400e3);
     if (await Visit.exists({ mobile, mobileVerified: 'otp', mobileVerifiedAt: { $gte: since } })) return 'returning';
@@ -310,6 +310,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       createdBy: req.user.id,
     });
     audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });
+    if (mobileCheck.mobileVerified === 'otp') await Otp.updateMany({ mobile, verifiedAt: { $exists: true }, usedAt: { $exists: false } }, { usedAt: new Date() });
 
     if (invite) {
       // Claim the invite first, so two guards cannot both use it.
