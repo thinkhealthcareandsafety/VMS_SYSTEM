@@ -1246,7 +1246,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
         </div>
         <div className="row-actions">
           <button type="button" className="btn btn-sm btn-icon btn-ghost" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber} again`} title="Print the pass again"><Printer /></button>
-          {v.validUntil && <button type="button" className={`btn btn-sm ${isLate ? '' : 'btn-icon btn-ghost'}`} onClick={() => setExtending(v)} aria-label={`Extend ${name(v)}’s pass`} title="Extend the pass"><TimerReset />{isLate && 'Extend'}</button>}
+          {v.validUntil && <button type="button" className={`btn btn-sm btn-icon ${isLate ? '' : 'btn-ghost'}`} onClick={() => setExtending(v)} aria-label={`Extend ${name(v)}’s pass`} title="Extend the pass"><TimerReset /></button>}
           <button type="button" className={`btn btn-sm ${armed('out', v) ? 'btn-danger' : isLate ? 'btn-primary' : ''}`} disabled={busyId === v.id} onClick={() => checkout(v)} onBlur={() => disarm('out', v)}>
             {busyId === v.id ? <Spinner /> : armed('out', v) ? <><CheckCircle2 />Tap again to confirm</> : <><LogOut />Check out</>}
           </button>

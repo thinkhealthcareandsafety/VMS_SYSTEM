@@ -1324,3 +1324,14 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
   .overstay-actions .btn { flex: 1 1 0; }
   .overstay-actions .btn-primary { flex-basis: 100%; }
 }
+
+/* UX round: one main black action per screen, a phone top bar that never hides the gate name. */
+.scan-cta { background: var(--surface); border-color: var(--border-strong); color: var(--text); box-shadow: var(--shadow-sm); }
+.scan-cta:hover { background: var(--surface-2); border-color: var(--ink); }
+.scan-cta > svg:first-child { width: 40px; height: 40px; padding: 9px; border-radius: 12px; background: var(--ink); color: #fff; }
+.scan-cta small { color: var(--text-3); }
+.guard-side .empty { padding: 24px 16px; }
+@media (max-width: 640px) {
+  .app-guard .topbar .where strong { display: flex; min-width: 0; }
+  .app-guard .topbar .frame-label { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; line-height: 20px; }
+}
