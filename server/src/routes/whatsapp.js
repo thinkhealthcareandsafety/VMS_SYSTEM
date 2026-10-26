@@ -4,6 +4,7 @@ const { Host, Outbox } = require('../models');
 const whatsapp = require('../services/whatsapp');
 const { decide, findByToken } = require('../services/decision');
 const material = require('../services/material');
+const parcels = require('../services/parcels');
 const { whatsappFallback } = require('../services/notify');
 const { audit } = require('../services/core');
 
@@ -31,6 +32,16 @@ async function onMessage(msg) {
     if (whatsapp.digits(found.m.approver?.mobile) !== from) return whatsapp.say(from, 'This request was not sent to you.', msg.id);
     const r = await material.decideByToken(token, kind === 'ma' ? 'approve' : 'reject', { via: 'whatsapp' });
     return whatsapp.say(from, r.status === 200 ? `${kind === 'ma' ? '✅ Approved' : '❌ Declined'}: gate pass ${found.m.number}.\nSecurity has been told.` : r.body.error, msg.id);
+  }
+  // A parcel: only the recipient's own number answers.
+  if (kind === 'pa' || kind === 'pr') {
+    const found = token ? await parcels.findByToken(token) : null;
+    if (!found) return whatsapp.say(from, 'This request is no longer valid.', msg.id);
+    if (whatsapp.digits(found.p.host?.mobile) !== from) return whatsapp.say(from, 'This request was not sent to you.', msg.id);
+    const r = await parcels.respondByToken(token, kind === 'pa' ? 'accept' : 'decline', { via: 'whatsapp' });
+    return whatsapp.say(from, r.status === 200
+      ? (kind === 'pa' ? `✅ Accepted: parcel ${found.p.number}.\nCollect it from security, or send someone; they give their name and number at the desk.` : `❌ Declined: parcel ${found.p.number}.\nSecurity will return it to the courier.`)
+      : r.body.error, msg.id);
   }
   const decision = kind === 'a' ? 'approve' : kind === 'r' ? 'reject' : null;
   const found = decision && token ? await findByToken(token) : null;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   AlertTriangle, ArrowDown, BadgeCheck, Bell, ChevronRight, Plus, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
-  Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, UserPlus, UserRound, Users, X, XCircle,
+  Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, TimerReset, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
@@ -18,6 +18,7 @@ import PassScanner from '../components/PassScanner.jsx';
 import GroupGate from '../components/GroupGate.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
+import { ExtendPassDialog, OverstayAlert } from '../components/Overstay.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 import { checkId, splitCardName } from '../lib/idMatch.js';
@@ -253,6 +254,7 @@ export default function GuardDesk({ user, onLogout }) {
           <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
         </div>
       </header>
+      <div className="overstay-slot"><OverstayAlert liveTick={liveTick} onChanged={refreshInside} /></div>
 
       {mode === 'material' ? (
         <main className="guard-main"><MaterialBoard liveTick={liveTick} /></main>
@@ -1186,6 +1188,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
   const [q, setQ] = useState('');
   const [confirmId, setConfirmId] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [extending, setExtending] = useState(null);
 
   const term = q.trim().toLowerCase();
   const match = (v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref}`.toLowerCase().includes(term);
@@ -1236,10 +1239,14 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
             {v.passExpired
               ? <span className="badge badge-bad">Pass ended {fmtUntil(v.validUntil)}</span>
               : v.validUntil ? <span className="badge">Valid till {fmtUntil(v.validUntil)}</span> : isLate && <span className="badge badge-warn">Inside a long time</span>}
+            {v.passExpired && v.overstay?.escalatedAt && <span className="badge badge-bad">Escalated</span>}
+            {v.passExpired && v.overstay?.ackAt && <span className="badge badge-ok">Seen by {v.overstay.ackBy}</span>}
+            {v.extensions?.length > 0 && !v.passExpired && <span className="badge">Extended</span>}
           </div>
         </div>
         <div className="row-actions">
           <button type="button" className="btn btn-sm btn-icon btn-ghost" onClick={() => onPrint(v)} aria-label={`Print pass ${v.dailyNumber} again`} title="Print the pass again"><Printer /></button>
+          {v.validUntil && <button type="button" className={`btn btn-sm ${isLate ? '' : 'btn-icon btn-ghost'}`} onClick={() => setExtending(v)} aria-label={`Extend ${name(v)}’s pass`} title="Extend the pass"><TimerReset />{isLate && 'Extend'}</button>}
           <button type="button" className={`btn btn-sm ${armed('out', v) ? 'btn-danger' : isLate ? 'btn-primary' : ''}`} disabled={busyId === v.id} onClick={() => checkout(v)} onBlur={() => disarm('out', v)}>
             {busyId === v.id ? <Spinner /> : armed('out', v) ? <><CheckCircle2 />Tap again to confirm</> : <><LogOut />Check out</>}
           </button>
@@ -1316,6 +1323,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
                   </div>
                 </div>
                 <div className="row-actions">
+                  <button type="button" className="btn btn-sm btn-icon btn-ghost" onClick={() => setExtending(v)} aria-label={`Extend ${name(v)}’s pass`} title="Extend the pass"><TimerReset /></button>
                   <button type="button" className={`btn btn-sm ${armed('end', v) ? 'btn-danger' : 'btn-ghost'}`} disabled={busyId === v.id} onClick={() => endPass(v)} onBlur={() => disarm('end', v)}>
                     {armed('end', v) ? <><CheckCircle2 />End pass?</> : <><X />End pass</>}
                   </button>
@@ -1328,6 +1336,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
           </div>
         </>
       )}
+      <ExtendPassDialog visit={extending} onClose={() => setExtending(null)} onDone={onChanged} />
     </div>
   );
 }

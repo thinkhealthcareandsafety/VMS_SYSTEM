@@ -9,6 +9,7 @@ const defaults = () => ({
   idRetentionDays: Math.max(1, Math.round(config.idImageRetentionHours / 24)),
   otpMode: 'off', // an admin switches mobile verification on in Settings once the SMS provider is ready
   fullIdCapture: true, // the full Aadhaar is kept, encrypted, for the Super Admin
+  escalateTo: { mobiles: [], emails: [] }, // security / duty manager: told when a visitor overstays their pass by an hour
 });
 
 let cache = null;

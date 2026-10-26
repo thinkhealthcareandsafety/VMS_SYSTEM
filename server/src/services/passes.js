@@ -81,6 +81,31 @@ function staysOpen(validity, until, now = new Date()) {
   return (VALIDITY[v]?.days || 0) >= 2;
 }
 
+// ---------- Making a pass longer ----------
+// Hours are added to whichever is later, the current end or now (a pass that already ended starts again from now);
+// 'today' runs to tonight; 'date' to the end of that day. The new end must be later than the current one.
+const EXTEND = {
+  '1h': { label: '1 hour', hours: 1 },
+  '2h': { label: '2 hours', hours: 2 },
+  '4h': { label: '4 hours', hours: 4 },
+  '8h': { label: '8 hours', hours: 8 },
+  today: { label: 'Till tonight' },
+};
+function extendedUntil(current, b, now = new Date()) {
+  const by = b?.by;
+  let until;
+  if (EXTEND[by]?.hours) until = new Date(Math.max(now.getTime(), current ? new Date(current).getTime() : 0) + EXTEND[by].hours * 3600e3);
+  else if (by === 'today') until = endOfSiteDay(siteDay(now));
+  else if (by === 'date') {
+    const day = String(b.day || '');
+    const today = siteDay(now);
+    if (!DAY_RE.test(day) || day < today || day > addDays(today, MAX_DAYS)) return { error: `Pick a date from today up to ${MAX_DAYS} days ahead` };
+    until = endOfSiteDay(day);
+  } else return { error: 'Choose how much longer the pass should run' };
+  if (current && until <= new Date(current)) return { error: 'The pass already runs past that. Pick a longer time.' };
+  return { until };
+}
+
 // ---------- Gates ----------
 // A site always has at least one gate. The first one is made from the old single "gate name" setting.
 async function ensureDefaultGate() {
@@ -113,6 +138,6 @@ function entryExit(v) {
 }
 
 module.exports = {
-  VALIDITY, DEFAULT_VALIDITY, MAX_DAYS, parseValidity, validUntil, validityLabel, staysOpen, endOfSiteDay, addDays,
+  VALIDITY, DEFAULT_VALIDITY, MAX_DAYS, parseValidity, validUntil, validityLabel, staysOpen, endOfSiteDay, addDays, EXTEND, extendedUntil,
   ensureDefaultGate, gateOf, movement, entryExit,
 };

@@ -4,6 +4,7 @@ const { Host, Outbox } = require('../models');
 const telegram = require('../services/telegram');
 const { decide, findByToken } = require('../services/decision');
 const material = require('../services/material');
+const parcels = require('../services/parcels');
 const { audit, sha256 } = require('../services/core');
 
 // Telegram calls this for every message to the bot and every button tap. Not behind a login:
@@ -43,6 +44,14 @@ async function onButton(cb) {
     const r = await material.decideByToken(token, kind === 'ma' ? 'approve' : 'reject', { via: 'telegram' });
     await telegram.answer(cb.id, r.status === 200 ? (kind === 'ma' ? 'Approved' : 'Declined') : r.body.error, r.status !== 200);
     return telegram.finish(chatId, cb.message.message_id, `${cb.message.text.split('\n')[0]}\n\n${r.status === 200 ? (kind === 'ma' ? '✅ Approved. Security has been told.' : '❌ Declined. Security has been told.') : r.body.error}`);
+  }
+  if (kind === 'pa' || kind === 'pr') {
+    const found = token ? await parcels.findByToken(token) : null;
+    if (!found) return telegram.answer(cb.id, 'This request is no longer valid', true);
+    if (!found.p.host?.telegramChatId || String(found.p.host.telegramChatId) !== chatId) return telegram.answer(cb.id, 'This request was not sent to you', true);
+    const r = await parcels.respondByToken(token, kind === 'pa' ? 'accept' : 'decline', { via: 'telegram' });
+    await telegram.answer(cb.id, r.status === 200 ? (kind === 'pa' ? 'Accepted' : 'Declined') : r.body.error, r.status !== 200);
+    return telegram.finish(chatId, cb.message.message_id, `${cb.message.text.split('\n')[0]}\n\n${r.status === 200 ? (kind === 'pa' ? '✅ Accepted. Collect it from security, or send someone.' : '❌ Declined. Security will return it to the courier.') : r.body.error}`);
   }
   const decision = kind === 'a' ? 'approve' : kind === 'r' ? 'reject' : null;
   if (!decision || !token) return telegram.answer(cb.id, 'Unknown action');

@@ -1,6 +1,6 @@
 const fs = require('node:fs/promises');
 const config = require('../config');
-const { Visit, Outbox, ApprovalToken } = require('../models');
+const { Visit, Outbox, ApprovalToken, Parcel } = require('../models');
 const { sendSms, buildStickerZpl, deliverZpl } = require('./messaging');
 const telegram = require('./telegram');
 const whatsapp = require('./whatsapp');
@@ -11,8 +11,11 @@ const settings = require('./settings');
 const { retireTelegram, whatsappFallback } = require('./notify');
 const passes = require('./passes');
 const parcels = require('./parcels');
+const overstay = require('./overstay');
 
 const backoffMs = (attempts) => Math.min(60000, 2 ** attempts * 1000);
+// The single-use token in a request's link: a visitor, a material gate pass or a parcel.
+const LINK_TOKEN = /\/(?:approve|approve-material|parcel)\/([\w-]+)/;
 
 async function processOutbox() {
   const jobs = await Outbox.find({
@@ -30,14 +33,16 @@ async function processOutbox() {
       } else if (job.kind === 'whatsapp' && job.vars?.plain) {
         job.providerRef = String((await whatsapp.say(job.to, job.body)).messages?.[0]?.id || 'accepted');
       } else if (job.kind === 'telegram') {
-        const token = /\/approve(?:-material)?\/([\w-]+)/.exec(job.body)?.[1];
+        const token = LINK_TOKEN.exec(job.body)?.[1];
         if (!token) throw new Error('Approval link missing from message');
         job.providerRef = await telegram.sendApproval(job.to, job.body, token, job.vars?.prefix || '');
       } else if (job.kind === 'whatsapp') {
-        const token = /\/approve(?:-material)?\/([\w-]+)/.exec(job.body)?.[1];
+        const token = LINK_TOKEN.exec(job.body)?.[1];
         if (!token) throw new Error('Approval link missing from message');
+        // The picture on top: the visitor's photo, or the first photo of the parcel.
         const visit = job.visit ? await Visit.findById(job.visit, 'photoPath').lean() : null;
-        job.providerRef = await whatsapp.sendApproval(job.to, job.body, token, visit?.photoPath, job.vars?.prefix || '');
+        const parcel = job.parcel ? await Parcel.findById(job.parcel, 'photos').lean() : null;
+        job.providerRef = await whatsapp.sendApproval(job.to, job.body, token, visit?.photoPath || parcel?.photos?.[0], job.vars?.prefix || '');
       } else if (job.kind === 'email') {
         job.providerRef = await email.send(job.to, job.vars?.subject || 'Security desk', job.vars?.html, job.body);
       } else if (job.kind === 'print') {
@@ -130,6 +135,7 @@ function start() {
       await closeExpiredPasses();
       await closeEndedGroups();
       await parcels.remind();
+      await overstay.escalate();
       await purgeIdImages();
     } catch (err) {
       console.error('[worker]', err.message);

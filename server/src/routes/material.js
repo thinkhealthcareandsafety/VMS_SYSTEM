@@ -19,6 +19,22 @@ const router = express.Router();
 const isId = (v) => mongoose.isValidObjectId(v);
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_PHOTO = 2 * 1024 * 1024;
+const PHOTO_SETS = { photo: 'photos', doc: 'docPhotos', exit: 'exitPhotos' };
+
+// Data URLs -> saved JPEG files, or { error } naming what to retake.
+async function savePhotos(list, max) {
+  const files = [];
+  for (const p of (Array.isArray(list) ? list : []).slice(0, max)) {
+    const buf = decodeJpeg(p, MAX_PHOTO);
+    if (!buf) return { error: 'A photo could not be read. Take it again.' };
+    const dir = path.resolve(config.uploadDir, 'material');
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, `${crypto.randomUUID()}.jpg`);
+    await fs.writeFile(file, buf);
+    files.push(file);
+  }
+  return { files };
+}
 
 function row(m, admin) {
   const ee = passes.entryExit(m);
@@ -26,7 +42,7 @@ function row(m, admin) {
   return {
     id: String(m._id), number: m.number, direction: m.direction, kind: m.kind, kindLabel: material.KIND_LABEL[m.kind],
     status: m.status, statusLabel: material.STATUS_LABEL[m.status], overdue: material.overdue(m),
-    items: (m.items || []).map((i) => ({ id: String(i._id), name: i.name, qty: i.qty, unit: i.unit, serial: i.serial, returnedQty: i.returnedQty || 0 })),
+    items: (m.items || []).map((i) => ({ id: String(i._id), code: i.code || '', name: i.name, qty: i.qty, unit: i.unit, serial: i.serial, returnedQty: i.returnedQty || 0, acceptedQty: i.acceptedQty ?? null })),
     itemCount: (m.items || []).length, returnedSome: back > 0,
     party: m.party, department: m.department, purpose: m.purpose, note: m.note, vehicle: m.vehicle, docs: m.docs, returnBy: m.returnBy || null,
     approver: m.approver?.fullName ? { id: String(m.approver._id), name: m.approver.fullName, unit: m.approver.unit } : null,
@@ -36,8 +52,11 @@ function row(m, admin) {
     movements: (m.movements || []).map((x) => ({ kind: x.kind, at: x.at, gate: x.gateName, by: x.byName })),
     out: ee.exit, in: ee.entry,
     photos: (m.photos || []).map((_, i) => `/api/material/${m._id}/photo/${i}`),
+    docPhotos: (m.docPhotos || []).map((_, i) => `/api/material/${m._id}/doc/${i}`),
+    exitPhotos: (m.exitPhotos || []).map((_, i) => `/api/material/${m._id}/exit/${i}`),
+    receivedBy: m.receivedBy?.name || m.receivedBy?.department ? m.receivedBy : null, exitNote: m.exitNote || '',
+    checkedOutAt: m.checkedOutAt || null, takenBack: Boolean(m.takenBack),
     createdAt: m.createdAt, createdBy: m.createdByName || '',
-    ...(admin ? {} : {}),
   };
 }
 
@@ -49,8 +68,13 @@ async function load(req, res) {
 }
 
 // ---------- Registers ----------
-// view: pending | ready (approved, not out) | out (everything out that comes back) | overdue | inward | all
+// Inward register: atgate (vendor still inside) | today | short (part went back with the vendor) | nodocs (no invoice
+// or challan number) | inward. The outward views stay for passes raised before the site chose inward only.
 const VIEWS = {
+  atgate: { direction: 'in', kind: 'delivery', status: 'received' },
+  today: { direction: 'in' },
+  short: { direction: 'in', takenBack: true },
+  nodocs: { direction: 'in', 'docs.invoice': '', 'docs.dc': '' },
   pending: { direction: 'out', status: 'pending' },
   ready: { direction: 'out', status: 'approved' },
   out: { kind: 'returnable', status: { $in: ['out', 'partly_returned'] } },
@@ -63,13 +87,14 @@ const VIEWS = {
 function search(query) {
   const q = { ...(VIEWS[query.view] || VIEWS.all) };
   if (query.view === 'overdue') q.returnBy = { $lt: siteDay() };
+  if (query.view === 'today') q.createdAt = { $gt: passes.endOfSiteDay(passes.addDays(siteDay(), -1)) };
   const from = /^\d{4}-\d{2}-\d{2}$/.test(query.from || '') ? passes.endOfSiteDay(passes.addDays(query.from, -1)) : null;
   const to = /^\d{4}-\d{2}-\d{2}$/.test(query.to || '') ? passes.endOfSiteDay(query.to) : null;
   if (from || to) q.createdAt = { ...(from ? { $gt: from } : {}), ...(to ? { $lte: to } : {}) };
   const term = cleanText(query.q, 60);
   if (term) {
     const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    q.$or = [{ number: re }, { 'party.name': re }, { 'party.company': re }, { 'items.name': re }, { 'items.serial': re }, { 'vehicle.number': re }, { department: re }, { 'docs.dc': re }, { 'docs.invoice': re }, { 'docs.po': re }];
+    q.$or = [{ number: re }, { 'party.name': re }, { 'party.company': re }, { 'party.mobile': re }, { 'party.gstin': re }, { 'items.name': re }, { 'items.code': re }, { 'receivedBy.name': re }, { 'items.serial': re }, { 'vehicle.number': re }, { department: re }, { 'docs.dc': re }, { 'docs.invoice': re }, { 'docs.po': re }];
   }
   return q;
 }
@@ -77,45 +102,51 @@ function search(query) {
 router.get('/', requireRole('guard', 'admin'), async (req, res) => {
   const list = await Material.find(search(req.query)).sort({ createdAt: -1 }).limit(Math.min(500, Number(req.query.limit) || 200)).populate('approver').lean();
   const today = siteDay();
-  const [pending, ready, out, overdue, inside] = await Promise.all([
+  const [pending, ready, out, overdue, inside, atgate, todayIn, short] = await Promise.all([
     Material.countDocuments(VIEWS.pending), Material.countDocuments(VIEWS.ready), Material.countDocuments(VIEWS.out),
     Material.countDocuments({ ...VIEWS.overdue, returnBy: { $lt: today } }), Material.countDocuments(VIEWS.inside),
+    Material.countDocuments(VIEWS.atgate), Material.countDocuments(search({ view: 'today' })), Material.countDocuments(VIEWS.short),
   ]);
-  res.json({ rows: list.map((m) => row(m, isAdmin(req.user))), counts: { pending, ready, out, overdue, inside }, units: material.UNITS });
+  res.json({ rows: list.map((m) => row(m, isAdmin(req.user))), counts: { pending, ready, out, overdue, inside, atgate, today: todayIn, short }, units: material.UNITS });
 });
 
-// The registers in Excel: one row per item, so quantities can be totalled.
+// The inward register in Excel, in the order of the hotel's paper register: one row per item, so quantities total.
 router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
-  const list = await Material.find(search(req.query)).sort({ createdAt: 1 }).limit(20000).populate('approver').lean();
+  const list = await Material.find({ ...search(req.query), direction: 'in' }).sort({ createdAt: 1 }).limit(20000).lean();
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Material', { views: [{ state: 'frozen', ySplit: 1 }] });
+  const ws = wb.addWorksheet('Material inward', { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = [
-    { header: 'Pass', key: 'number', width: 12 }, { header: 'Date', key: 'date', width: 17 }, { header: 'In / out', key: 'dir', width: 8 },
-    { header: 'Type', key: 'kind', width: 22 }, { header: 'Status', key: 'status', width: 20 }, { header: 'Item', key: 'item', width: 30 },
-    { header: 'Qty', key: 'qty', width: 8 }, { header: 'Unit', key: 'unit', width: 8 }, { header: 'Serial / tag', key: 'serial', width: 16 },
-    { header: 'Returned', key: 'back', width: 9 }, { header: 'Return by', key: 'returnBy', width: 12 }, { header: 'Party', key: 'party', width: 24 },
-    { header: 'Department', key: 'dept', width: 16 }, { header: 'Purpose', key: 'purpose', width: 22 }, { header: 'Vehicle', key: 'vehicle', width: 14 },
-    { header: 'Driver', key: 'driver', width: 18 }, { header: 'DC no.', key: 'dc', width: 12 }, { header: 'Invoice no.', key: 'invoice', width: 12 },
-    { header: 'PO no.', key: 'po', width: 12 }, { header: 'E-way bill', key: 'eway', width: 14 }, { header: 'Approved by', key: 'approver', width: 18 },
-    { header: 'Gate', key: 'gate', width: 16 }, { header: 'Guard', key: 'guard', width: 18 }, { header: 'Moved at', key: 'moved', width: 17 },
+    { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'Entry no.', key: 'number', width: 12 }, { header: 'Date', key: 'date', width: 12 },
+    { header: 'Time in', key: 'time', width: 9 }, { header: 'Supplier / company', key: 'company', width: 26 }, { header: 'Address', key: 'address', width: 30 },
+    { header: 'Contact', key: 'contact', width: 18 }, { header: 'Mobile', key: 'mobile', width: 15 }, { header: 'GSTIN', key: 'gstin', width: 17 },
+    { header: 'Item no.', key: 'code', width: 10 }, { header: 'Goods / material', key: 'item', width: 30 }, { header: 'Quantity', key: 'qty', width: 9 },
+    { header: 'Unit', key: 'unit', width: 8 }, { header: 'Accepted', key: 'accepted', width: 9 }, { header: 'Taken back', key: 'back', width: 10 },
+    { header: 'Invoice no.', key: 'invoice', width: 14 }, { header: 'Challan no.', key: 'dc', width: 14 }, { header: 'Vehicle', key: 'vehicle', width: 14 },
+    { header: 'For department', key: 'dept', width: 16 }, { header: 'Received by (dept / name)', key: 'receivedBy', width: 24 },
+    { header: 'Gate', key: 'gate', width: 16 }, { header: 'LP in (guard)', key: 'guardIn', width: 18 }, { header: 'Time out', key: 'outAt', width: 17 },
+    { header: 'LP out (guard)', key: 'guardOut', width: 18 }, { header: 'Status', key: 'status', width: 16 }, { header: 'Remarks', key: 'remarks', width: 30 },
   ];
-  const fmt = (d) => (d ? new Date(d).toLocaleString('en-IN', { timeZone: config.timezone, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
-  for (const m of list) {
-    const move = m.direction === 'out' ? passes.entryExit(m).exit : passes.entryExit(m).entry;
+  const fmt = (d, o) => (d ? new Date(d).toLocaleString('en-IN', { timeZone: config.timezone, ...o }) : '');
+  const DAY = { day: '2-digit', month: 'short', year: 'numeric' };
+  const TIME = { hour: '2-digit', minute: '2-digit' };
+  list.forEach((m, n) => {
+    const ee = passes.entryExit(m);
     for (const it of m.items) {
+      const kept = it.acceptedQty ?? null;
       ws.addRow({
-        number: m.number, date: fmt(m.createdAt), dir: m.direction === 'out' ? 'Out' : 'In', kind: material.KIND_LABEL[m.kind],
-        status: material.overdue(m) ? 'Overdue' : material.STATUS_LABEL[m.status], item: it.name, qty: it.qty, unit: it.unit, serial: it.serial,
-        back: m.kind === 'returnable' ? it.returnedQty || 0 : '', returnBy: m.returnBy || '', party: [m.party?.name, m.party?.company].filter(Boolean).join(', '),
-        dept: m.department, purpose: m.purpose, vehicle: m.vehicle?.number, driver: m.vehicle?.driver, dc: m.docs?.dc, invoice: m.docs?.invoice, po: m.docs?.po,
-        eway: m.docs?.eway, approver: m.decidedBy || '', gate: move?.gate || '', guard: move?.by || '', moved: fmt(move?.at),
+        sr: n + 1, number: m.number, date: fmt(m.createdAt, DAY), time: fmt(m.createdAt, TIME), company: m.party?.company || m.party?.name, address: m.party?.address,
+        contact: m.party?.company ? m.party?.name : '', mobile: m.party?.mobile || '', gstin: m.party?.gstin, code: it.code, item: it.name, qty: it.qty, unit: it.unit,
+        accepted: kept ?? '', back: kept == null ? '' : Math.round((it.qty - kept) * 1000) / 1000, invoice: m.docs?.invoice, dc: m.docs?.dc, vehicle: m.vehicle?.number,
+        dept: m.department, receivedBy: [m.receivedBy?.department, m.receivedBy?.name].filter(Boolean).join(' / ') || m.handedTo || '',
+        gate: ee.entry?.gate || '', guardIn: ee.entry?.by || m.createdByName || '', outAt: fmt(ee.exit?.at || m.checkedOutAt, { ...DAY, ...TIME }), guardOut: ee.exit?.by || '',
+        status: material.STATUS_LABEL[m.status], remarks: [m.note, m.exitNote].filter(Boolean).join(' · '),
       });
     }
-  }
+  });
   ws.getRow(1).font = { bold: true };
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
   audit(req.user, 'material.exported', { details: { rows: list.length, view: req.query.view || 'all' }, ip: req.ip });
-  res.type(XLSX).attachment(`material register ${siteDay()}.xlsx`).send(Buffer.from(await wb.xlsx.writeBuffer()));
+  res.type(XLSX).attachment(`material inward register ${siteDay()}.xlsx`).send(Buffer.from(await wb.xlsx.writeBuffer()));
 });
 
 router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
@@ -123,10 +154,11 @@ router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
   if (m) res.json(row(m.toObject(), isAdmin(req.user)));
 });
 
-router.get('/:id/photo/:n', requireRole('guard', 'admin'), async (req, res) => {
+router.get('/:id/:set(photo|doc|exit)/:n', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).end();
-  const m = await Material.findById(req.params.id, 'photos').lean();
-  const file = m?.photos?.[Number(req.params.n)];
+  const field = PHOTO_SETS[req.params.set];
+  const m = await Material.findById(req.params.id, field).lean();
+  const file = m?.[field]?.[Number(req.params.n)];
   if (!file) return res.status(404).end();
   res.type('jpeg').sendFile(path.resolve(file));
 });
@@ -145,16 +177,10 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     approver = isId(b.approverId) ? await material.approverFor(b.approverId) : null;
     if (!approver) return res.status(400).json({ error: 'Choose who approves this pass (head of department)' });
   }
-  const photos = [];
-  for (const p of (Array.isArray(b.photos) ? b.photos : []).slice(0, 3)) {
-    const buf = decodeJpeg(p, MAX_PHOTO);
-    if (!buf) return res.status(400).json({ error: 'A photo could not be read. Take it again.' });
-    const dir = path.resolve(config.uploadDir, 'material');
-    await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, `${crypto.randomUUID()}.jpg`);
-    await fs.writeFile(file, buf);
-    photos.push(file);
-  }
+  const shots = await savePhotos(b.photos, 3);
+  const docs = await savePhotos(b.docPhotos, 4);
+  if (shots.error || docs.error) return res.status(400).json({ error: shots.error || docs.error });
+  const photos = shots.files;
 
   const now = new Date();
   const gate = await passes.gateOf(req.user.id);
@@ -167,6 +193,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
     ...(approveNow ? { decidedAt: now, decidedBy: req.user.fullName } : {}),
     ...(direction === 'in' ? { movements: [passes.movement('in', gate, req.user, now)] } : {}),
     photos: photos.length ? photos : undefined,
+    docPhotos: docs.files.length ? docs.files : undefined,
     createdBy: req.user.id, createdByName: req.user.fullName,
   });
   audit(req.user, direction === 'in' ? 'material.received' : approveNow ? 'material.approved' : 'material.requested', {
@@ -227,6 +254,35 @@ router.post('/:id/return', requireRole('guard', 'admin'), async (req, res) => {
   if (r.error) return res.status(r.error.startsWith('Someone') ? 409 : 400).json({ error: r.error });
   audit(req.user, 'material.returned', { entity: 'Material', entityId: m._id, details: { number: m.number, status: r.m.status, gate: gate.name }, ip: req.ip });
   res.json(row((await Material.findById(m._id).populate('approver').lean()), isAdmin(req.user)));
+});
+
+// The vendor leaves: accepted quantities (the rest went back with them), who received it, and at least one photo of
+// the invoice as the hotel stamped it. Recorded as an exit at this gate.
+router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => {
+  const m = await load(req, res);
+  if (!m) return;
+  const c = material.readCheckout(m.toObject(), req.body);
+  if (c.error) return res.status(m.status === 'received' ? 400 : 409).json({ error: c.error });
+  if (!Array.isArray(req.body?.photos) || !req.body.photos.length) return res.status(400).json({ error: 'Take a photo of the invoice as the hotel stamped it' });
+  const shots = await savePhotos(req.body.photos, 4);
+  if (shots.error) return res.status(400).json({ error: shots.error });
+  const now = new Date();
+  const gate = await passes.gateOf(req.user.id);
+  const doc = await Material.findOneAndUpdate(
+    { _id: m._id, status: 'received' },
+    {
+      status: 'checked_out', items: c.items, receivedBy: c.receivedBy, exitNote: c.note, takenBack: c.takenBack, checkedOutAt: now,
+      exitPhotos: shots.files, $push: { movements: passes.movement('out', gate, req.user, now) },
+    },
+    { new: true },
+  ).populate('approver').lean();
+  if (!doc) return res.status(409).json({ error: 'Someone else just checked this vendor out. Open it again.' });
+  audit(req.user, 'material.checked_out', {
+    entity: 'Material', entityId: m._id,
+    details: { number: m.number, gate: gate.name, takenBack: c.takenBack, receivedBy: [c.receivedBy.department, c.receivedBy.name].filter(Boolean).join(' / ') },
+    ip: req.ip,
+  });
+  res.json(row(doc, isAdmin(req.user)));
 });
 
 // A delivery handed from the gate to the receiving / stores person.

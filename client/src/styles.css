@@ -1270,3 +1270,57 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
 .footer-bar .btn { min-width: 0; }
 .footer-bar .btn-primary, .footer-bar .btn-danger { white-space: normal; line-height: 1.2; text-align: center; }
 @media (max-width: 999px) { .footer-bar .need.quiet { display: none; } }
+
+/* ---------- Material inward: item no. column, the on-device invoice reading line ---------- */
+.item-row { grid-template-columns: 92px minmax(0, 1fr) 80px 96px auto; }
+@media (max-width: 640px) {
+  .item-row { grid-template-columns: minmax(0, 1fr) 70px 86px auto; }
+  .item-row input[aria-label$="number"] { grid-column: 1 / -1; }
+}
+.read-state { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-2); padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--border); }
+.read-state svg { width: 16px; height: 16px; flex: none; }
+.read-state.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.section-title svg { vertical-align: -3px; margin-right: 2px; }
+.dialog-foot .foot-hint { margin-right: auto; align-self: center; font-size: 13px; }
+.photo-strip[aria-invalid='true'] .photo-add { border-color: var(--bad); }
+
+/* ---------- Courier: the recipient's page shows the photos big ---------- */
+.parcel-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.parcel-photos button { padding: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--sunken); aspect-ratio: 1; cursor: zoom-in; }
+.parcel-photos img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ---------- Still inside after the pass ended: bar on top, pop-up list ---------- */
+.overstay-slot:empty { display: none; }
+.overstay-slot { width: 100%; max-width: 1200px; margin: 12px auto 0; padding: 0 16px; }
+.admin-main .overstay-slot { max-width: none; margin: 16px 0 0; padding: 0 28px; }
+@media (max-width: 899px) { .admin-main .overstay-slot { padding: 0 16px; } }
+.overstay-bar { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-lg); border: 1px solid #efc4c1; background: var(--bad-soft); color: var(--bad); font: inherit; text-align: left; cursor: pointer; }
+.overstay-bar > svg { width: 22px; height: 22px; flex: none; }
+.overstay-bar strong { display: block; font-size: 14.5px; }
+.overstay-bar small { display: block; font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+.overstay-bar.is-escalated { background: var(--bad); border-color: var(--bad); color: #fff; }
+.overstay-bar.is-escalated small { color: rgba(255, 255, 255, 0.86); }
+.overstay-list { display: grid; gap: 10px; }
+.overstay-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.overstay-item.is-new { border-color: #e6a9a5; box-shadow: 0 0 0 3px var(--bad-soft); }
+.overstay-item.is-escalated { border-color: var(--bad); background: linear-gradient(var(--bad-soft), var(--surface) 80%); }
+.overstay-item .top { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.overstay-item .meta { font-size: 13px; color: var(--text-3); margin-top: 2px; }
+.overstay-item .over { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--bad); margin-top: 6px; }
+.overstay-item .state { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.overstay-actions { display: grid; gap: 6px; justify-items: stretch; min-width: 132px; }
+@media (max-width: 640px) {
+  .overstay-item { flex-wrap: wrap; }
+  .overstay-item > .grow { flex: 1 1 calc(100% - 64px); }
+  .overstay-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; min-width: 0; }
+  .overstay-actions .btn { min-height: 44px; }
+}
+.return-line .grow, .overstay-item > .grow, .overstay-bar .grow { flex: 1; min-width: 0; }
+.overstay-item .over { display: block; }
+.overstay-item .over svg { vertical-align: -2px; margin-right: 6px; }
+.overstay-item .state .badge { white-space: normal; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; line-height: 1.3; }
+@media (max-width: 640px) {
+  .overstay-actions { display: flex; flex-wrap: wrap; }
+  .overstay-actions .btn { flex: 1 1 0; }
+  .overstay-actions .btn-primary { flex-basis: 100%; }
+}

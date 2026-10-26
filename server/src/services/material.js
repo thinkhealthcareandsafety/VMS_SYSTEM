@@ -10,6 +10,9 @@ const email = require('./email');
 //   out: returnable (sent for repair or loan, due back by a date) or non-returnable (scrap, sale, transfer);
 //        a head of department approves before the gate lets it out.
 //   in:  supplier deliveries, and contractor tools brought in that must leave again.
+// The hotel keeps only the inward register here: a delivery comes in with its invoice or challan (photographed,
+// details read on the guard's device), and when the vendor leaves the guard records what the hotel accepted,
+// what went back with the vendor, and a photo of the invoice as the hotel stamped it.
 const UNITS = ['nos', 'pcs', 'box', 'carton', 'set', 'pair', 'kg', 'g', 'litre', 'ml', 'metre', 'roll', 'bag', 'drum', 'bundle', 'packet'];
 const KINDS = { out: ['returnable', 'non_returnable'], in: ['delivery', 'returnable_in'] };
 const APPROVAL_HOURS = 24;   // an approval link works this long; the guard can resend
@@ -19,8 +22,10 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KIND_LABEL = { returnable: 'Returnable', non_returnable: 'Non-returnable', delivery: 'Delivery', returnable_in: 'Brought in (goes back out)' };
 const STATUS_LABEL = {
   pending: 'Awaiting approval', approved: 'Approved, not yet out', rejected: 'Declined', cancelled: 'Cancelled', out: 'Out',
-  partly_returned: 'Partly returned', returned: 'Returned', received: 'Received at gate', handed_over: 'Handed over', closed: 'Taken back out',
+  partly_returned: 'Partly returned', returned: 'Returned', received: 'Vendor inside', handed_over: 'Handed over', closed: 'Taken back out',
+  checked_out: 'Checked out',
 };
+const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 async function nextNumber(direction) {
   const c = await Counter.findByIdAndUpdate(`material-${direction}`, { $inc: { seq: 1 } }, { upsert: true, new: true });
@@ -29,7 +34,7 @@ async function nextNumber(direction) {
 
 // The request body -> clean fields, or { error }.
 function readPass(b, direction) {
-  const kind = String(b.kind || '');
+  const kind = String(b.kind || (direction === 'in' ? 'delivery' : ''));
   if (!KINDS[direction].includes(kind)) return { error: direction === 'out' ? 'Choose returnable or non-returnable' : 'Choose delivery or brought in' };
   const raw = Array.isArray(b.items) ? b.items : [];
   if (!raw.length) return { error: 'Add at least one item' };
@@ -41,10 +46,14 @@ function readPass(b, direction) {
     if (!name) return { error: `Item ${i + 1}: describe the item` };
     if (!Number.isFinite(qty) || qty <= 0 || qty > 1e6) return { error: `Item ${i + 1}: enter a quantity above 0` };
     const unit = UNITS.includes(it?.unit) ? it.unit : 'nos';
-    items.push({ name, qty: Math.round(qty * 1000) / 1000, unit, serial: cleanText(it?.serial, 60) });
+    items.push({ code: cleanText(it?.code, 30), name, qty: Math.round(qty * 1000) / 1000, unit, serial: cleanText(it?.serial, 60) });
   }
-  const party = { name: cleanText(b.party?.name, 80), company: cleanText(b.party?.company, 100), mobile: b.party?.mobile ? normalizeMobile(b.party.mobile) : undefined };
+  const party = {
+    name: cleanText(b.party?.name, 80), company: cleanText(b.party?.company, 100), mobile: b.party?.mobile ? normalizeMobile(b.party.mobile) : undefined,
+    address: cleanText(b.party?.address, 200), gstin: cleanText(String(b.party?.gstin || '').replace(/\s+/g, ''), 15).toUpperCase(),
+  };
   if (b.party?.mobile && !party.mobile) return { error: 'The mobile number is not valid' };
+  if (party.gstin && !GSTIN_RE.test(party.gstin)) return { error: 'The GSTIN is not valid: 15 characters, e.g. 07AABCU9603R1ZM. Leave it empty if unsure.' };
   if (!party.name && !party.company) return { error: direction === 'out' ? 'Who is taking it? Enter a name or company' : 'Who brought it? Enter the supplier or person' };
   const vehicle = {
     number: cleanText(b.vehicle?.number, 20).toUpperCase().replace(/\s+/g, ' '),
@@ -166,6 +175,25 @@ async function recordReturn(m, back, { gate, user, note }) {
   return { m: doc };
 }
 
+// The vendor leaves: what the hotel kept of each item (the rest went back with them), who received it, and the
+// invoice as stamped (photos saved by the route). `accepted`: [{ item: id, accepted }]; an item not listed was kept in full.
+function readCheckout(m, b) {
+  if (m.direction !== 'in' || m.kind !== 'delivery') return { error: 'Only a delivery is checked out this way' };
+  if (m.status !== 'received') return { error: `This entry is already ${(STATUS_LABEL[m.status] || 'closed').toLowerCase()}.` };
+  const receivedBy = { name: cleanText(b?.receivedBy?.name, 80), department: cleanText(b?.receivedBy?.department, 60) };
+  if (!receivedBy.name && !receivedBy.department) return { error: 'Who received the material? Enter the name or the department' };
+  const given = new Map((Array.isArray(b?.items) ? b.items : []).map((x) => [String(x?.item), x?.accepted]));
+  const items = [];
+  for (const it of m.items) {
+    const raw = given.has(String(it._id)) ? given.get(String(it._id)) : it.qty;
+    const kept = Number(raw);
+    if (raw === '' || raw == null || !Number.isFinite(kept) || kept < 0) return { error: `${it.name}: enter how much was accepted (0 if none)` };
+    if (kept > it.qty + 1e-9) return { error: `${it.name}: only ${it.qty} ${it.unit} came in` };
+    items.push({ ...it, acceptedQty: Math.round(kept * 1000) / 1000 });
+  }
+  return { items, receivedBy, note: cleanText(b?.note, 300), takenBack: items.some((i) => i.acceptedQty < i.qty - 1e-9) };
+}
+
 const overdue = (m, today = siteDay()) => m.kind === 'returnable' && ['out', 'partly_returned'].includes(m.status) && Boolean(m.returnBy) && m.returnBy < today;
 
 async function approverFor(id) {
@@ -174,5 +202,5 @@ async function approverFor(id) {
 
 module.exports = {
   UNITS, KINDS, KIND_LABEL, STATUS_LABEL, nextNumber, readPass, requestApproval, findByToken, decide, decideByToken,
-  recordReturn, overdue, itemsLine, approverFor, shortDay,
+  recordReturn, readCheckout, overdue, itemsLine, approverFor, shortDay,
 };

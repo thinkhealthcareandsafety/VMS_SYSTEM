@@ -96,6 +96,10 @@ const visitSchema = new Schema({
   // How long the pass lasts ('8h', '10d', 'date:2026-10-30'); validUntil is fixed when the visitor is let in.
   validity: { type: String },
   validUntil: { type: Date },
+  // Each time the pass was made longer at the gate or in the console: from when, to when, by whom.
+  extensions: { type: [{ _id: false, at: Date, from: Date, to: Date, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String, note: String }], default: undefined },
+  // Still inside after the pass ended: the guard acknowledges it; an hour later it is escalated. Cleared when extended.
+  overstay: { ackAt: Date, ackBy: { type: Schema.Types.ObjectId, ref: 'User' }, ackByName: String, ackNote: String, escalatedAt: Date },
   arrival: { gate: { type: Schema.Types.ObjectId, ref: 'Gate' }, gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String },
   movements: { type: [movementSchema], default: undefined },
   // Let in as a guest of a group (event, wedding, conference): no host request, no photo or ID by default.
@@ -145,6 +149,7 @@ const settingSchema = new Schema({
   siteName: { type: String, trim: true },     // printed on passes, the approval page and downloads
   gateName: { type: String, trim: true },     // shown on the guard desk
   idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
+  escalateTo: { mobiles: [String], emails: [String] }, // told when a visitor is still inside an hour after the pass ended
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
   fullIdCapture: { type: Boolean },           // keep the full Aadhaar (encrypted) for the Super Admin; only a Super Admin changes it
 }, { versionKey: false, timestamps: true });
@@ -187,8 +192,10 @@ guestSchema.index({ group: 1, mobile: 1 });
 
 // ---------- Material: gate passes (RGP / NRGP) and gate entries ----------
 const materialItemSchema = new Schema({
+  code: { type: String, trim: true, default: '' },     // item no. on the invoice or challan
   name: { type: String, required: true, trim: true },
   qty: { type: Number, required: true, min: 0 },
+  acceptedQty: { type: Number },                       // inward, at the vendor's checkout: what the hotel kept; the rest went back
   unit: { type: String, default: 'nos' },
   serial: { type: String, trim: true, default: '' },   // serial number or asset tag
   returnedQty: { type: Number, default: 0 },           // returnable passes: how much has come back
@@ -200,6 +207,8 @@ const materialReturnSchema = new Schema({
 }, { _id: false });
 // direction out: kind returnable (RGP: comes back by returnBy) or non_returnable (NRGP), approved by a head first.
 // direction in:  kind delivery (supplier goods) or returnable_in (contractor tools that must leave again).
+// The site uses the inward register only (outward gate passes live in the hotel's own gate pass system):
+// a delivery is received -> checked_out, when the vendor leaves with the stamped invoice and anything not accepted.
 const materialSchema = new Schema({
   number: { type: String, required: true, unique: true },   // OUT-000123 / IN-000123
   direction: { type: String, enum: ['in', 'out'], required: true, index: true },
@@ -207,9 +216,12 @@ const materialSchema = new Schema({
   // out: pending -> approved -> out -> (returnable) partly_returned -> returned; or rejected / cancelled
   // in:  received -> handed_over (delivery) or closed (returnable_in taken back out)
   status: { type: String, required: true, index: true,
-    enum: ['pending', 'approved', 'rejected', 'cancelled', 'out', 'partly_returned', 'returned', 'received', 'handed_over', 'closed'] },
+    enum: ['pending', 'approved', 'rejected', 'cancelled', 'out', 'partly_returned', 'returned', 'received', 'handed_over', 'closed', 'checked_out'] },
   items: { type: [materialItemSchema], validate: (v) => v.length > 0 },
-  party: { name: { type: String, trim: true, default: '' }, company: { type: String, trim: true, default: '' }, mobile: String },
+  party: {
+    name: { type: String, trim: true, default: '' }, company: { type: String, trim: true, default: '' }, mobile: String,
+    address: { type: String, trim: true, default: '' }, gstin: { type: String, trim: true, default: '' },
+  },
   department: { type: String, trim: true, default: '' },
   purpose: { type: String, trim: true, default: '' },
   note: { type: String, trim: true, default: '' },
@@ -221,7 +233,13 @@ const materialSchema = new Schema({
   returns: { type: [materialReturnSchema], default: undefined },
   handedTo: String, handedAt: Date,
   movements: { type: [movementSchema], default: undefined },
-  photos: { type: [String], default: undefined },
+  photos: { type: [String], default: undefined },     // the material
+  docPhotos: { type: [String], default: undefined },  // invoice / challan as it arrived
+  exitPhotos: { type: [String], default: undefined }, // invoice as stamped by the hotel, at the vendor's checkout
+  receivedBy: { name: { type: String, default: '' }, department: { type: String, default: '' } },
+  exitNote: String,
+  checkedOutAt: Date,
+  takenBack: { type: Boolean, default: false },       // the vendor took some of it back (accepted less than delivered)
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   createdByName: String,
 }, opts);
@@ -229,8 +247,9 @@ materialSchema.index({ kind: 1, status: 1, returnBy: 1 });
 materialSchema.index({ createdAt: -1 });
 
 // ---------- Couriers: parcels in (to a person) and out (dispatched) ----------
-// In:  received at the gate -> collected (with the recipient's pickup code, or by an audited override)
-//      | forwarded (handed to a department or a room) | returned (refused, sent back with the courier).
+// In:  received at the gate; the recipient sees the photos and accepts or declines it on WhatsApp / Telegram / the link
+//      -> collected (handed over against a name, mobile number and photo) | forwarded | returned (refused, sent back).
+//      Parcels from before used a pickup code (codeSealed); those records keep it.
 // Out: booked (a department hands it to security) -> dispatched (the courier's agent took it).
 const parcelSchema = new Schema({
   number: { type: String, required: true, unique: true },     // PCL-000123
@@ -245,6 +264,7 @@ const parcelSchema = new Schema({
   host: { type: Schema.Types.ObjectId, ref: 'Host' },
   person: { name: { type: String, trim: true, default: '' }, room: { type: String, trim: true, default: '' }, mobile: String },
   department: { type: String, trim: true, default: '' },
+  addressee: { type: String, trim: true, default: '' },        // out: the name on the courier
   address: { type: String, trim: true, default: '' },          // out: where it is going
   note: { type: String, trim: true, default: '' },
   photos: { type: [String], default: undefined },
@@ -252,20 +272,23 @@ const parcelSchema = new Schema({
   codeSealed: String,
   codeTries: { type: Number, default: 0 },
   notifiedVia: String, notifiedAt: Date, reminders: { type: Number, default: 0 }, lastReminderAt: Date,
+  response: { kind: { type: String, enum: ['accepted', 'declined'] }, at: Date, by: String, via: String },
   handover: {
-    at: Date, to: String, mobile: String, how: { type: String, enum: ['code', 'override', 'forward', 'return', 'dispatch'] },
+    at: Date, to: String, mobile: String, how: { type: String, enum: ['code', 'override', 'forward', 'return', 'dispatch', 'handover'] },
     reason: String, gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String,
   },
   movements: { type: [movementSchema], default: undefined },
+  handoverPhotos: { type: [String], default: undefined },     // the person receiving it (in) or the courier picker (out)
+  ackSentAt: Date,                                            // the recipient was told who collected it
   voidReason: String,
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   createdByName: String,
 }, opts);
 parcelSchema.index({ direction: 1, status: 1, createdAt: -1 });
 
-// Single-use links for decisions other than a visitor's (a material pass today). Only a hash is kept.
+// Single-use links for decisions other than a visitor's (a material pass, a parcel's accept / decline). Only a hash is kept.
 const actionTokenSchema = new Schema({
-  kind: { type: String, enum: ['material'], required: true },
+  kind: { type: String, enum: ['material', 'parcel'], required: true },
   ref: { type: Schema.Types.ObjectId, required: true, index: true },
   tokenHash: { type: String, required: true, unique: true },
   expiresAt: { type: Date, required: true },

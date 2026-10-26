@@ -38,9 +38,13 @@ async function uploadJpeg(file) {
   return (await call('media', { method: 'POST', body: form })).id;
 }
 
+// Button titles and footer by kind of request: a visitor (''), a material gate pass ('m'), a parcel ('p').
+const BUTTONS = { '': ['✅ Let them in', '❌ Decline'], m: ['✅ Approve', '❌ Decline'], p: ['✅ Accept', '❌ Decline'] };
+const FOOTER = { m: 'Valid for 24 hours', p: 'Valid for 7 days' };
+
 // The approval request. `token` is the single-use approval token; it rides in the button ids.
-// `prefix` 'm' marks a material gate pass (buttons Approve / Decline, link valid 24 hours).
 async function sendApproval(to, text, token, photoPath, prefix = '') {
+  const [yes, no] = BUTTONS[prefix] || BUTTONS[''];
   let header;
   if (photoPath) {
     try { header = { type: 'image', image: { id: await uploadJpeg(photoPath) } }; } catch (err) { console.error('[whatsapp] photo upload failed:', err.message); }
@@ -51,11 +55,11 @@ async function sendApproval(to, text, token, photoPath, prefix = '') {
       type: 'button',
       ...(header ? { header } : {}),
       body: { text: text.slice(0, 1024) },
-      footer: { text: prefix ? 'Valid for 24 hours' : `Valid for ${config.approvalTtlMinutes} min` },
+      footer: { text: FOOTER[prefix] || `Valid for ${config.approvalTtlMinutes} min` },
       action: {
         buttons: [
-          { type: 'reply', reply: { id: `${prefix}a:${token}`, title: prefix ? '✅ Approve' : '✅ Let them in' } },
-          { type: 'reply', reply: { id: `${prefix}r:${token}`, title: '❌ Decline' } },
+          { type: 'reply', reply: { id: `${prefix}a:${token}`, title: yes } },
+          { type: 'reply', reply: { id: `${prefix}r:${token}`, title: no } },
         ],
       },
     },

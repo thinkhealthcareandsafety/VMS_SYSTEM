@@ -15,6 +15,7 @@ const email = require('../services/email');
 const passes = require('../services/passes');
 const gate = require('../services/gate');
 const vault = require('../services/vault');
+const overstay = require('../services/overstay');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
@@ -65,6 +66,8 @@ const publicVisit = (v, host, withMobile = false) => ({
   checkedOutAt: v.checkedOutAt,
   validity: passes.validityLabel(v.validity),
   validUntil: v.validUntil ?? null,
+  extensions: (v.extensions || []).map((x) => ({ at: x.at, from: x.from, to: x.to, by: x.byName, note: x.note || '' })),
+  overstay: v.overstay?.ackAt || v.overstay?.escalatedAt ? { ackAt: v.overstay.ackAt || null, ackBy: v.overstay.ackByName || '', ackNote: v.overstay.ackNote || '', escalatedAt: v.overstay.escalatedAt || null } : null,
   groupId: v.group ? String(v.group) : null,
   passCode: ['approved', 'away'].includes(v.status) ? v.passCode ?? null : null,
   ...passes.entryExit(v),
@@ -418,6 +421,57 @@ router.get('/queue', requireRole('guard', 'admin'), async (req, res) => {
   res.json({
     rows: visits.map((v) => ({ ...publicVisit(v, v.host), createdAt: v.createdAt, smsStatus: sms.get(String(v._id))?.status || null })),
   });
+});
+
+// Still inside after the pass ended: the pop-up on the guard desk and the admin console.
+router.get('/overstays', requireRole('guard', 'admin'), async (req, res) => {
+  res.json({ rows: await overstay.list(), escalateAfterMinutes: overstay.ESCALATE_AFTER_MIN });
+});
+
+// The guard has seen it and is on it (calling the host, going to look). Recorded once, with their name.
+router.post('/:id/overstay-ack', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const now = new Date();
+  const note = cleanText(req.body?.note, 120);
+  const v = await Visit.findOneAndUpdate(
+    { _id: req.params.id, ...overstay.query(now), 'overstay.ackAt': { $exists: false } },
+    { $set: { 'overstay.ackAt': now, 'overstay.ackBy': req.user.id, 'overstay.ackByName': req.user.fullName, 'overstay.ackNote': note } },
+    { new: true },
+  ).populate('host').lean();
+  if (!v) {
+    const cur = await Visit.findById(req.params.id, 'status validUntil overstay').lean();
+    if (cur?.overstay?.ackAt && cur.status === 'approved') return res.json({ ok: true, already: true, by: cur.overstay.ackByName });
+    return res.status(409).json({ error: 'This visitor is no longer past their pass (checked out or extended).' });
+  }
+  audit(req.user, 'visit.overstay_acknowledged', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, ...(note ? { note } : {}) }, ip: req.ip });
+  res.json({ ok: true, row: overstay.rowOf(v) });
+});
+
+// More time on the pass, for someone inside or a pass holder who is out. Anyone past their pass is no longer
+// flagged once it is extended. A pass extended to a later day stays open at exit, like any multi-day pass.
+router.post('/:id/extend', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const cur = await Visit.findById(req.params.id, 'status validity validUntil ref group').lean();
+  if (!cur || !['approved', 'away'].includes(cur.status)) return res.status(409).json({ error: 'Only a visitor inside, or holding a pass, can have it extended' });
+  if (cur.group) return res.status(409).json({ error: 'Event passes run for the event’s dates. Change the event instead.' });
+  const now = new Date();
+  if (cur.status === 'away' && (!cur.validUntil || new Date(cur.validUntil) <= now)) return res.status(409).json({ error: 'This pass has ended. Check the visitor in again for a new pass.' });
+  const { until, error } = passes.extendedUntil(cur.validUntil, req.body, now);
+  if (error) return res.status(400).json({ error });
+  const note = cleanText(req.body?.note, 120);
+  const lastDay = siteDay(until);
+  const validity = lastDay > siteDay(now) && !passes.staysOpen(cur.validity, until, now) ? `date:${lastDay}` : cur.validity;
+  const v = await Visit.findOneAndUpdate(
+    { _id: cur._id, status: cur.status, validUntil: cur.validUntil },
+    {
+      $set: { validUntil: until, validity }, $unset: { overstay: 1 },
+      $push: { extensions: { at: now, from: cur.validUntil, to: until, by: req.user.id, byName: req.user.fullName, ...(note ? { note } : {}) } },
+    },
+    { new: true },
+  ).populate('host').lean();
+  if (!v) return res.status(409).json({ error: 'This pass just changed. Open it again.' });
+  audit(req.user, 'visit.pass_extended', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, from: cur.validUntil, to: until, ...(note ? { note } : {}) }, ip: req.ip });
+  res.json(publicVisit(v, v.host));
 });
 
 router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {

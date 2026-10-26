@@ -1,87 +1,81 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Camera, Check, CheckCircle2, Download, LogIn, LogOut, Package, Plus,
-  RotateCcw, Search, Send, Trash2, Truck, Undo2, X,
+  AlertTriangle, ArrowDownToLine, Check, CheckCircle2, Download, FileText, Loader2, LogIn, LogOut, Package, Plus, ScanText, Search, Trash2, Truck, X,
 } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, fmtMobile, today } from '../api.js';
-import HostPicker from './HostPicker.jsx';
-import ImageViewer from './ImageViewer.jsx';
+import { api, fmtDateTime, fmtMobile } from '../api.js';
+import { PhotoPicker, PhotoRow } from './Photos.jsx';
+import { readInvoice, warmUpInvoiceReader } from '../lib/invoiceRead.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
-// Material at the gate: what comes in (deliveries, contractor tools) and goes out on a gate pass (returnable or
-// not, approved by a head first). One board for the guard desk and the admin console; admins also decide and export.
+// The material inward register. A vendor arrives: the guard photographs the invoice or challan (its details are read
+// on the device and checked by the guard), or types the supplier in when there is none. When the vendor leaves, the
+// guard photographs the invoice as the hotel stamped it and records what was accepted; the rest went back with them.
+// Outward gate passes are not handled here: the hotel's own gate pass system does that.
 const UNITS = ['nos', 'pcs', 'box', 'carton', 'set', 'pair', 'kg', 'g', 'litre', 'ml', 'metre', 'roll', 'bag', 'drum', 'bundle', 'packet'];
-const TONE = {
-  pending: 'badge-warn', approved: 'badge-live', rejected: 'badge-bad', cancelled: '', out: 'badge-ok', partly_returned: 'badge-warn',
-  returned: '', received: 'badge-live', handed_over: '', closed: '',
-};
-const VIEWS = [
-  ['pending', 'Waiting approval'], ['ready', 'Ready to go out'], ['out', 'Out, due back'], ['overdue', 'Overdue'],
-  ['inside', 'Tools inside'], ['inward', 'All inward'], ['outward', 'All outward'],
-];
-const addDays = (ymd, n) => { const t = new Date(`${ymd}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+const VIEWS = [['atgate', 'Vendor inside'], ['today', 'Today'], ['short', 'Part taken back'], ['nodocs', 'No invoice or challan'], ['inward', 'All entries']];
+const READ_LABEL = { company: 'supplier', address: 'address', gstin: 'GSTIN', mobile: 'mobile', invoice: 'invoice no.', challan: 'challan no.' };
+const num = (n) => Math.round(n * 1000) / 1000;
 const itemsLine = (m) => m.items.map((i) => `${i.qty} ${i.unit} ${i.name}`).join(', ');
-const partyLine = (p) => [p?.name, p?.company].filter(Boolean).join(', ');
+const supplier = (p) => p?.company || p?.name || '—';
+const docsLine = (d) => [d?.invoice && `Inv ${d.invoice}`, d?.dc && `Challan ${d.dc}`].filter(Boolean).join(' · ');
 
 export function StatusBadge({ m }) {
-  if (m.overdue) return <span className="badge badge-bad">Overdue</span>;
-  return <span className={`badge ${TONE[m.status] || ''}`}>{m.statusLabel}</span>;
+  if (m.status === 'received') return <span className="badge badge-live">Vendor inside</span>;
+  if (m.status === 'checked_out') return <span className={`badge ${m.takenBack ? 'badge-warn' : 'badge-ok'}`}>{m.takenBack ? 'Checked out · part taken back' : 'Checked out'}</span>;
+  return <span className="badge">{m.statusLabel}</span>;
 }
 
-// ----------------------------------------------------------------------------- the board
+// ----------------------------------------------------------------------------- the register
 export default function MaterialBoard({ admin = false, liveTick = 0 }) {
   const toast = useToast();
-  const [view, setView] = useState(admin ? 'pending' : 'ready');
+  const [view, setView] = useState(admin ? 'today' : 'atgate');
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('');
   const [data, setData] = useState(null);
-  const [form, setForm] = useState(null);       // 'in' | 'out'
+  const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState(null);
 
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 250); return () => clearTimeout(t); }, [q]);
   const load = useCallback(() => {
-    const p = new URLSearchParams({ ...(term ? { q: term } : { view }) });
+    const p = new URLSearchParams(term ? { q: term, view: 'inward' } : { view });
     api(`/api/material?${p}`).then(setData).catch(() => setData({ rows: [], counts: {} }));
   }, [view, term]);
   useEffect(() => { load(); }, [load, liveTick]);
   const c = data?.counts || {};
-  const count = { pending: c.pending, ready: c.ready, out: c.out, overdue: c.overdue, inside: c.inside };
 
   return (
     <section className="panel material-board">
       <div className="toolbar">
-        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pass no., party, item, serial, vehicle, DC / invoice" aria-label="Search material" /></div>
+        <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Entry no., supplier, item, invoice, challan, vehicle, GSTIN" aria-label="Search material" /></div>
         <span className="spacer-x" />
-        <button className="btn btn-sm" onClick={() => setForm('in')}><ArrowDownToLine />Goods coming in</button>
-        <button className="btn btn-sm btn-primary" onClick={() => setForm('out')}><ArrowUpFromLine />Gate pass to send out</button>
-        {admin && <a className="btn btn-sm" href={`/api/material/export.xlsx?${new URLSearchParams(term ? { q: term } : { view })}`}><Download />Excel</a>}
+        <button className="btn btn-sm btn-primary" onClick={() => setAdding(true)}><ArrowDownToLine />Vendor arrived: record goods</button>
+        {admin && <a className="btn btn-sm" href={`/api/material/export.xlsx?${new URLSearchParams(term ? { q: term, view: 'inward' } : { view })}`}><Download />Excel register</a>}
       </div>
       {!term && (
         <div className="material-views" role="tablist" aria-label="Registers">
           {VIEWS.map(([k, l]) => (
-            <button key={k} role="tab" aria-selected={view === k} className={k === 'overdue' && count.overdue ? 'hot' : ''} onClick={() => setView(k)}>
-              {l}{count[k] ? <span className="n">{count[k]}</span> : null}
+            <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}>
+              {l}{c[k] ? <span className="n">{c[k]}</span> : null}
             </button>
           ))}
         </div>
       )}
       {!data ? <div style={{ padding: 18 }}><div className="skeleton" style={{ height: 140, borderRadius: 12 }} /></div> : data.rows.length === 0 ? (
-        <Empty icon={term ? Search : Package} title={term ? 'Nothing matches' : 'Nothing here'}>
-          {term ? 'Try the pass number, the company or a serial number.' : 'Passes appear here as they move through the gate.'}
+        <Empty icon={term ? Search : Package} title={term ? 'Nothing matches' : view === 'atgate' ? 'No vendor inside' : 'Nothing here'}>
+          {term ? 'Try the entry number, the supplier or the invoice number.' : 'Press “Vendor arrived” when goods come in at the gate.'}
         </Empty>
       ) : (
         <ul className="material-list">
           {data.rows.map((m) => (
             <li key={m.id}>
               <button type="button" className="material-row" onClick={() => setOpenId(m.id)}>
-                <span className={`material-dir ${m.direction}`}>{m.direction === 'out' ? <ArrowUpFromLine /> : <ArrowDownToLine />}</span>
+                <span className={`material-dir ${m.direction}`}>{m.status === 'received' ? <LogIn /> : <LogOut />}</span>
                 <span className="material-main">
-                  <span className="material-top"><strong className="mono">{m.number}</strong><span className="faint">{m.kindLabel}</span><StatusBadge m={m} /></span>
+                  <span className="material-top"><strong className="mono">{m.number}</strong><span className="faint">{supplier(m.party)}</span><StatusBadge m={m} /></span>
                   <span className="material-what">{itemsLine(m)}</span>
                   <span className="faint">
-                    {partyLine(m.party)}{m.department ? ` · ${m.department}` : ''}{m.vehicle?.number ? ` · ${m.vehicle.number}` : ''}
-                    {m.returnBy && ['out', 'partly_returned', 'approved', 'pending'].includes(m.status) ? ` · back by ${fmtDate(`${m.returnBy}T12:00:00+05:30`)}` : ''}
-                    {` · ${fmtDateTime(m.createdAt)}`}
+                    {docsLine(m.docs) || 'No invoice or challan'}{m.department ? ` · ${m.department}` : ''}{m.vehicle?.number ? ` · ${m.vehicle.number}` : ''}
+                    {` · in ${fmtDateTime(m.createdAt)}`}{m.checkedOutAt ? ` · out ${fmtDateTime(m.checkedOutAt)}` : ''}
                   </span>
                 </span>
               </button>
@@ -89,101 +83,125 @@ export default function MaterialBoard({ admin = false, liveTick = 0 }) {
           ))}
         </ul>
       )}
-      <MaterialForm direction={form} admin={admin} units={data?.units || UNITS} onClose={() => setForm(null)}
-        onDone={(m) => {
-          setForm(null);
-          toast(m.direction === 'in' ? `${m.number} recorded.` : m.status === 'approved' ? `${m.number} approved.` : m.approvalSentBy ? `${m.number} sent to ${m.approver?.name} for approval.` : `${m.number} raised. ${m.approver?.name} cannot be reached by WhatsApp, Telegram or email: an admin must approve it.`, m.direction === 'out' && !m.approvalSentBy && m.status === 'pending' ? 'info' : 'ok');
-          load();
-          setOpenId(m.id);
-        }} />
-      <MaterialDetail id={openId} admin={admin} liveTick={liveTick} onClose={() => setOpenId(null)} onChanged={load} />
+      <InwardForm open={adding} units={data?.units || UNITS} onClose={() => setAdding(false)}
+        onDone={(m) => { setAdding(false); toast(`${m.number} recorded. When the vendor leaves, open it and press Check out vendor.`); load(); setOpenId(m.id); }} />
+      <MaterialDetail id={openId} liveTick={liveTick} onClose={() => setOpenId(null)} onChanged={load} />
     </section>
   );
 }
 
-// ----------------------------------------------------------------------------- photos (taken or chosen, kept small)
-function shrink(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const s = Math.min(1, 1600 / Math.max(img.width, img.height));
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
-      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-      URL.revokeObjectURL(url);
-      resolve(cv.toDataURL('image/jpeg', 0.8));
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That image could not be read')); };
-    img.src = url;
-  });
-}
+// ----------------------------------------------------------------------------- goods coming in
+const blankItem = () => ({ code: '', name: '', qty: '1', unit: 'nos' });
+const blank = () => ({
+  items: [blankItem()], party: { company: '', name: '', address: '', mobile: '', gstin: '' }, docs: { invoice: '', dc: '' },
+  department: '', vehicle: { number: '', driver: '' }, note: '',
+});
 
-// ----------------------------------------------------------------------------- new pass / entry
-const blankItem = () => ({ name: '', qty: '1', unit: 'nos', serial: '' });
-function MaterialForm({ direction, admin, units, onClose, onDone }) {
-  const open = Boolean(direction);
-  const [f, setF] = useState(null);
-  const [approver, setApprover] = useState(null);
+function InwardForm({ open, units, onClose, onDone }) {
+  const [f, setF] = useState(blank);
+  const [docPhotos, setDocPhotos] = useState([]);
   const [photos, setPhotos] = useState([]);
+  const [reading, setReading] = useState(null); // null | 'busy' | { found: [...] } | { error }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const fileRef = useRef(null);
+  const readFor = useRef(null);
   useEffect(() => {
     if (!open) return;
-    setF({
-      kind: direction === 'out' ? 'returnable' : 'delivery', items: [blankItem()], party: { name: '', company: '', mobile: '' }, department: '', purpose: '', note: '',
-      vehicle: { number: '', driver: '', driverMobile: '', transporter: '' }, docs: { dc: '', invoice: '', po: '', eway: '' }, returnBy: addDays(today(), 7), approveNow: false,
-    });
-    setApprover(null); setPhotos([]); setErr('');
-  }, [open, direction]);
-  if (!open || !f) return <Modal open={false} onClose={onClose} label="Material" />;
+    setF(blank()); setDocPhotos([]); setPhotos([]); setReading(null); setErr('');
+    warmUpInvoiceReader();
+  }, [open]);
 
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const setIn = (k, sub, v) => setF((x) => ({ ...x, [k]: { ...x[k], [sub]: v } }));
   const setItem = (i, k, v) => setF((x) => ({ ...x, items: x.items.map((it, j) => (j === i ? { ...it, [k]: v } : it)) }));
-  const out = direction === 'out';
-  const addPhoto = async (file) => {
-    if (!file) return;
-    try { const d = await shrink(file); setPhotos((p) => [...p, d].slice(0, 3)); } catch (e) { setErr(e.message); }
+
+  // Reads the invoice photo on this device and fills only the fields the guard has not typed.
+  const read = async (src) => {
+    readFor.current = src;
+    setReading('busy');
+    try {
+      const r = await readInvoice(src);
+      if (readFor.current !== src) return;
+      const found = [];
+      setF((x) => {
+        const n = { ...x, party: { ...x.party }, docs: { ...x.docs } };
+        const fill = (obj, key, val, label) => { if (val && !obj[key]) { obj[key] = val; found.push(label); } };
+        fill(n.party, 'company', r.company, READ_LABEL.company);
+        fill(n.party, 'address', r.address, READ_LABEL.address);
+        fill(n.party, 'gstin', r.gstin, READ_LABEL.gstin);
+        fill(n.party, 'mobile', r.mobile, READ_LABEL.mobile);
+        fill(n.docs, 'invoice', r.invoice, READ_LABEL.invoice);
+        fill(n.docs, 'dc', r.challan, READ_LABEL.challan);
+        return n;
+      });
+      setReading({ found });
+    } catch {
+      if (readFor.current === src) setReading({ error: true });
+    }
   };
+  const onDocPhotos = (next) => {
+    const first = !docPhotos.length && next.length;
+    setDocPhotos(next);
+    if (first) read(next[0]);
+    if (!next.length) setReading(null);
+  };
+
+  const ready = f.items.some((it) => it.name.trim()) && (f.party.company.trim() || f.party.name.trim());
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true); setErr('');
     try {
-      const body = {
-        ...f, direction, approverId: approver?.id, photos,
-        items: f.items.filter((it) => it.name.trim()).map((it) => ({ ...it, qty: Number(it.qty) })),
-        returnBy: f.kind === 'returnable' ? f.returnBy : undefined,
-        party: { ...f.party, mobile: f.party.mobile || undefined }, vehicle: { ...f.vehicle, driverMobile: f.vehicle.driverMobile || undefined },
-      };
-      onDone(await api('/api/material', { method: 'POST', body }));
+      onDone(await api('/api/material', {
+        method: 'POST',
+        body: {
+          ...f, direction: 'in', kind: 'delivery', photos, docPhotos,
+          items: f.items.filter((it) => it.name.trim()).map((it) => ({ ...it, qty: Number(it.qty) })),
+          party: { ...f.party, mobile: f.party.mobile || undefined },
+        },
+      }));
     } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
 
   return (
-    <Modal open={open} onClose={onClose} className="dialog dialog-wide" label={out ? 'Gate pass to send out' : 'Goods coming in'}>
+    <Modal open={open} onClose={onClose} className="dialog dialog-wide" label="Goods coming in">
       <form onSubmit={submit}>
         <div className="dialog-head">
-          <h2>{out ? 'Gate pass to send material out' : 'Goods coming in'}</h2>
-          <p>{out ? 'The head of department approves it on WhatsApp or Telegram; the gate lets it out only after that.' : 'Recorded with this gate, your name and the time.'}</p>
+          <h2>Goods coming in</h2>
+          <p>Photograph the invoice or challan first: the details fill in by themselves. No invoice? Type the supplier’s details.</p>
         </div>
         <div className="dialog-body">
-          <div className="seg" role="radiogroup" aria-label="Type">
-            {(out ? [['returnable', 'Returnable (comes back)'], ['non_returnable', 'Non-returnable']] : [['delivery', 'Delivery'], ['returnable_in', 'Tools brought in (go back out)']]).map(([k, l]) => (
-              <button type="button" key={k} role="radio" aria-checked={f.kind === k} aria-pressed={f.kind === k} onClick={() => set('kind', k)}>{l}</button>
-            ))}
+          <div className="field">
+            <span>Invoice or challan <span className="faint">· printed or handwritten, up to 4 photos</span></span>
+            <PhotoPicker photos={docPhotos} onChange={onDocPhotos} max={4} addLabel="Photo of invoice" onError={setErr} />
+            {reading === 'busy' && <div className="read-state"><Loader2 className="spin" />Reading the invoice on this device…</div>}
+            {reading?.found && (reading.found.length
+              ? <div className="read-state ok"><CheckCircle2 />Filled in: {reading.found.join(', ')}. Check them against the paper.</div>
+              : <div className="read-state"><ScanText />Nothing could be read clearly. Type the details below.</div>)}
+            {reading?.error && <div className="read-state"><AlertTriangle />This device could not read the photo. Type the details below.</div>}
+            {docPhotos.length > 0 && reading !== 'busy' && <button type="button" className="btn btn-ghost btn-sm" style={{ justifySelf: 'start' }} onClick={() => read(docPhotos[docPhotos.length - 1])}><ScanText />Read the last photo again</button>}
+          </div>
+
+          <div className="grid-2">
+            <label className="field"><span>Supplier / company</span><input className="input" value={f.party.company} onChange={(e) => setIn('party', 'company', e.target.value)} placeholder="As on the invoice" maxLength={100} /></label>
+            <label className="field"><span>Delivered by (name) <span className="faint">· optional</span></span><input className="input" value={f.party.name} onChange={(e) => setIn('party', 'name', e.target.value)} maxLength={80} /></label>
+            <label className="field"><span>Mobile <span className="faint">· optional</span></span><input className="input num" inputMode="numeric" value={f.party.mobile} onChange={(e) => setIn('party', 'mobile', e.target.value)} maxLength={15} /></label>
+            <label className="field"><span>GSTIN <span className="faint">· optional</span></span><input className="input mono" value={f.party.gstin} onChange={(e) => setIn('party', 'gstin', e.target.value.toUpperCase())} placeholder="07AABCU9603R1ZM" maxLength={15} /></label>
+          </div>
+          <label className="field"><span>Address <span className="faint">· optional</span></span><input className="input" value={f.party.address} onChange={(e) => setIn('party', 'address', e.target.value)} maxLength={200} /></label>
+          <div className="grid-2">
+            <label className="field"><span>Invoice no. <span className="faint">· optional</span></span><input className="input mono" value={f.docs.invoice} onChange={(e) => setIn('docs', 'invoice', e.target.value)} maxLength={40} /></label>
+            <label className="field"><span>Challan no. <span className="faint">· optional</span></span><input className="input mono" value={f.docs.dc} onChange={(e) => setIn('docs', 'dc', e.target.value)} maxLength={40} /></label>
           </div>
 
           <div className="field">
-            <span>Items</span>
+            <span>Goods</span>
             <div className="items-editor">
               {f.items.map((it, i) => (
                 <div className="item-row" key={i}>
-                  <input className="input" placeholder="Item, e.g. Split AC compressor" value={it.name} onChange={(e) => setItem(i, 'name', e.target.value)} maxLength={120} aria-label={`Item ${i + 1}`} />
+                  <input className="input mono" placeholder="Item no." value={it.code} onChange={(e) => setItem(i, 'code', e.target.value)} maxLength={30} aria-label={`Item ${i + 1} number`} />
+                  <input className="input" placeholder="Goods, e.g. Tomatoes" value={it.name} onChange={(e) => setItem(i, 'name', e.target.value)} maxLength={120} aria-label={`Item ${i + 1}`} />
                   <input className="input num" type="number" min="0" step="any" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} aria-label="Quantity" />
                   <select className="select" value={it.unit} onChange={(e) => setItem(i, 'unit', e.target.value)} aria-label="Unit">{units.map((u) => <option key={u}>{u}</option>)}</select>
-                  <input className="input" placeholder="Serial / tag" value={it.serial} onChange={(e) => setItem(i, 'serial', e.target.value)} maxLength={60} aria-label="Serial or asset tag" />
                   <button type="button" className="btn btn-ghost btn-sm btn-icon" disabled={f.items.length === 1} onClick={() => set('items', f.items.filter((_, j) => j !== i))} aria-label="Remove item"><Trash2 /></button>
                 </div>
               ))}
@@ -192,139 +210,84 @@ function MaterialForm({ direction, admin, units, onClose, onDone }) {
           </div>
 
           <div className="grid-2">
-            <label className="field"><span>{out ? 'Taken by (name)' : 'Brought by (name)'}</span><input className="input" value={f.party.name} onChange={(e) => setIn('party', 'name', e.target.value)} maxLength={80} /></label>
-            <label className="field"><span>{out ? 'Company / sent to' : 'Supplier / company'}</span><input className="input" value={f.party.company} onChange={(e) => setIn('party', 'company', e.target.value)} maxLength={100} /></label>
-            <label className="field"><span>Their mobile <span className="faint">· optional</span></span><input className="input num" inputMode="numeric" value={f.party.mobile} onChange={(e) => setIn('party', 'mobile', e.target.value)} maxLength={15} /></label>
-            <label className="field"><span>Department</span><input className="input" value={f.department} onChange={(e) => set('department', e.target.value)} placeholder="Engineering, Housekeeping, Kitchen…" maxLength={60} /></label>
+            <label className="field"><span>For department <span className="faint">· optional</span></span><input className="input" value={f.department} onChange={(e) => set('department', e.target.value)} placeholder="Kitchen, Engineering, Stores…" maxLength={60} /></label>
+            <label className="field"><span>Vehicle no. <span className="faint">· optional</span></span><input className="input mono" value={f.vehicle.number} onChange={(e) => setIn('vehicle', 'number', e.target.value.toUpperCase())} placeholder="DL 1L AB 1234" maxLength={20} /></label>
           </div>
-          <label className="field"><span>Purpose <span className="faint">· optional</span></span><input className="input" value={f.purpose} onChange={(e) => set('purpose', e.target.value)} placeholder={out ? 'Repair, servicing, scrap sale, transfer…' : 'Purchase order supply, sample…'} maxLength={120} /></label>
-          {f.kind === 'returnable' && (
-            <label className="field" style={{ maxWidth: 240 }}><span>Must come back by</span><input className="input" type="date" min={today()} value={f.returnBy} onChange={(e) => set('returnBy', e.target.value)} /></label>
-          )}
-
-          <details className="more-fields">
-            <summary><Truck size={15} /> Vehicle and documents <span className="faint">· optional</span></summary>
-            <div className="grid-2">
-              <label className="field"><span>Vehicle number</span><input className="input mono" value={f.vehicle.number} onChange={(e) => setIn('vehicle', 'number', e.target.value.toUpperCase())} placeholder="MH 12 AB 1234" maxLength={20} /></label>
-              <label className="field"><span>Driver</span><input className="input" value={f.vehicle.driver} onChange={(e) => setIn('vehicle', 'driver', e.target.value)} maxLength={80} /></label>
-              <label className="field"><span>Driver mobile</span><input className="input num" inputMode="numeric" value={f.vehicle.driverMobile} onChange={(e) => setIn('vehicle', 'driverMobile', e.target.value)} maxLength={15} /></label>
-              <label className="field"><span>Transporter</span><input className="input" value={f.vehicle.transporter} onChange={(e) => setIn('vehicle', 'transporter', e.target.value)} maxLength={80} /></label>
-              <label className="field"><span>Delivery challan no.</span><input className="input mono" value={f.docs.dc} onChange={(e) => setIn('docs', 'dc', e.target.value)} maxLength={40} /></label>
-              <label className="field"><span>Invoice no.</span><input className="input mono" value={f.docs.invoice} onChange={(e) => setIn('docs', 'invoice', e.target.value)} maxLength={40} /></label>
-              <label className="field"><span>PO no.</span><input className="input mono" value={f.docs.po} onChange={(e) => setIn('docs', 'po', e.target.value)} maxLength={40} /></label>
-              <label className="field"><span>E-way bill no.</span><input className="input mono" value={f.docs.eway} onChange={(e) => setIn('docs', 'eway', e.target.value)} maxLength={40} /></label>
-            </div>
-          </details>
-
           <div className="field">
-            <span>Photos <span className="faint">· material, challan, vehicle (up to 3)</span></span>
-            <div className="photo-strip">
-              {photos.map((p, i) => (
-                <span key={i} className="photo-thumb"><img src={p} alt={`Photo ${i + 1}`} /><button type="button" onClick={() => setPhotos(photos.filter((_, j) => j !== i))} aria-label="Remove photo"><X /></button></span>
-              ))}
-              {photos.length < 3 && <button type="button" className="photo-add" onClick={() => fileRef.current?.click()}><Camera />Add photo</button>}
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { addPhoto(e.target.files[0]); e.target.value = ''; }} />
-            </div>
+            <span>Photos of the goods <span className="faint">· optional, up to 3</span></span>
+            <PhotoPicker photos={photos} onChange={setPhotos} max={3} onError={setErr} />
           </div>
-
-          {out && (
-            <>
-              <div className="field"><span>Approved by (head of department)</span><HostPicker value={approver} onChange={setApprover} /></div>
-              {admin && (
-                <label className="checkbox" style={{ fontSize: 14 }}>
-                  <input type="checkbox" checked={f.approveNow} onChange={(e) => set('approveNow', e.target.checked)} />
-                  <span>I approve it now, on the head’s behalf <span className="faint">(recorded with your name)</span></span>
-                </label>
-              )}
-            </>
-          )}
+          <label className="field"><span>Remarks <span className="faint">· optional</span></span><input className="input" value={f.note} onChange={(e) => set('note', e.target.value)} maxLength={300} /></label>
           {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
         </div>
         <div className="dialog-foot">
+          {!ready && <span className="faint foot-hint">Enter the supplier and at least one item to record it.</span>}
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || !f.items.some((it) => it.name.trim()) || (out && !approver)}>
-            {busy ? <Spinner /> : out ? <Send /> : <Check />}{out ? (f.approveNow ? 'Raise approved pass' : 'Send for approval') : 'Record entry'}
-          </button>
+          <button className="btn btn-primary" disabled={busy || !ready}>{busy ? <Spinner /> : <Check />}Record entry</button>
         </div>
       </form>
     </Modal>
   );
 }
 
-// ----------------------------------------------------------------------------- one pass
-function MaterialDetail({ id, admin, liveTick, onClose, onChanged }) {
+// ----------------------------------------------------------------------------- one entry
+function MaterialDetail({ id, liveTick, onClose, onChanged }) {
   const toast = useToast();
   const [m, setM] = useState(null);
-  const [busy, setBusy] = useState('');
-  const [returning, setReturning] = useState(false);
-  const [handTo, setHandTo] = useState('');
-  const [zoom, setZoom] = useState(null);
-  const [confirm, setConfirm] = useState('');
+  const [leaving, setLeaving] = useState(false);
   const load = useCallback(() => { if (id) api(`/api/material/${id}`).then(setM).catch((e) => toast(e.message, 'bad')); }, [id, toast]);
-  useEffect(() => { setM(null); setReturning(false); setHandTo(''); setConfirm(''); load(); }, [load]);
+  useEffect(() => { setM(null); setLeaving(false); load(); }, [load]);
   useEffect(() => { if (id && liveTick) load(); }, [liveTick]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const act = async (path, body, msg) => {
-    setBusy(path);
-    try { setM(await api(`/api/material/${id}/${path}`, { method: 'POST', body })); toast(msg); setConfirm(''); onChanged(); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(''); }
-  };
-  const decide = async (decision) => {
-    setBusy(decision);
-    try { await api(`/api/material/${id}/decision`, { method: 'POST', body: { decision } }); toast(decision === 'approve' ? 'Approved.' : 'Declined.'); load(); onChanged(); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(''); }
-  };
-  const resend = async () => {
-    setBusy('resend');
-    try { const r = await api(`/api/material/${id}/resend`, { method: 'POST' }); toast(r.approvalSentBy ? `Sent again by ${({ whatsapp: 'WhatsApp', telegram: 'Telegram', email: 'email' })[r.approvalSentBy]}.` : 'The approver cannot be reached by WhatsApp, Telegram or email. An admin must decide.', r.approvalSentBy ? 'ok' : 'info'); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(''); }
-  };
+  const done = m?.status === 'checked_out';
 
   return (
-    <Modal open={Boolean(id)} onClose={onClose} className="drawer" label="Material pass">
+    <Modal open={Boolean(id)} onClose={onClose} className="drawer" label="Material entry">
       <div className="drawer-head">
-        <strong>{m ? `${m.number} · ${m.kindLabel}` : 'Material'}</strong>
+        <strong>{m ? `${m.number} · ${supplier(m.party)}` : 'Material'}</strong>
         <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose} aria-label="Close"><X /></button>
       </div>
       <div className="drawer-body">
         {!m ? <div className="skeleton" style={{ height: 200, borderRadius: 12 }} /> : (
           <>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <StatusBadge m={m} />
-              {m.returnBy && <span className={`badge ${m.overdue ? 'badge-bad' : ''}`}>Back by {fmtDate(`${m.returnBy}T12:00:00+05:30`)}</span>}
-            </div>
-            {m.status === 'pending' && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Waiting for {m.approver?.name || 'the approver'}. Do not let this material out yet.</span></div>}
-            {m.status === 'rejected' && <div className="alert alert-bad"><X /><span className="grow">Declined by {m.decidedBy}{m.decisionNote ? `: ${m.decisionNote}` : ''}. Do not let this material out.</span></div>}
-            {m.status === 'approved' && <div className="alert alert-ok"><CheckCircle2 /><span className="grow">Approved by {m.decidedBy}. Check the items below against the material, then let it out.</span></div>}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><StatusBadge m={m} /></div>
+            {m.status === 'received' && !leaving && <div className="alert"><LogOut /><span className="grow">When the vendor leaves, press <strong>Check out vendor</strong>: photograph the invoice as the hotel stamped it and enter what was accepted.</span></div>}
 
             <table className="table items-table">
-              <thead><tr><th>Item</th><th className="r">Qty</th>{m.kind === 'returnable' && <th className="r">Back</th>}<th>Serial / tag</th></tr></thead>
+              <thead><tr><th>Item no.</th><th>Goods</th><th className="r">Came in</th>{done && <th className="r">Accepted</th>}{done && <th className="r">Taken back</th>}</tr></thead>
               <tbody>
-                {m.items.map((i) => (
-                  <tr key={i.id}>
-                    <td>{i.name}</td><td className="r num">{i.qty} {i.unit}</td>
-                    {m.kind === 'returnable' && <td className={`r num ${i.returnedQty < i.qty ? 'tone-warn' : ''}`}>{i.returnedQty}</td>}
-                    <td className="mono">{i.serial || <span className="faint">—</span>}</td>
-                  </tr>
-                ))}
+                {m.items.map((i) => {
+                  const back = i.acceptedQty == null ? 0 : num(i.qty - i.acceptedQty);
+                  return (
+                    <tr key={i.id}>
+                      <td className="mono">{i.code || <span className="faint">—</span>}</td><td>{i.name}</td><td className="r num">{i.qty} {i.unit}</td>
+                      {done && <td className="r num">{i.acceptedQty ?? i.qty} {i.unit}</td>}
+                      {done && <td className={`r num ${back > 0 ? 'tone-warn' : ''}`}>{back > 0 ? `${back} ${i.unit}` : '—'}</td>}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
             <dl className="dl">
-              <dt>{m.direction === 'out' ? 'Going to' : 'From'}</dt><dd>{partyLine(m.party) || '—'}{m.party?.mobile ? ` · ${fmtMobile(m.party.mobile)}` : ''}</dd>
-              {m.department && <><dt>Department</dt><dd>{m.department}</dd></>}
-              {m.purpose && <><dt>Purpose</dt><dd>{m.purpose}</dd></>}
-              {m.approver && <><dt>Approver</dt><dd>{m.approver.name}, {m.approver.unit}</dd></>}
-              {m.decidedBy && <><dt>Decided</dt><dd>{m.decidedBy} · {fmtDateTime(m.decidedAt)}</dd></>}
-              {(m.vehicle?.number || m.vehicle?.driver) && <><dt>Vehicle</dt><dd>{[m.vehicle.number, m.vehicle.driver, m.vehicle.driverMobile && fmtMobile(m.vehicle.driverMobile), m.vehicle.transporter].filter(Boolean).join(' · ')}</dd></>}
-              {Object.values(m.docs || {}).some(Boolean) && <><dt>Documents</dt><dd className="mono">{[m.docs.dc && `DC ${m.docs.dc}`, m.docs.invoice && `Inv ${m.docs.invoice}`, m.docs.po && `PO ${m.docs.po}`, m.docs.eway && `EWB ${m.docs.eway}`].filter(Boolean).join(' · ')}</dd></>}
+              <dt>Supplier</dt><dd>{supplier(m.party)}{m.party?.company && m.party?.name ? ` · ${m.party.name}` : ''}{m.party?.mobile ? ` · ${fmtMobile(m.party.mobile)}` : ''}</dd>
+              {m.party?.address && <><dt>Address</dt><dd>{m.party.address}</dd></>}
+              {m.party?.gstin && <><dt>GSTIN</dt><dd className="mono">{m.party.gstin}</dd></>}
+              <dt>Invoice / challan</dt><dd className="mono">{docsLine(m.docs) || <span className="faint">None given</span>}</dd>
+              {m.department && <><dt>For</dt><dd>{m.department}</dd></>}
+              {m.vehicle?.number && <><dt>Vehicle</dt><dd className="mono">{m.vehicle.number}{m.vehicle.driver ? ` · ${m.vehicle.driver}` : ''}</dd></>}
+              {m.note && <><dt>Remarks</dt><dd>{m.note}</dd></>}
+              <dt>Recorded</dt><dd>{m.createdBy} · {fmtDateTime(m.createdAt)}</dd>
+              {m.receivedBy && <><dt>Received by</dt><dd>{[m.receivedBy.department, m.receivedBy.name].filter(Boolean).join(' · ')}</dd></>}
+              {m.exitNote && <><dt>At checkout</dt><dd>{m.exitNote}</dd></>}
               {m.handedTo && <><dt>Handed to</dt><dd>{m.handedTo} · {fmtDateTime(m.handedAt)}</dd></>}
-              <dt>Raised</dt><dd>{m.createdBy} · {fmtDateTime(m.createdAt)}</dd>
             </dl>
 
-            {m.photos.length > 0 && (
-              <div className="photo-strip">{m.photos.map((src, i) => <button type="button" key={src} className="photo-thumb" onClick={() => setZoom(src)}><img src={src} alt={`Photo ${i + 1}`} /></button>)}</div>
-            )}
+            {m.docPhotos.length > 0 && <div><h3 className="section-title"><FileText size={15} /> Invoice / challan as it came</h3><PhotoRow srcs={m.docPhotos} title={m.number} label="Invoice" /></div>}
+            {m.exitPhotos.length > 0 && <div><h3 className="section-title"><FileText size={15} /> Invoice as stamped by the hotel</h3><PhotoRow srcs={m.exitPhotos} title={m.number} label="Stamped invoice" /></div>}
+            {m.photos.length > 0 && <div><h3 className="section-title"><Package size={15} /> Goods</h3><PhotoRow srcs={m.photos} title={m.number} label="Goods" /></div>}
             {m.movements.length > 0 && (
               <div>
-                <h3 className="section-title">Through the gate</h3>
+                <h3 className="section-title"><Truck size={15} /> Through the gate</h3>
                 <ol className="moves">
                   {m.movements.map((x, i) => (
                     <li key={i} className={`move move-${x.kind}`}>
@@ -336,55 +299,64 @@ function MaterialDetail({ id, admin, liveTick, onClose, onChanged }) {
                 </ol>
               </div>
             )}
-
-            {returning && <ReturnForm m={m} busy={busy === 'return'} onCancel={() => setReturning(false)} onSave={(items, note) => act('return', { items, note }, 'Return recorded.').then(() => setReturning(false))} />}
-            {m.kind === 'delivery' && m.status === 'received' && (
-              <div className="field">
-                <span>Hand over to (stores / receiving)</span>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input className="input" value={handTo} onChange={(e) => setHandTo(e.target.value)} placeholder="Name of the person who took it" maxLength={80} />
-                  <button className="btn" disabled={busy || handTo.trim().length < 2} onClick={() => act('hand-over', { to: handTo }, 'Handed over.')}><Check />Done</button>
-                </div>
-              </div>
-            )}
+            {leaving && <CheckoutForm m={m} onCancel={() => setLeaving(false)} onDone={(next) => { setM(next); setLeaving(false); onChanged(); toast(next.takenBack ? `${next.number}: vendor checked out with part of the goods.` : `${next.number}: vendor checked out.`); }} />}
           </>
         )}
       </div>
-      {m && (
+      {m && m.status === 'received' && m.kind === 'delivery' && !leaving && (
         <div className="drawer-foot">
-          {admin && m.status === 'pending' && <button className="btn btn-danger-outline" disabled={Boolean(busy)} onClick={() => decide('reject')}><X />Decline</button>}
-          {admin && m.status === 'pending' && <button className="btn btn-success" disabled={Boolean(busy)} onClick={() => decide('approve')}><Check />Approve</button>}
-          {m.status === 'pending' && <button className="btn" disabled={Boolean(busy)} onClick={resend}><RotateCcw />Send again</button>}
-          {['pending', 'approved'].includes(m.status) && (confirm === 'cancel'
-            ? <button className="btn btn-danger" disabled={Boolean(busy)} onClick={() => act('cancel', {}, 'Pass cancelled.')}>Cancel pass?</button>
-            : <button className="btn btn-ghost" onClick={() => setConfirm('cancel')}>Cancel pass</button>)}
-          {((m.status === 'approved') || (m.kind === 'returnable_in' && m.status === 'received')) && (confirm === 'out'
-            ? <button className="btn btn-primary" disabled={Boolean(busy)} onClick={() => act('let-out', {}, `${m.number} let out.`)}>{busy ? <Spinner /> : <CheckCircle2 />}Items checked: let out</button>
-            : <button className="btn btn-primary" onClick={() => setConfirm('out')}><LogOut />Let out</button>)}
-          {m.kind === 'returnable' && ['out', 'partly_returned'].includes(m.status) && !returning && <button className="btn btn-primary" onClick={() => setReturning(true)}><Undo2 />Record return</button>}
+          <button className="btn btn-primary" onClick={() => setLeaving(true)}><LogOut />Check out vendor</button>
         </div>
       )}
-      <ImageViewer open={Boolean(zoom)} onClose={() => setZoom(null)} src={zoom} alt="Material photo" title={m?.number} />
     </Modal>
   );
 }
 
-function ReturnForm({ m, busy, onCancel, onSave }) {
-  const [qty, setQty] = useState(() => Object.fromEntries(m.items.map((i) => [i.id, String(Math.max(0, i.qty - i.returnedQty))])));
+// The vendor leaves: what the hotel accepted (the rest goes back), who received it, and the stamped invoice.
+function CheckoutForm({ m, onCancel, onDone }) {
+  const [kept, setKept] = useState(() => Object.fromEntries(m.items.map((i) => [i.id, String(i.qty)])));
+  const [by, setBy] = useState({ department: m.department || '', name: '' });
+  const [photos, setPhotos] = useState([]);
   const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const bad = m.items.some((i) => kept[i.id] === '' || Number(kept[i.id]) < 0 || Number(kept[i.id]) > i.qty);
+  const ready = !bad && photos.length > 0 && (by.department.trim() || by.name.trim());
+  const save = async () => {
+    setBusy(true); setErr('');
+    try {
+      onDone(await api(`/api/material/${m.id}/checkout`, { method: 'POST', body: { receivedBy: by, items: m.items.map((i) => ({ item: i.id, accepted: Number(kept[i.id]) })), photos, note } }));
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
   return (
     <div className="return-form">
-      <h3 className="section-title">What came back</h3>
-      {m.items.filter((i) => i.returnedQty < i.qty).map((i) => (
-        <label key={i.id} className="return-line">
-          <span className="grow">{i.name}<span className="faint"> · {i.qty - i.returnedQty} {i.unit} still out</span></span>
-          <input className="input num" type="number" min="0" step="any" max={i.qty - i.returnedQty} value={qty[i.id]} onChange={(e) => setQty({ ...qty, [i.id]: e.target.value })} aria-label={`${i.name} returned`} />
-        </label>
-      ))}
-      <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note, e.g. one compressor still under repair" maxLength={200} />
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+      <h3 className="section-title">Check out vendor</h3>
+      <div className="field">
+        <span>Invoice as stamped by the hotel <span className="faint">· required</span></span>
+        <PhotoPicker photos={photos} onChange={setPhotos} max={4} addLabel="Photo of stamped invoice" onError={setErr} />
+      </div>
+      <div className="field">
+        <span>Accepted by the hotel <span className="faint">· the rest goes back with the vendor</span></span>
+        {m.items.map((i) => {
+          const back = num(i.qty - (Number(kept[i.id]) || 0));
+          return (
+            <label key={i.id} className="return-line">
+              <span className="grow">{i.name}<span className="faint"> · {i.qty} {i.unit} came in{back > 0 && kept[i.id] !== '' ? ` · ${back} ${i.unit} goes back` : ''}</span></span>
+              <input className="input num" type="number" min="0" step="any" max={i.qty} value={kept[i.id]} onChange={(e) => setKept({ ...kept, [i.id]: e.target.value })} aria-label={`${i.name} accepted`} aria-invalid={Number(kept[i.id]) > i.qty || undefined} />
+            </label>
+          );
+        })}
+      </div>
+      <div className="grid-2">
+        <label className="field"><span>Received by (department)</span><input className="input" value={by.department} onChange={(e) => setBy({ ...by, department: e.target.value })} maxLength={60} /></label>
+        <label className="field"><span>Received by (name)</span><input className="input" value={by.name} onChange={(e) => setBy({ ...by, name: e.target.value })} maxLength={80} /></label>
+      </div>
+      <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Remarks, e.g. 50 kg tomatoes rejected: not fresh" maxLength={300} />
+      {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+      {!ready && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>{!photos.length ? 'Take a photo of the stamped invoice to finish.' : bad ? 'An accepted quantity is more than came in.' : 'Enter who received it.'}</p>}
+      <div className="row-end">
         <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy} onClick={() => onSave(Object.entries(qty).map(([item, q]) => ({ item, qty: Number(q) || 0 })), note)}>{busy ? <Spinner /> : <Check />}Record return</button>
+        <button className="btn btn-primary" disabled={busy || !ready} onClick={save}>{busy ? <Spinner /> : <CheckCircle2 />}Check out vendor</button>
       </div>
     </div>
   );

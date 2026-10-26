@@ -28,4 +28,6 @@ export const cue = {
   approved: () => { tone([660, 880]); vibrate([60, 40, 60]); },
   rejected: () => { tone([392, 262], 0.2); vibrate(220); },
   expired: () => { tone([523]); vibrate(80); },
+  // Someone is still inside after their pass ended: harder to miss than a host's reply.
+  overstay: () => { tone([880, 660, 880, 660], 0.16); vibrate([200, 80, 200]); },
 };

@@ -1222,7 +1222,7 @@ test('group link: guests add themselves up to a limit, safely; an ended event si
   }
 });
 
-test('material: gate passes approved by the head, let out at the gate, returned in parts; deliveries in and handed over', async () => {
+test('material: gate passes approved by the head (older API); the inward register with invoice photos and the vendor checkout', async () => {
   const ExcelJS = require('exceljs');
   const { Material, Outbox, Audit, ActionToken } = require('../src/models');
   const config = require('../src/config');
@@ -1318,18 +1318,49 @@ test('material: gate passes approved by the head, let out at the gate, returned 
     assert.equal((await Material.findById(viaWa.body.id).lean()).status, 'approved');
   } finally { Object.assign(config.whatsapp, saved); }
 
-  // Inward: a delivery recorded at the gate and handed to stores; contractor tools in, and later out again.
-  const dl = await call('POST', '/api/material', {
-    direction: 'in', kind: 'delivery', party: { company: 'Fresh Farms' }, department: 'Kitchen', docs: { invoice: 'INV-9', po: 'PO-12' },
-    items: [{ name: 'Vegetables', qty: 40, unit: 'kg' }], photos: [jpeg()],
+  // Inward: a delivery comes in with its invoice photographed and the supplier's details.
+  const inward = (body) => call('POST', '/api/material', {
+    direction: 'in', party: { company: 'Fresh Farms', name: 'Ramu', address: 'Azadpur Mandi, Delhi 110033', mobile: '9811100011', gstin: '07aabcu 9603r1zm' },
+    department: 'Kitchen', docs: { invoice: 'INV-9' }, vehicle: { number: 'dl 1l ab 1234' },
+    items: [{ code: 'V-01', name: 'Vegetables', qty: 100, unit: 'kg' }, { name: 'Eggs', qty: 30, unit: 'nos' }], photos: [jpeg()], docPhotos: [jpeg(), jpeg()],
+    ...body,
   }, guard);
-  assert.equal(dl.status, 201);
+  assert.match((await inward({ party: { company: 'X', gstin: 'NOT-A-GSTIN' } })).body.error, /GSTIN/);
+  const dl = await inward({});
+  assert.equal(dl.status, 201, JSON.stringify(dl.body));
   assert.match(dl.body.number, /^IN-\d{6}$/);
+  assert.equal(dl.body.kind, 'delivery', 'inward is a delivery unless said otherwise');
   assert.equal(dl.body.status, 'received');
+  assert.equal(dl.body.party.gstin, '07AABCU9603R1ZM');
+  assert.equal(dl.body.party.address, 'Azadpur Mandi, Delhi 110033');
+  assert.equal(dl.body.items[0].code, 'V-01');
   assert.equal(dl.body.photos.length, 1);
-  assert.equal((await fetch(`${base}${dl.body.photos[0]}`, { headers: { Cookie: guard } })).status, 200);
-  assert.equal((await call('POST', `/api/material/${dl.body.id}/hand-over`, { to: '' }, guard)).status, 400);
-  assert.equal((await call('POST', `/api/material/${dl.body.id}/hand-over`, { to: 'Store keeper Anil' }, guard)).body.status, 'handed_over');
+  assert.equal(dl.body.docPhotos.length, 2);
+  assert.equal((await fetch(`${base}${dl.body.docPhotos[1]}`, { headers: { Cookie: guard } })).status, 200);
+  assert.ok((await call('GET', '/api/material?view=atgate', null, guard)).body.rows.some((r) => r.id === dl.body.id), 'vendor inside until checked out');
+
+  // The vendor leaves: the stamped invoice photographed, who received it, and what the hotel kept; the rest went back.
+  const [veg] = dl.body.items;
+  const checkout = (body) => call('POST', `/api/material/${dl.body.id}/checkout`, { receivedBy: { department: 'Kitchen', name: 'Chef Arjun' }, items: [{ item: veg.id, accepted: 50 }], photos: [jpeg()], note: 'Half the vegetables not fresh', ...body }, guard);
+  assert.match((await checkout({ photos: [] })).body.error, /photo of the invoice/);
+  assert.match((await checkout({ receivedBy: {} })).body.error, /Who received/);
+  assert.match((await checkout({ items: [{ item: veg.id, accepted: 101 }] })).body.error, /only 100 kg came in/);
+  const left = await checkout({});
+  assert.equal(left.status, 200, JSON.stringify(left.body));
+  assert.equal(left.body.status, 'checked_out');
+  assert.equal(left.body.takenBack, true);
+  assert.deepEqual(left.body.items.map((i) => i.acceptedQty), [50, 30], 'an item not listed was kept in full');
+  assert.equal(left.body.exitPhotos.length, 1);
+  assert.equal(left.body.receivedBy.name, 'Chef Arjun');
+  assert.equal(left.body.out.by, 'Gate Guard');
+  assert.equal((await checkout({})).status, 409, 'only once');
+  assert.ok((await call('GET', '/api/material?view=short', null, guard)).body.rows.some((r) => r.id === dl.body.id));
+
+  // No invoice or challan: the supplier typed by hand, and listed apart for the admin.
+  const manual = await inward({ party: { company: 'Local Carpenter', address: 'Saket, Delhi', mobile: '9811100012' }, docs: {}, docPhotos: [] });
+  assert.equal(manual.status, 201);
+  const nodocs = (await call('GET', '/api/material?view=nodocs', null, admin)).body.rows;
+  assert.ok(nodocs.some((r) => r.id === manual.body.id) && !nodocs.some((r) => r.id === dl.body.id));
   const tools = await call('POST', '/api/material', { direction: 'in', kind: 'returnable_in', party: { name: 'Vikas', company: 'BuildCo' }, items: [{ name: 'Drill machine', qty: 1, serial: 'DR-55' }] }, guard);
   assert.equal((await call('GET', '/api/material?view=inside', null, guard)).body.counts.inside, 1);
   assert.equal((await call('POST', `/api/material/${tools.body.id}/let-out`, {}, guard)).body.status, 'closed');
@@ -1337,23 +1368,30 @@ test('material: gate passes approved by the head, let out at the gate, returned 
   // Search and the Excel register (one row per item).
   const found = (await call('GET', '/api/material?q=CMP-2', null, guard)).body.rows;
   assert.ok(found.some((r) => r.id === p.body.id), 'search finds a pass by serial number');
+  assert.ok((await call('GET', '/api/material?q=07AABCU', null, guard)).body.rows.some((r) => r.id === dl.body.id), 'and an entry by GSTIN');
   const xl = await fetch(`${base}/api/material/export.xlsx`, { headers: { Cookie: admin } });
   assert.equal(xl.status, 200);
   assert.equal((await fetch(`${base}/api/material/export.xlsx`, { headers: { Cookie: guard } })).status, 403);
   const book = new ExcelJS.Workbook();
   await book.xlsx.load(Buffer.from(await xl.arrayBuffer()));
-  const ws = book.getWorksheet('Material');
-  const items = [];
-  ws.eachRow((r, i) => { if (i > 1) items.push(r.getCell(6).text); });
-  assert.ok(items.includes('Split AC compressor') && items.includes('Copper pipe') && items.includes('Vegetables'));
+  const ws = book.getWorksheet('Material inward');
+  const lines = [];
+  ws.eachRow((r, i) => { if (i > 1) lines.push({ item: r.getCell(11).text, accepted: r.getCell(14).text, back: r.getCell(15).text }); });
+  assert.ok(lines.some((l) => l.item === 'Vegetables' && l.accepted === '50' && l.back === '50'));
+  assert.ok(!lines.some((l) => l.item === 'Split AC compressor'), 'the inward register only');
 });
 
-test('couriers: logged at the gate, the recipient gets a pickup code, handed over with it or by an audited override', async () => {
+test('couriers: logged with photos, the recipient accepts or declines, handed over against name, number and photo; outgoing per the hotel register', async () => {
   const ExcelJS = require('exceljs');
   const { Parcel, Outbox, Audit } = require('../src/models');
   const config = require('../src/config');
   const { remind } = require('../src/services/parcels');
   const arrive = (body, who = guard) => call('POST', '/api/parcels', { direction: 'in', carrier: 'Blue Dart', pieces: 1, ...body }, who);
+  const tokenOf = async (id) => /\/parcel\/([\w-]+)/.exec((await Outbox.findOne({ parcel: id, kind: 'whatsapp', 'vars.prefix': 'p' }).sort({ _id: -1 }).lean()).body)[1];
+  const tap = (from, id) => fetch(`${base}/api/whatsapp/webhook`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from, id: `w${Math.random()}`, type: 'interactive', interactive: { type: 'button_reply', button_reply: { id } } }] } }] }] }),
+  });
   const saved = { ...config.whatsapp };
   Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
   try {
@@ -1362,103 +1400,126 @@ test('couriers: logged at the gate, the recipient gets a pickup code, handed ove
     assert.equal((await arrive({})).status, 400, 'for whom');
     assert.equal((await arrive({ hostId: hostIds.asha, pieces: 0 })).status, 400);
 
-    // For a host: logged with gate and guard, the notice carries a pickup code that staff never see.
-    const p = await arrive({ hostId: hostIds.asha, awb: 'bd 1234 5678', type: 'document', sender: { company: 'HDFC Bank' }, photos: [jpeg()] });
-    assert.equal(p.status, 201);
+    // For a host: logged with photos, gate and guard; the recipient gets the photo with Accept / Decline. No pickup code.
+    const p = await arrive({ hostId: hostIds.asha, awb: 'bd 1234 5678', type: 'document', sender: { company: 'HDFC Bank' }, photos: [jpeg(), jpeg(), jpeg()] });
+    assert.equal(p.status, 201, JSON.stringify(p.body));
     assert.match(p.body.number, /^PCL-\d{6}$/);
     assert.equal(p.body.awb, 'BD12345678');
     assert.equal(p.body.notifiedVia, 'whatsapp');
-    assert.equal(p.body.hasCode, true);
-    assert.equal(p.body.code, undefined);
+    assert.equal(p.body.photos.length, 3);
+    assert.equal(p.body.response, null);
+    assert.equal(p.body.hasCode, undefined);
     assert.equal(p.body.movements[0].by, 'Gate Guard');
     const job = await Outbox.findOne({ parcel: p.body.id }).lean();
-    assert.equal(job.vars.plain, true);
+    assert.equal(job.vars.prefix, 'p');
     assert.equal(job.to, '+919000000001');
-    const code = /Pickup code: \*(\d{4})\*/.exec(job.body)[1];
-    const raw = await Parcel.findById(p.body.id).lean();
-    assert.ok(raw.codeSealed && !raw.codeSealed.includes(code), 'stored sealed, not readable');
-    assert.equal((await call('GET', `/api/parcels/${p.body.id}`, null, guard)).body.code, undefined);
+    assert.doesNotMatch(job.body, /code/i);
+    const tok = await tokenOf(p.body.id);
+
+    // The recipient's page: the details and the photos the guard took, without a login.
+    const page = await call('GET', `/api/parcel-responses/${tok}`);
+    assert.equal(page.body.state, 'pending');
+    assert.equal(page.body.photos.length, 3);
+    assert.equal((await fetch(`${base}${page.body.photos[0]}`)).status, 200);
+    assert.equal((await call('GET', '/api/parcel-responses/not-a-real-token-at-all-xyz')).status, 404);
+
+    // Only the recipient's own number answers, once.
+    await tap('919111111111', `pa:${tok}`);
+    assert.equal((await Parcel.findById(p.body.id).lean()).response, undefined, 'a stranger cannot accept');
+    await tap('919000000001', `pa:${tok}`);
+    const accepted = (await call('GET', `/api/parcels/${p.body.id}`, null, guard)).body;
+    assert.equal(accepted.response.kind, 'accepted');
+    assert.equal(accepted.response.via, 'whatsapp');
+    assert.equal((await call('POST', `/api/parcel-responses/${tok}/decision`, { decision: 'decline' })).body.state, 'accepted', 'answered once');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(await Audit.exists({ action: 'parcel.accepted', entityId: p.body.id }));
 
     // The same AWB scanned again while it waits is caught.
     assert.equal((await arrive({ hostId: hostIds.asha, awb: 'BD12345678' })).body.code, 'duplicate_awb');
 
-    // Wrong code: tries counted; the right code hands it over, once.
-    const collect = (body) => call('POST', `/api/parcels/${p.body.id}/collect`, { collector: 'Asha Verma', ...body }, guard);
-    assert.equal((await collect({ code: '0000', collector: '' })).status, 400, 'collector name needed');
-    const wrongCode = code === '1111' ? '2222' : '1111';
-    assert.match((await collect({ code: wrongCode })).body.error, /4 tries left/);
-    const ok = await collect({ code, mobile: '9000000001' });
+    // Handover: the collector's name, mobile and a photo; then the recipient is told who took it.
+    const collect = (body) => call('POST', `/api/parcels/${p.body.id}/collect`, { collector: 'Ravi (assistant)', mobile: '9811122200', photos: [jpeg()], ...body }, guard);
+    assert.equal((await collect({ collector: '' })).status, 400, 'name needed');
+    assert.match((await collect({ mobile: '' })).body.error, /mobile/);
+    assert.match((await collect({ photos: [] })).body.error, /photo/);
+    const ok = await collect({});
     assert.equal(ok.body.status, 'collected');
-    assert.equal(ok.body.handover.how, 'code');
+    assert.equal(ok.body.handover.how, 'handover');
+    assert.equal(ok.body.handover.mobile, '+919811122200');
     assert.equal(ok.body.handover.by, 'Gate Guard');
-    assert.equal((await collect({ code })).status, 409);
+    assert.equal(ok.body.handoverPhotos.length, 1);
+    assert.equal(ok.body.acknowledgedVia, 'whatsapp');
+    assert.ok(ok.body.ackSentAt);
+    const ack = await Outbox.findOne({ parcel: p.body.id, 'vars.plain': true }).lean();
+    assert.match(ack.body, /handed over to Ravi \(assistant\) \(\+919811122200\)/);
+    assert.equal((await collect({})).status, 409);
 
-    // Five wrong codes lock it; then only an override with a reason and the collector's number.
-    const q = await arrive({ hostId: hostIds.asha, awb: 'DLV-1' });
-    const qCode = /Pickup code: \*(\d{4})\*/.exec((await Outbox.findOne({ parcel: q.body.id }).lean()).body)[1];
-    const bad = qCode === '1234' ? '4321' : '1234';
-    let last;
-    for (let i = 0; i < 5; i += 1) last = await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Someone', code: bad }, guard);
-    assert.equal(last.body.locked, true);
-    const nowRight = await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Someone', code: qCode }, guard);
-    assert.match(nowRight.body.error, /Too many wrong codes/, 'even the right code no longer works once locked');
-    assert.equal((await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Ravi (assistant)', override: true, reason: 'x' }, guard)).status, 400);
-    assert.equal((await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Ravi (assistant)', override: true, reason: 'Called Asha, she sent her assistant' }, guard)).status, 400, 'mobile needed');
-    const ov = await call('POST', `/api/parcels/${q.body.id}/collect`, { collector: 'Ravi (assistant)', mobile: '9811122200', override: true, reason: 'Called Asha, she sent her assistant' }, guard);
-    assert.equal(ov.body.handover.how, 'override');
-    await new Promise((r) => setTimeout(r, 100));
-    assert.ok(await Audit.exists({ action: 'parcel.collected_override', entityId: q.body.id }));
+    // Declined: listed for the gate, and returned to the courier with that as the reason.
+    const d = await arrive({ hostId: hostIds.asha, awb: 'DLV-1', photos: [jpeg()] });
+    assert.equal((await call('POST', `/api/parcel-responses/${await tokenOf(d.body.id)}/decision`, { decision: 'decline' })).status, 200);
+    const declined = (await call('GET', '/api/parcels?view=declined', null, guard)).body;
+    assert.ok(declined.rows.some((x) => x.id === d.body.id) && declined.counts.declined >= 1);
+    const back = await call('POST', `/api/parcels/${d.body.id}/return`, {}, guard);
+    assert.equal(back.body.status, 'returned');
+    assert.match(back.body.handover.reason, /Declined by Asha Verma/);
 
-    // Reminders at 24 h and 72 h, then no more.
+    // Reminders at 24 h and 72 h (the request again while unanswered), then no more.
     const r = await arrive({ hostId: hostIds.asha, awb: 'REM-1' });
     await Parcel.collection.updateOne({ _id: new (require('mongoose').Types.ObjectId)(r.body.id) }, { $set: { createdAt: new Date(Date.now() - 80 * 3600e3) } });
     await remind();
     await remind();
     await remind();
     assert.equal((await Parcel.findById(r.body.id).lean()).reminders, 2);
-    assert.equal(await Outbox.countDocuments({ parcel: r.body.id }), 3, 'the notice and two reminders');
+    assert.equal(await Outbox.countDocuments({ parcel: r.body.id }), 3, 'the request and two reminders');
     // Waiting three days: flagged as ageing.
     const aging = (await call('GET', '/api/parcels?view=aging', null, guard)).body;
     assert.ok(aging.rows.some((x) => x.id === r.body.id && x.aging));
     assert.ok(aging.counts.aging >= 1);
   } finally { Object.assign(config.whatsapp, saved); }
 
-  // For a hotel guest (not a host): no code to send; handed to the front desk by name.
+  // For a hotel guest (not a host): nobody to ask; handed to the front desk by name.
   const g = await arrive({ person: { name: 'Mr. J. Smith', room: '1204' }, carrier: 'DHL', awb: 'DHL998' });
-  assert.equal(g.body.hasCode, false);
   assert.equal(g.body.notifiedVia, null);
   assert.equal((await call('POST', `/api/parcels/${g.body.id}/forward`, { to: '' }, guard)).status, 400);
-  const fw = await call('POST', `/api/parcels/${g.body.id}/forward`, { to: 'Front desk, Priya' }, guard);
-  assert.equal(fw.body.status, 'forwarded');
+  assert.equal((await call('POST', `/api/parcels/${g.body.id}/forward`, { to: 'Front desk, Priya' }, guard)).body.status, 'forwarded');
 
   // Refused: back with the courier, with a reason.
   const ret = await arrive({ person: { name: 'Unknown Person' }, carrier: 'DTDC' });
   assert.equal((await call('POST', `/api/parcels/${ret.body.id}/return`, { reason: '' }, guard)).status, 400);
   assert.equal((await call('POST', `/api/parcels/${ret.body.id}/return`, { reason: 'No such person at the hotel' }, guard)).body.status, 'returned');
 
-  // Outgoing: booked by a department, dispatched with the agent's name and AWB.
-  const out = await call('POST', '/api/parcels', { direction: 'out', hostId: hostIds.rahul, department: 'Accounts', address: 'Head Office, BKC, Mumbai', type: 'document' }, guard);
+  // Outgoing, per the hotel's register: name on the courier, address, sender and department; the picker's name,
+  // mobile, the AWB they issue and a photo when they take it.
+  const send = (body) => call('POST', '/api/parcels', { direction: 'out', hostId: hostIds.rahul, department: 'Accounts', addressee: 'Mr. K. Mehta', address: 'Head Office, BKC, Mumbai', type: 'document', photos: [jpeg()], ...body }, guard);
+  assert.match((await send({ addressee: '' })).body.error, /name on the courier/);
+  const out = await send({});
   assert.equal(out.body.status, 'booked');
-  assert.equal((await call('POST', `/api/parcels/${out.body.id}/dispatch`, { agent: '' }, guard)).status, 400);
-  const sent = await call('POST', `/api/parcels/${out.body.id}/dispatch`, { agent: 'Raju', carrier: 'Blue Dart', awb: 'bd 777' }, guard);
+  assert.equal(out.body.addressee, 'Mr. K. Mehta');
+  const dispatch = (body) => call('POST', `/api/parcels/${out.body.id}/dispatch`, { agent: 'Raju', mobile: '9811100022', carrier: 'Blue Dart', awb: 'bd 777', photos: [jpeg()], ...body }, guard);
+  assert.equal((await dispatch({ agent: '' })).status, 400);
+  assert.match((await dispatch({ awb: '' })).body.error, /tracking/);
+  const sent = await dispatch({});
   assert.equal(sent.body.status, 'dispatched');
   assert.equal(sent.body.awb, 'BD777');
+  assert.equal(sent.body.handover.mobile, '+919811100022');
+  assert.equal(sent.body.handoverPhotos.length, 1);
 
   // Logged by mistake: only an admin voids it, with a reason; it stays on record.
   const oops = await arrive({ person: { name: 'Typo' }, carrier: 'Amazon' });
   assert.equal((await call('POST', `/api/parcels/${oops.body.id}/void`, { reason: 'Entered twice' }, guard)).status, 403);
   assert.equal((await call('POST', `/api/parcels/${oops.body.id}/void`, { reason: 'Entered twice' }, admin)).body.status, 'void');
 
-  // Search by AWB or recipient, and the Excel register.
+  // Search by AWB or recipient, and the Excel register: incoming and outgoing on their own sheets.
   assert.ok((await call('GET', '/api/parcels?q=dhl998', null, guard)).body.rows.some((x) => x.id === g.body.id));
   assert.ok((await call('GET', '/api/parcels?q=Asha', null, guard)).body.rows.length >= 3, 'by host name');
   const xl = await fetch(`${base}/api/parcels/export.xlsx`, { headers: { Cookie: admin } });
   assert.equal(xl.status, 200);
   const book = new ExcelJS.Workbook();
   await book.xlsx.load(Buffer.from(await xl.arrayBuffer()));
-  const awbs = [];
-  book.getWorksheet('Couriers').eachRow((row, i) => { if (i > 1) awbs.push(row.getCell(6).text); });
-  assert.ok(awbs.includes('BD12345678') && awbs.includes('BD777'));
+  const col = (sheet, n) => { const v = []; book.getWorksheet(sheet).eachRow((row, i) => { if (i > 1) v.push(row.getCell(n).text); }); return v; };
+  assert.ok(col('Incoming', 8).includes('BD12345678'));
+  assert.ok(col('Outgoing', 9).includes('BD777'));
+  assert.ok(col('Outgoing', 4).includes('Mr. K. Mehta'));
 });
 
 test('ID type and the on-device ID check: stored cleanly, filterable, counted on the overview', async () => {
@@ -1773,4 +1834,70 @@ test('gate scan: event passes too; old passes get a code at start-up', async () 
   await Visit.updateOne({ _id: old._id }, { $unset: { passCode: 1 } });
   await require('../src/services/gate').backfillPassCodes();
   assert.match((await Visit.findById(old._id).lean()).passCode, /^[A-HJ-NP-Z2-9]{8}$/);
+});
+
+test('overstay: listed for the gate, acknowledged by the guard, escalated an hour after the pass ended; extending clears it', async () => {
+  const { Visit, Outbox, Audit } = require('../src/models');
+  const { escalate } = require('../src/services/overstay');
+  const config = require('../src/config');
+  const r = await checkIn('Overstay', hostIds.asha, '9700000401');
+  await call('POST', `/api/approvals/${await tokenFor(r.body.id)}/decision`, { decision: 'approve' });
+  const id = r.body.id;
+  const listed = async (who = guard) => (await call('GET', '/api/visits/overstays', null, who)).body.rows.find((x) => x.id === id);
+  assert.equal(await listed(), undefined, 'not while the pass runs');
+
+  // Escalation contacts: numbers and emails in one box, checked.
+  assert.match((await call('PATCH', '/api/admin/settings', { escalateTo: '98111 00099, not-an-email@' }, admin)).body.error, /not a valid/);
+  const set = await call('PATCH', '/api/admin/settings', { escalateTo: '9811100099, security@hotel.example' }, admin);
+  assert.deepEqual(set.body.escalateTo, { mobiles: ['+919811100099'], emails: ['security@hotel.example'] });
+
+  // The pass ended 20 minutes ago: on the list for the guard and the admin, not yet escalated.
+  await Visit.updateOne({ _id: id }, { validUntil: new Date(Date.now() - 20 * 60e3) });
+  const row = await listed();
+  assert.ok(row && row.overMinutes >= 19 && !row.ack && !row.escalatedAt);
+  assert.ok(await listed(admin));
+  const saved = { ...config.whatsapp };
+  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  try {
+    await escalate();
+    assert.equal((await listed()).escalatedAt, null, 'not before an hour');
+
+    // The guard acknowledges, once.
+    const ack = await call('POST', `/api/visits/${id}/overstay-ack`, { note: 'Calling the host' }, guard);
+    assert.equal(ack.status, 200);
+    assert.equal((await listed()).ack.by, 'Gate Guard');
+    assert.equal((await call('POST', `/api/visits/${id}/overstay-ack`, {}, admin)).body.already, true);
+
+    // An hour past the pass and still inside: escalated once, to the host and the escalation contacts.
+    await Visit.updateOne({ _id: id }, { validUntil: new Date(Date.now() - 61 * 60e3) });
+    await escalate();
+    await escalate();
+    assert.ok((await listed()).escalatedAt);
+    const told = await Outbox.find({ visit: id, 'vars.plain': true }).lean();
+    assert.deepEqual(told.map((o) => o.to).sort(), ['+919000000001', '+919811100099'], 'host and the security manager, once each');
+    assert.match(told.find((o) => o.to === '+919811100099').body, /Gate Guard\) is aware: Calling the host/);
+    await new Promise((res) => setTimeout(res, 100));
+    assert.ok(await Audit.exists({ action: 'visit.overstay_escalated', entityId: id }));
+    assert.equal((await call('GET', '/api/admin/stats', null, admin)).body.overstayEscalated, 1);
+  } finally { Object.assign(config.whatsapp, saved); }
+
+  // Extending: a clear reason when the time is not longer; then the pass runs on and the alert is gone.
+  assert.equal((await call('POST', `/api/visits/${id}/extend`, { by: 'forever' }, guard)).status, 400);
+  const ext = await call('POST', `/api/visits/${id}/extend`, { by: '2h', note: 'Meeting ran long' }, guard);
+  assert.equal(ext.status, 200, JSON.stringify(ext.body));
+  assert.ok(new Date(ext.body.validUntil) > new Date(Date.now() + 119 * 60e3), 'two hours from now, as the pass had already ended');
+  assert.equal(ext.body.extensions.length, 1);
+  assert.equal(ext.body.extensions[0].by, 'Gate Guard');
+  assert.equal(ext.body.overstay, null);
+  assert.equal(await listed(), undefined);
+  assert.match((await call('POST', `/api/visits/${id}/extend`, { by: 'date', day: '2001-01-01' }, guard)).body.error, /Pick a date/);
+  // Extended to a later day: the pass stays open when they step out, like any multi-day pass.
+  const { siteDay } = require('../src/services/core');
+  const { addDays } = require('../src/services/passes');
+  const later = await call('POST', `/api/visits/${id}/extend`, { by: 'date', day: addDays(siteDay(), 2) }, admin);
+  assert.equal(later.body.extensions.length, 2);
+  const out = await call('POST', `/api/visits/${id}/checkout`, {}, guard);
+  assert.equal(out.body.status, 'away');
+  await call('POST', `/api/visits/${id}/end-pass`, {}, guard);
+  assert.equal((await call('POST', `/api/visits/${id}/extend`, { by: '1h' }, guard)).status, 409, 'a closed pass cannot be extended');
 });

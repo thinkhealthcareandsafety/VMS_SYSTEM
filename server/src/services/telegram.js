@@ -51,7 +51,7 @@ async function sendApproval(chatId, text, token, prefix = '') {
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
-        { text: prefix ? '✅ Approve' : '✅ Let them in', callback_data: `${prefix}a:${token}` },
+        { text: { m: '✅ Approve', p: '✅ Accept' }[prefix] || '✅ Let them in', callback_data: `${prefix}a:${token}` },
         { text: '❌ Decline', callback_data: `${prefix}r:${token}` },
       ]],
     },

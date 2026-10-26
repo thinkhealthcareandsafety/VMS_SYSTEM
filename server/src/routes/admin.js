@@ -16,6 +16,7 @@ const { Visit, Host, Outbox, Audit, User, Invite, Block, Gate, Material, Parcel,
 const passes = require('../services/passes');
 const settings = require('../services/settings');
 const sheets = require('../services/sheets');
+const overstay = require('../services/overstay');
 const { siteDay, audit, normalizeMobile, cleanText, tidyName, passwordProblem, sha256 } = require('../services/core');
 
 const router = express.Router();
@@ -175,15 +176,18 @@ const overstayQuery = (now = new Date()) => ({
 
 // What needs someone at the office now, beyond visitors: drives the Overview cards and the sidebar badges.
 async function gateWork(today) {
-  const [materialPending, materialOverdue, parcelsWaiting, parcelsOld, groupsToday, idMismatchToday] = await Promise.all([
+  const [materialPending, materialOverdue, materialAtGate, parcelsWaiting, parcelsOld, parcelsDeclined, groupsToday, idMismatchToday, overstayEscalated] = await Promise.all([
     Material.countDocuments({ direction: 'out', status: 'pending' }),
     Material.countDocuments({ kind: 'returnable', status: { $in: ['out', 'partly_returned'] }, returnBy: { $lt: today } }),
+    Material.countDocuments({ direction: 'in', kind: 'delivery', status: 'received' }),
     Parcel.countDocuments({ direction: 'in', status: 'received' }),
     Parcel.countDocuments({ direction: 'in', status: 'received', createdAt: { $lt: new Date(Date.now() - 72 * 3600e3) } }),
+    Parcel.countDocuments({ direction: 'in', status: 'received', 'response.kind': 'declined' }),
     Group.countDocuments({ status: 'active', startDay: { $lte: today }, endDay: { $gte: today } }),
     Visit.countDocuments({ visitDay: today, 'idCheck.status': 'mismatch' }),
+    Visit.countDocuments({ ...overstay.query(), 'overstay.escalatedAt': { $exists: true } }),
   ]);
-  return { materialPending, materialOverdue, parcelsWaiting, parcelsOld, groupsToday, idMismatchToday };
+  return { materialPending, materialOverdue, materialAtGate, parcelsWaiting, parcelsOld, parcelsDeclined, groupsToday, idMismatchToday, overstayEscalated };
 }
 
 router.get('/stats', requireRole('admin'), async (req, res) => {
@@ -593,10 +597,29 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
     if (typeof b.fullIdCapture !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
     patch.fullIdCapture = b.fullIdCapture;
   }
+  // Who is told when a visitor overstays: mobile numbers (WhatsApp) and email addresses, in one list.
+  if (b.escalateTo !== undefined) {
+    const parts = String(Array.isArray(b.escalateTo) ? b.escalateTo.join(',') : b.escalateTo || '').split(/[\s,;]+/).filter(Boolean);
+    const mobiles = [];
+    const emails = [];
+    for (const p of parts) {
+      if (p.includes('@')) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(p)) return res.status(400).json({ error: `${p} is not a valid email address` });
+        emails.push(p.toLowerCase());
+      } else {
+        const m = normalizeMobile(p);
+        if (!m) return res.status(400).json({ error: `${p} is not a valid mobile number` });
+        mobiles.push(m);
+      }
+    }
+    if (mobiles.length > 10 || emails.length > 10) return res.status(400).json({ error: 'Up to 10 numbers and 10 email addresses' });
+    patch.escalateTo = { mobiles: [...new Set(mobiles)], emails: [...new Set(emails)] };
+  }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
   const before = await settings.get();
   const after = await settings.update(patch);
-  audit(req.user, 'settings.updated', { details: Object.fromEntries(Object.keys(patch).map((k) => [k, `${before[k]} → ${after[k]}`])), ip: req.ip });
+  const show = (v) => (v && typeof v === 'object' ? [...(v.mobiles || []), ...(v.emails || [])].join(', ') || 'nobody' : v);
+  audit(req.user, 'settings.updated', { details: Object.fromEntries(Object.keys(patch).map((k) => [k, `${show(before[k])} → ${show(after[k])}`])), ip: req.ip });
   res.json(after);
 });
 

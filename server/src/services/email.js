@@ -54,11 +54,11 @@ function approvalEmail({ headline, rows, link, button, valid, note = 'You will s
 <tr><td style="padding:18px 28px 6px;color:#151515;font-size:20px;line-height:1.35;font-weight:700">${esc(headline)}</td></tr>
 <tr><td style="padding:6px 28px 4px"><table role="presentation" cellpadding="0" cellspacing="0">${list}</table></td></tr>
 <tr><td style="padding:20px 28px 8px"><a href="${esc(link)}" style="display:inline-block;background:#151515;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:14px 26px;border-radius:10px">${esc(button)}</a></td></tr>
-<tr><td style="padding:4px 28px 26px;color:#6b6b6b;font-size:13px;line-height:1.5">${esc(note)} The link is valid for ${esc(valid)}.</td></tr>
+<tr><td style="padding:4px 28px 26px;color:#6b6b6b;font-size:13px;line-height:1.5">${esc(note)}${valid ? ` The link is valid for ${esc(valid)}.` : ''}</td></tr>
 </table>
 <p style="color:#8a8a8a;font-size:12px;margin:14px 0 0">Sent by the security desk. If you were not expecting this, decline it or ignore it.</p>
 </td></tr></table></body></html>`;
-  const text = `${headline}\n\n${rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${button}: ${link}\nThe link is valid for ${valid}.`;
+  const text = `${headline}\n\n${rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${button}: ${link}${valid ? `\nThe link is valid for ${valid}.` : ''}`;
   return { html, text };
 }
 

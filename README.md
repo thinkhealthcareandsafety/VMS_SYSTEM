@@ -11,6 +11,19 @@ Gate check-in, host approval and a live roster of everyone on site.
 - Visitor pass printed from the browser on any printer (80 mm receipt layout); printing is the handover. Every pass carries a QR code and a typed code (K7M2-9QXP).
 - Scan in and out at any gate: one scan checks someone out if they are inside, or lets them back in on a valid multi-day pass. The photo shows big so the guard can compare faces; a mistaken scan can be undone for 30 seconds; a second scan within a minute changes nothing. Lost pass: type the pass number and pick the person by photo. Event passes scan the same way.
 
+- Pass validity chosen at check-in (2 hours to 30 days, or a date); any pass can be extended at the gate or in the console, recorded with who and why.
+- Pass ended but still inside: a red bar and a pop-up on every guard desk and the admin console. The guard acknowledges it; an hour after the pass ended it is escalated to the host and the escalation contacts (Settings), and shows red on the console.
+
+**Material inward register** (outward gate passes stay in the hotel's own gate pass system)
+- Vendor arrives: photograph the invoice or challan (printed or handwritten); supplier name, address, mobile, GSTIN, invoice and challan numbers are read on the guard's device and checked by the guard. No invoice: type the supplier in. Items with item no., quantity and unit.
+- Vendor leaves: photograph the invoice as the hotel stamped it, enter what was accepted per item (the rest is recorded as taken back), and who received it.
+- Admin views: vendor inside, today, part taken back, no invoice or challan; Excel in the columns of the paper register.
+
+**Couriers**
+- Incoming: logged with up to 5 photos; the recipient gets the photo on WhatsApp (or Telegram, email) with Accept / Decline. Handover needs the collector's name, mobile and a photo; the recipient is then told who took it. Declined parcels are listed for return.
+- Outgoing: name on the courier, address, sender and department; the picker's name, mobile, docket (AWB) number and photo when they take it.
+- Excel: incoming and outgoing registers on their own sheets.
+
 **Host approval**
 - Telegram: one-time QR to connect, then Let them in / Decline buttons in the chat.
 - Web link (by SMS once a provider is connected): photo, details and the same two buttons. Single-use, expires in 10 minutes.

@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown, TimerReset,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
@@ -16,6 +16,7 @@ import { printEvacuation } from '../lib/evacuation.js';
 import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
+import { ExtendPassDialog, OverstayAlert } from '../components/Overstay.jsx';
 import BulkImport from '../components/BulkImport.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle, PoweredBy } from '../components/ui.jsx';
 
@@ -29,8 +30,8 @@ const NAV = [
     { id: 'groups', label: 'Events', icon: PartyPopper, n: (s) => s.groupsToday },
   ] },
   { group: 'Gate', items: [
-    { id: 'material', label: 'Material', icon: Package, n: (s) => s.materialPending + s.materialOverdue, alert: (s) => s.materialOverdue > 0 },
-    { id: 'couriers', label: 'Couriers', icon: Mail, n: (s) => s.parcelsWaiting, alert: (s) => s.parcelsOld > 0 },
+    { id: 'material', label: 'Material in', icon: Package, n: (s) => s.materialAtGate },
+    { id: 'couriers', label: 'Couriers', icon: Mail, n: (s) => s.parcelsWaiting, alert: (s) => s.parcelsOld > 0 || s.parcelsDeclined > 0 },
   ] },
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
@@ -46,7 +47,7 @@ const NAV = [
 // Page titles. "messages" has no menu entry: it opens from the failure alert and from Settings.
 const TITLES = {
   overview: 'Overview', inside: 'On premises', history: 'Visit history', messages: 'Messages and prints', audit: 'Audit log',
-  hosts: 'Hosts', staff: 'Staff accounts', expected: 'Expected visitors', groups: 'Events', material: 'Material',
+  hosts: 'Hosts', staff: 'Staff accounts', expected: 'Expected visitors', groups: 'Events', material: 'Material inward register',
   couriers: 'Couriers', blocked: 'Blocked visitors', settings: 'Settings',
 };
 
@@ -116,7 +117,7 @@ export default function Admin({ user, onLogout }) {
   useTitle(title);
   const myIntent = intent?.section === section ? intent : null;
   const page = { tick, refresh, go, openVisit: setVisitId, toast, stats, openExport: setExportOpts, params, intent: myIntent };
-  const alerts = stats ? (stats.printFailed + stats.smsFailed + stats.materialOverdue + (stats.parcelsOld ? 1 : 0)) : 0;
+  const alerts = stats ? (stats.printFailed + stats.smsFailed + stats.overstayEscalated + stats.parcelsDeclined + (stats.parcelsOld ? 1 : 0)) : 0;
 
   return (
     <div className="console">
@@ -167,6 +168,7 @@ export default function Admin({ user, onLogout }) {
             <button type="button" className="btn btn-ghost btn-icon find-icon" onClick={() => setFindOpen(true)} aria-label="Search"><Search /></button>
           </div>
         </header>
+        <div className="overstay-slot"><OverstayAlert admin liveTick={tick} onChanged={refresh} /></div>
         <div className="page">
           {section === 'overview' && <Overview {...page} />}
           {section === 'inside' && <InsidePage {...page} />}
@@ -295,9 +297,9 @@ function Attention({ stats, go }) {
     items.push({ tone: 'bad', icon: AlertTriangle, to: ['messages'], text: `${[stats.smsFailed && plural(stats.smsFailed, 'message', 'messages'), stats.printFailed && plural(stats.printFailed, 'sticker print', 'sticker prints')].filter(Boolean).join(' and ')} failed`, hint: 'Check the settings or the printer, then retry' });
   }
   if (stats.idMismatchToday) items.push({ tone: 'bad', icon: ShieldCheck, to: ['history', { idCheck: 'mismatch' }], text: `${plural(stats.idMismatchToday, 'visitor', 'visitors')} today with an ID that does not match the name or gender typed`, hint: 'Look at the card and the photo' });
-  if (stats.materialOverdue) items.push({ tone: 'bad', icon: Package, to: ['material'], text: `${plural(stats.materialOverdue, 'returnable gate pass is', 'returnable gate passes are')} overdue`, hint: 'Items not back by the agreed day' });
-  if (stats.staleInside) items.push({ tone: 'warn', icon: Clock, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.staleInside, 'visitor is', 'visitors are')} still inside after the pass ended`, hint: 'The guard may have missed the exit. Select them and check them out together.' });
-  if (stats.materialPending) items.push({ tone: 'warn', icon: Package, to: ['material'], text: `${plural(stats.materialPending, 'gate pass waits', 'gate passes wait')} for approval`, hint: 'Remind the head of department, or decide' });
+  if (stats.overstayEscalated) items.push({ tone: 'bad', icon: Siren, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.overstayEscalated, 'visitor is', 'visitors are')} still inside more than an hour after the pass ended`, hint: 'Escalated: the host and your escalation contacts were told. Check them out or extend the pass.' });
+  if (stats.staleInside > stats.overstayEscalated) items.push({ tone: 'warn', icon: Clock, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.staleInside - stats.overstayEscalated, 'visitor is', 'visitors are')} still inside after the pass ended`, hint: 'The guard may have missed the exit. Select them and check them out together, or extend the pass.' });
+  if (stats.parcelsDeclined) items.push({ tone: 'warn', icon: Mail, to: ['couriers'], text: `${plural(stats.parcelsDeclined, 'parcel was', 'parcels were')} declined by the recipient`, hint: 'Return it to the courier' });
   if (stats.parcelsOld) items.push({ tone: 'warn', icon: Mail, to: ['couriers'], text: `${plural(stats.parcelsOld, 'parcel has', 'parcels have')} waited more than 3 days`, hint: 'Call the recipient or return it' });
   if (!items.length) return null;
   return (
@@ -401,7 +403,7 @@ function GateStrip({ stats, go }) {
   const bits = [
     stats.expectedToday > 0 && { icon: CalendarCheck, text: `${stats.expectedToday} expected today`, to: 'expected' },
     stats.groupsToday > 0 && { icon: PartyPopper, text: `${stats.groupsToday} ${stats.groupsToday === 1 ? 'event' : 'events'} today`, to: 'groups' },
-    stats.materialPending > 0 && { icon: Package, text: `${stats.materialPending} gate ${stats.materialPending === 1 ? 'pass' : 'passes'} to approve`, to: 'material' },
+    stats.materialAtGate > 0 && { icon: Package, text: `${stats.materialAtGate} ${stats.materialAtGate === 1 ? 'vendor' : 'vendors'} inside with goods`, to: 'material' },
     stats.parcelsWaiting > 0 && { icon: Mail, text: `${stats.parcelsWaiting} ${stats.parcelsWaiting === 1 ? 'parcel' : 'parcels'} to collect`, to: 'couriers' },
   ].filter(Boolean);
   if (!bits.length) return null;
@@ -520,6 +522,7 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
   const [force, setForce] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
   const [sweep, setSweep] = useState(false);
+  const [extending, setExtending] = useState(null);
   useTick(30000);
   useEffect(() => { api('/api/visits/inside?all=1').then(setData).catch(() => {}); }, [tick]);
   // Someone who left (or was checked out elsewhere) drops out of the selection.
@@ -570,7 +573,7 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
           {data.count ? 'Try a pass number or flat.' : 'Approved visitors appear here until they check out.'}
         </Empty>
       ) : (
-        <InsideTable rows={rows} staleAfter={data.staleAfterHours} openVisit={openVisit} onForce={setForce} picked={picked} onToggle={toggle} allPicked={allShown} onToggleAll={toggleAll} />
+        <InsideTable rows={rows} staleAfter={data.staleAfterHours} openVisit={openVisit} onForce={setForce} onExtend={setExtending} picked={picked} onToggle={toggle} allPicked={allShown} onToggleAll={toggleAll} />
       )}
       {picked.size > 0 && (
         <div className="pick-bar" role="region" aria-label="Selected visitors">
@@ -581,11 +584,12 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
       )}
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={refresh} />
       <ForceDialog many={sweep ? chosen : null} onClose={() => setSweep(false)} onDone={() => { setPicked(new Set()); refresh(); }} />
+      <ExtendPassDialog visit={extending} onClose={() => setExtending(null)} onDone={refresh} />
     </section>
   );
 }
 
-function InsideTable({ rows, staleAfter, openVisit, onForce, compact, picked, onToggle, allPicked, onToggleAll }) {
+function InsideTable({ rows, staleAfter, openVisit, onForce, onExtend, compact, picked, onToggle, allPicked, onToggleAll }) {
   const selectable = Boolean(onToggle) && !compact;
   const toast = useToast();
   const reprint = async (e, v) => {
@@ -630,12 +634,15 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, compact, picked, on
                 </td>
                 <td className="num">
                   {v.passExpired ? <span className="badge badge-bad">Pass ended {fmtUntil(v.validUntil)}</span> : v.validUntil ? fmtUntil(v.validUntil) : <span className="faint">—</span>}
-                  {v.validity && <div className="meta-line">{v.validity}</div>}
+                  {v.validity && <div className="meta-line">{v.validity}{v.extensions?.length ? ` · extended ${v.extensions.length === 1 ? 'once' : `${v.extensions.length} times`}` : ''}</div>}
+                  {v.passExpired && v.overstay?.escalatedAt && <div><span className="badge badge-bad">Escalated {fmtTime(v.overstay.escalatedAt)}</span></div>}
+                  {v.passExpired && v.overstay?.ackAt && <div className="meta-line">Seen by {v.overstay.ackBy}{v.overstay.ackNote ? `: ${v.overstay.ackNote}` : ''}</div>}
                 </td>
                 {!compact && (
                   <td>
                     <div className="actions">
                       <button className="btn btn-sm btn-icon" onClick={(e) => reprint(e, v)} aria-label={`Reprint sticker ${v.dailyNumber}`} title="Reprint sticker"><Printer /></button>
+                      {onExtend && v.validUntil && !v.groupId && <button className="btn btn-sm btn-icon" onClick={(e) => { e.stopPropagation(); onExtend(v); }} aria-label={`Extend ${v.firstName}’s pass`} title="Extend the pass"><TimerReset /></button>}
                       <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onForce(v); }}><LogOut />Check out</button>
                     </div>
                   </td>
@@ -861,6 +868,23 @@ const ACTIONS = {
   'visit.pass_ended': ['Pass ended early', ''],
   'visit.pass_expired': ['Pass ran out while outside', ''],
   'visit.auto_checked_out': ['Checked out automatically: event ended', ''],
+  'visit.pass_extended': ['Pass extended', ''],
+  'visit.overstay_acknowledged': ['Pass ended: seen by the guard', 'warn'],
+  'visit.overstay_escalated': ['Still inside an hour after the pass: escalated', 'bad'],
+  'material.received': ['Goods recorded at the gate', ''],
+  'material.checked_out': ['Vendor checked out', ''],
+  'material.exported': ['Downloaded the material register', ''],
+  'parcel.received': ['Parcel logged at the gate', ''],
+  'parcel.accepted': ['Recipient accepted the parcel', 'ok'],
+  'parcel.declined': ['Recipient declined the parcel', 'warn'],
+  'parcel.collected': ['Parcel handed over', ''],
+  'parcel.forwarded': ['Parcel handed to a department', ''],
+  'parcel.returned': ['Parcel returned to the courier', 'warn'],
+  'parcel.booked': ['Outgoing parcel logged', ''],
+  'parcel.dispatched': ['Outgoing parcel picked up', ''],
+  'parcel.reminded': ['Parcel reminder sent', ''],
+  'parcel.voided': ['Parcel voided', 'warn'],
+  'parcel.exported': ['Downloaded the courier register', ''],
   'id_image_full.viewed': ['Full Aadhaar viewed (Super Admin)', 'warn'],
   'gate.created': ['Gate added', ''],
   'gate.updated': ['Gate changed', ''],
@@ -919,6 +943,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
   const [showId, setShowId] = useState(false);
   const [force, setForce] = useState(null);
   const [blocking, setBlocking] = useState(null);
+  const [extending, setExtending] = useState(null);
   const [zoomed, setZoomed] = useState(null); // { src, title } shown full size
   const [idUrl, setIdUrl] = useState(null);
 
@@ -995,6 +1020,8 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
               {admitted && <><dt>Let in</dt><dd className="num">{fmtDateTime(v.decidedAt)}</dd></>}
               {v.checkedOutAt && <><dt>Left</dt><dd className="num">{fmtDateTime(v.checkedOutAt)} · {fmtDuration(Math.round((new Date(v.checkedOutAt) - new Date(v.decidedAt)) / 60000))} inside</dd></>}
               {v.validUntil && <><dt>Pass</dt><dd>{v.validity} · valid till {fmtDateTime(v.validUntil)}</dd></>}
+              {v.extensions?.length > 0 && <><dt>Extended</dt><dd>{v.extensions.map((x, i) => <div key={i}>{fmtDateTime(x.at)} by {x.by}: to {fmtDateTime(x.to)}{x.note ? ` · ${x.note}` : ''}</div>)}</dd></>}
+              {v.overstay && <><dt>Overstay</dt><dd>{v.overstay.ackAt ? `Seen by ${v.overstay.ackBy} at ${fmtDateTime(v.overstay.ackAt)}${v.overstay.ackNote ? `: ${v.overstay.ackNote}` : ''}` : 'Not acknowledged'}{v.overstay.escalatedAt && <div className="tone-bad">Escalated {fmtDateTime(v.overstay.escalatedAt)}</div>}</dd></>}
               {v.forceReason && <><dt>Checkout reason</dt><dd>{v.forceReason}</dd></>}
               {v.printStatus && <><dt>Sticker</dt><dd>{v.printStatus === 'off' ? 'No printer connected' : v.printStatus === 'sent' ? 'Printed' : v.printStatus === 'failed' ? `Failed${v.printError ? `: ${v.printError}` : ''}` : 'In the print queue'}</dd></>}
             </dl>
@@ -1094,9 +1121,11 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
           {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New request sent to the host.')}><RotateCcw />Resend request</button>}
           {admitted && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
           <button className="btn btn-ghost" onClick={() => setBlocking({ mobile: v.mobile, name: `${v.firstName} ${v.lastName}` })}><Ban />Block</button>
+          {['approved', 'away'].includes(v.status) && v.validUntil && !v.groupId && <button className="btn" onClick={() => setExtending(v)}><TimerReset />Extend pass</button>}
           {['approved', 'away'].includes(v.status) && <button className="btn" onClick={() => setForce(v)}><LogOut />{v.status === 'away' ? 'End pass' : 'Check out'}</button>}
         </div>
       )}
+      <ExtendPassDialog visit={extending} onClose={() => setExtending(null)} onDone={onChanged} />
       <ForceDialog visit={force} onClose={() => setForce(null)} onDone={onChanged} />
       <BlockDialog prefill={blocking} onClose={() => setBlocking(null)} onDone={onChanged} />
       <ImageViewer open={Boolean(zoomed)} onClose={() => setZoomed(null)} src={zoomed?.src} alt={zoomed?.title} title={zoomed?.title} status={zoomed?.status} />
@@ -2216,13 +2245,20 @@ function GatesManager() {
   );
 }
 
+// The escalation contacts travel as { mobiles, emails } and are edited as one comma-separated line.
+const withContacts = (d) => ({ ...d, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
+
 function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
   const [s, setS] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   useEffect(() => {
-    api('/api/admin/settings').then((d) => { setS(d); setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) }); }).catch((e) => setErr(e.message));
+    api('/api/admin/settings').then((raw) => {
+      const d = withContacts(raw);
+      setS(d);
+      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
+    }).catch((e) => setErr(e.message));
   }, []);
 
   if (!f) return err ? <div className="alert alert-bad"><AlertTriangle /><span className="grow">{err}</span></div> : <ListSkeleton />;
@@ -2232,8 +2268,9 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     if (!changed.length) return;
     setBusy(true); setErr('');
     try {
-      const d = await api('/api/admin/settings', { method: 'PATCH', body: Object.fromEntries(changed.map((k) => [k, f[k]])) });
+      const d = withContacts(await api('/api/admin/settings', { method: 'PATCH', body: Object.fromEntries(changed.map((k) => [k, f[k]])) }));
       setS({ ...s, ...d });
+      setF((x) => ({ ...x, escalateTo: d.escalateTo }));
       toast('Settings saved. Guard screens pick up name changes next time they open.');
     } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
@@ -2292,6 +2329,17 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
             {ch.otp ? <CheckCircle2 /> : <AlertTriangle />}
             <span className="grow">{ch.otp ? 'Text messages are on: visitors receive the code on their phone.' : 'Text messages are not switched on yet, so visitors would not receive the code. Keep this Off until GateSmartX support switches text messages on.'}</span>
           </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Visitor past their pass</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Escalate to</span>
+            <textarea className="textarea" rows={2} value={f.escalateTo} onChange={(e) => setF({ ...f, escalateTo: e.target.value })} placeholder="98110 00099, security.manager@hotel.com" />
+            <span className="hint">Mobile numbers (WhatsApp) and email addresses, separated by commas. When a visitor is still inside an hour after their pass ended, these people and the visitor’s host are told. The guard desk and this console show it the moment the pass ends.</span>
+          </label>
+          {!ch.whatsapp && !ch.email && <div className="alert alert-warn"><AlertTriangle /><span className="grow">WhatsApp and email are both off, so nobody can be told yet. The escalation still shows in red on this console.</span></div>}
         </div>
       </section>
 
