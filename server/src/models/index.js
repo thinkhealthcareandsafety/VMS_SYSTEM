@@ -131,6 +131,7 @@ const outboxSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit' },          // a visitor's approval request...
   material: { type: Schema.Types.ObjectId, ref: 'Material' },    // ...or a material gate pass approval...
   parcel: { type: Schema.Types.ObjectId, ref: 'Parcel' },        // ...or a courier notice
+  emergency: { type: Schema.Types.ObjectId, ref: 'Emergency', index: true }, // ...or an emergency message (vars.n: which one)
   status: { type: String, enum: ['queued', 'sent', 'failed'], default: 'queued', index: true },
   to: { type: String },              // sms, whatsapp: mobile number; telegram: chat id
   body: { type: String },            // message text
@@ -150,6 +151,7 @@ const settingSchema = new Schema({
   gateName: { type: String, trim: true },     // shown on the guard desk
   idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
   escalateTo: { mobiles: [String], emails: [String] }, // told when a visitor is still inside an hour after the pass ended
+  assemblyPoint: { type: String, trim: true },  // where people gather in an evacuation; filled into the emergency messages
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
   fullIdCapture: { type: Boolean },           // keep the full Aadhaar (encrypted) for the Super Admin; only a Super Admin changes it
 }, { versionKey: false, timestamps: true });
@@ -295,6 +297,25 @@ const actionTokenSchema = new Schema({
   usedAt: Date,
 }, { versionKey: false, timestamps: true });
 
+// An emergency (fire, evacuation, drill...): started by its first message, ended by "All clear" or by hand.
+// `people` is everyone inside when it started, for the roll call at the assembly point. Names are copied in,
+// so the roll call stays exactly as it was even after people check out.
+const emergencySchema = new Schema({
+  status: { type: String, enum: ['active', 'closed'], default: 'active', index: true },
+  kind: { type: String, default: 'custom' },        // the first message's template
+  title: { type: String, default: '' },
+  people: [{
+    _id: false, visit: { type: Schema.Types.ObjectId, ref: 'Visit' }, name: String, company: String, pass: Number,
+    host: String, hostUnit: String, mobile: String, group: String, safeAt: Date, safeBy: String,
+  }],
+  messages: [{
+    _id: false, at: Date, template: String, title: String, text: String, audience: { type: String, enum: ['visitors', 'hosts', 'both'] },
+    allHosts: Boolean, by: String, visitors: Number, hosts: Number,
+  }],
+  startedBy: { type: Schema.Types.ObjectId, ref: 'User' }, startedByName: String, gateName: String,
+  closedAt: Date, closedByName: String,
+}, opts);
+
 // A visitor the admin expects: at the gate they are let in without waiting for the host.
 const inviteSchema = new Schema({
   firstName: { type: String, required: true, trim: true },
@@ -351,6 +372,7 @@ module.exports = {
   Group: mongoose.model('Group', groupSchema),
   Material: mongoose.model('Material', materialSchema),
   Parcel: mongoose.model('Parcel', parcelSchema),
+  Emergency: mongoose.model('Emergency', emergencySchema),
   ActionToken: mongoose.model('ActionToken', actionTokenSchema),
   Guest: mongoose.model('Guest', guestSchema),
   Host: mongoose.model('Host', hostSchema),

@@ -66,6 +66,9 @@ module.exports = {
     // MSG91_APPROVAL_VARS names mapped to [visitor name, company, approval link].
     msg91TemplateId: env.MSG91_APPROVAL_TEMPLATE_ID || '',
     msg91Vars: (env.MSG91_APPROVAL_VARS || 'var1,var2,var3').split(',').map((s) => s.trim()),
+    // msg91: emergency messages go through their own DLT template, whose one variable receives the message text.
+    msg91AlertTemplateId: env.MSG91_ALERT_TEMPLATE_ID || '',
+    msg91AlertVar: env.MSG91_ALERT_VAR || 'var1',
     httpUrl: env.SMS_HTTP_URL || '',
     httpAuth: env.SMS_HTTP_AUTH || '',     // full Authorization header value
     senderId: env.SMS_SENDER_ID || 'VMSITE',

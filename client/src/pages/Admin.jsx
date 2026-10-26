@@ -17,6 +17,7 @@ import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
 import { ExtendPassDialog, OverstayAlert } from '../components/Overstay.jsx';
+import { EmergencyBar, EmergencyDialog, useEmergency } from '../components/Emergency.jsx';
 import BulkImport from '../components/BulkImport.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle, PoweredBy } from '../components/ui.jsx';
 
@@ -80,6 +81,7 @@ export default function Admin({ user, onLogout }) {
   const [visitId, setVisitId] = useState(null);
   const [exportOpts, setExportOpts] = useState(null);
   const [pwOpen, setPwOpen] = useState(false);
+  const [sos, setSos] = useState(false);
 
   // Ctrl+K (⌘K on a Mac) or "/" opens search from anywhere, unless the admin is typing in a field.
   useEffect(() => {
@@ -112,6 +114,7 @@ export default function Admin({ user, onLogout }) {
     return () => clearInterval(t);
   }, [loadStats]);
   const refresh = () => { setTick((t) => t + 1); loadStats(); };
+  const [emergency, setEmergency] = useEmergency(tick);
 
   const title = TITLES[section];
   useTitle(title);
@@ -164,11 +167,14 @@ export default function Admin({ user, onLogout }) {
             </div>
           </div>
           <div className="right">
+            <button type="button" className="btn btn-sm btn-danger-outline" onClick={() => setSos(true)} title="Send an emergency message and start a roll call"><Siren />Emergency</button>
             <span className={`conn ${connected ? '' : 'off'}`} title={connected ? 'Updates as it happens' : 'Reconnecting'}><span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'Live' : 'Reconnecting'}</span>
             <button type="button" className="btn btn-ghost btn-icon find-icon" onClick={() => setFindOpen(true)} aria-label="Search"><Search /></button>
           </div>
         </header>
+        <div className="overstay-slot"><EmergencyBar active={emergency} onOpen={() => setSos(true)} /></div>
         <div className="overstay-slot"><OverstayAlert admin liveTick={tick} onChanged={refresh} /></div>
+        <EmergencyDialog open={sos} onClose={() => setSos(false)} active={emergency} onChanged={setEmergency} siteName={stats?.siteName} />
         <div className="page">
           {section === 'overview' && <Overview {...page} />}
           {section === 'inside' && <InsidePage {...page} />}
@@ -869,6 +875,11 @@ const ACTIONS = {
   'visit.pass_expired': ['Pass ran out while outside', ''],
   'visit.auto_checked_out': ['Checked out automatically: event ended', ''],
   'visit.pass_extended': ['Pass extended', ''],
+  'emergency.started': ['Emergency started, roll call opened', 'bad'],
+  'emergency.message': ['Emergency message sent', 'warn'],
+  'emergency.safe': ['Marked safe at the assembly point', 'ok'],
+  'emergency.unsafe': ['Safe mark taken back', ''],
+  'emergency.closed': ['Emergency ended', 'ok'],
   'visit.overstay_acknowledged': ['Pass ended: seen by the guard', 'warn'],
   'visit.overstay_escalated': ['Still inside an hour after the pass: escalated', 'bad'],
   'material.received': ['Goods recorded at the gate', ''],
@@ -2246,7 +2257,7 @@ function GatesManager() {
 }
 
 // The escalation contacts travel as { mobiles, emails } and are edited as one comma-separated line.
-const withContacts = (d) => ({ ...d, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
+const withContacts = (d) => ({ ...d, assemblyPoint: d.assemblyPoint || '', escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
 
 function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
   const [s, setS] = useState(null);
@@ -2257,7 +2268,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     api('/api/admin/settings').then((raw) => {
       const d = withContacts(raw);
       setS(d);
-      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
+      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
     }).catch((e) => setErr(e.message));
   }, []);
 
@@ -2329,6 +2340,17 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
             {ch.otp ? <CheckCircle2 /> : <AlertTriangle />}
             <span className="grow">{ch.otp ? 'Text messages are on: visitors receive the code on their phone.' : 'Text messages are not switched on yet, so visitors would not receive the code. Keep this Off until GateSmartX support switches text messages on.'}</span>
           </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Emergency</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Assembly point</span>
+            <input className="input" value={f.assemblyPoint} maxLength={120} onChange={(e) => setF({ ...f, assemblyPoint: e.target.value })} placeholder="e.g. Main driveway, by the fountain" />
+            <span className="hint">Written into the emergency messages (fire, evacuate, drill), so everyone knows where to go. The Emergency button is on every guard desk and at the top of this console.</span>
+          </label>
+          {!ch.smsAlerts && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Emergency SMS is not set up. Visitors who have not messaged the hotel’s WhatsApp number may not get emergency messages. Ask GateSmartX support to set up an SMS emergency template.</span></div>}
         </div>
       </section>
 

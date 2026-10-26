@@ -11,6 +11,19 @@ async function sendSms(to, body, vars = {}) {
     console.log(`[SMS -> ${to}] ${body}`);
     return 'console';
   }
+  if (config.sms.driver === 'msg91' && vars.alert) {
+    // An emergency message: its own DLT template, the whole text in one variable.
+    if (!config.otp.authKey || !config.sms.msg91AlertTemplateId) throw Object.assign(new Error('MSG91 emergency template is not set up'), { permanent: true });
+    const res = await fetch('https://control.msg91.com/api/v5/flow', {
+      method: 'POST',
+      headers: { authkey: config.otp.authKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ template_id: config.sms.msg91AlertTemplateId, short_url: '0', recipients: [{ mobiles: to.replace(/^\+/, ''), [config.sms.msg91AlertVar]: body }] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.type === 'error') throw new Error(`MSG91: ${json.message || res.status}`);
+    return String(json.message || json.request_id || 'accepted');
+  }
   if (config.sms.driver === 'msg91') {
     // MSG91 Flow API: the approval text is a DLT-approved template; only its variables travel.
     if (!config.otp.authKey || !config.sms.msg91TemplateId) throw new Error('MSG91 approval template is not set up');
@@ -120,4 +133,7 @@ async function deliverZpl(zpl, label) {
   throw new Error(`Unknown PRINTER_MODE: ${mode}`);
 }
 
-module.exports = { sendSms, sendOtp, otpLive, buildStickerZpl, deliverZpl };
+// Emergency messages can go by SMS: a gateway that takes free text, or MSG91 with an emergency DLT template.
+const smsAlertsLive = () => config.sms.driver === 'http' || (config.sms.driver === 'msg91' && Boolean(config.otp.authKey && config.sms.msg91AlertTemplateId));
+
+module.exports = { sendSms, sendOtp, otpLive, smsAlertsLive, buildStickerZpl, deliverZpl };

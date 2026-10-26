@@ -1901,3 +1901,66 @@ test('overstay: listed for the gate, acknowledged by the guard, escalated an hou
   await call('POST', `/api/visits/${id}/end-pass`, {}, guard);
   assert.equal((await call('POST', `/api/visits/${id}/extend`, { by: '1h' }, guard)).status, 409, 'a closed pass cannot be extended');
 });
+
+test('emergency: a template to visitors, hosts or both on every channel, roll call at the assembly point, all clear ends it', async () => {
+  const { Outbox, Audit } = require('../src/models');
+  const config = require('../src/config');
+  const ids = [];
+  for (const [first, host, mobile] of [['Fire', hostIds.asha, '9700000911'], ['Drill', hostIds.rahul, '9700000912']]) {
+    const r = await checkIn(first, host, mobile);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await call('POST', `/api/approvals/${await tokenFor(r.body.id)}/decision`, { decision: 'approve' });
+    ids.push(r.body.id);
+  }
+  await call('PATCH', '/api/admin/settings', { assemblyPoint: 'Main driveway, by the fountain' }, admin);
+  const setup = (await call('GET', '/api/emergency/setup', null, guard)).body;
+  assert.match(setup.templates.find((t) => t.id === 'fire').text, /assembly point: Main driveway, by the fountain/);
+  assert.ok(setup.counts.visitors >= 2 && setup.counts.theirHosts >= 2);
+  assert.equal(setup.active, null);
+
+  const saved = { ...config.whatsapp };
+  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  try {
+    const send = (body, who = guard) => call('POST', '/api/emergency/send', { template: 'fire', audience: 'both', text: setup.templates[0].text, ...body }, who);
+    assert.equal((await send({ text: 'short' })).status, 400);
+    assert.equal((await send({ audience: 'nobody' })).status, 400);
+    assert.match((await send({ template: 'allclear' })).body.error, /no emergency/);
+
+    // Fire to visitors and hosts: an emergency starts with everyone inside on the roll call.
+    const fire = await send({});
+    assert.equal(fire.status, 201, JSON.stringify(fire.body));
+    assert.equal(fire.body.status, 'active');
+    assert.ok(fire.body.total >= 2 && fire.body.people.some((p) => p.visitId === ids[0]));
+    assert.ok(fire.body.sent.visitors >= 2 && fire.body.sent.hosts >= 2);
+    const jobs = await Outbox.find({ emergency: fire.body.id }).lean();
+    assert.ok(jobs.some((j) => j.to === '+919700000911' && j.kind === 'whatsapp'), 'the visitor');
+    const toAsha = jobs.find((j) => j.to === '+919000000001');
+    assert.match(toAsha.body, /Your visitors inside: .*Fire Sharma/, 'the host is told which of their visitors are inside');
+
+    // An update to visitors only joins the same emergency and leaves hosts out.
+    const upd = await send({ template: 'custom', audience: 'visitors', text: 'Please use the north staircase, the south one is closed.' });
+    assert.equal(upd.body.id, fire.body.id);
+    assert.equal(upd.body.messages.length, 2);
+    assert.equal(await Outbox.countDocuments({ emergency: fire.body.id, 'vars.n': 1, to: '+919000000001' }), 0);
+    assert.ok(upd.body.messages[0].delivery.whatsapp.queued >= 4, 'delivery counted per message and channel');
+
+    // Roll call: ticked safe, and back if it was a mistake.
+    const safe = (visitId, ok = true) => call('POST', `/api/emergency/${fire.body.id}/safe`, { visitId, safe: ok }, guard);
+    assert.equal((await safe(ids[0])).body.safe, 1);
+    assert.equal((await safe(ids[0], false)).body.safe, 0);
+    const roll = await safe(ids[0]);
+    assert.equal(roll.body.people.find((p) => p.visitId === ids[0]).safeBy, 'Gate Guard');
+    assert.equal((await call('GET', '/api/emergency/active', null, admin)).body.active.safe, 1, 'every screen sees the same roll call');
+
+    // All clear ends it.
+    const clear = await send({ template: 'allclear', text: '✅ ALL CLEAR. It is safe to return.' }, admin);
+    assert.equal(clear.body.status, 'closed');
+    assert.equal((await call('GET', '/api/emergency/active', null, guard)).body.active, null);
+    assert.equal((await safe(ids[1])).status, 409, 'no roll call once it has ended');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(await Audit.exists({ action: 'emergency.closed', entityId: fire.body.id }));
+  } finally { Object.assign(config.whatsapp, saved); }
+
+  assert.equal((await call('GET', '/api/emergency/history', null, guard)).status, 403);
+  assert.equal((await call('GET', '/api/emergency/history', null, admin)).body.rows[0].safe, 1);
+});

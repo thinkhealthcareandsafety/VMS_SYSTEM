@@ -19,6 +19,7 @@ import GroupGate from '../components/GroupGate.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
 import { ExtendPassDialog, OverstayAlert } from '../components/Overstay.jsx';
+import { EmergencyBar, EmergencyDialog, useEmergency } from '../components/Emergency.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 import { checkId, splitCardName } from '../lib/idMatch.js';
@@ -90,6 +91,8 @@ export default function GuardDesk({ user, onLogout }) {
   const [groupId, setGroupId] = useState(null);    // a guest group open in the main column
   const [scanning, setScanning] = useState(false); // the pass scanner
   const [groups, setGroups] = useState([]);        // groups that can be let in today
+  const [emergency, setEmergency] = useEmergency(liveTick);
+  const [sos, setSos] = useState(false);           // the emergency message and roll call
   // The desk handles people or material; the choice is remembered on this device.
   const [mode, setMode] = useState(() => { try { const m = localStorage.getItem('vms.desk.mode'); return ['material', 'couriers'].includes(m) ? m : 'visitors'; } catch { return 'visitors'; } });
   const switchMode = (m) => { setMode(m); try { localStorage.setItem('vms.desk.mode', m); } catch { /* storage blocked */ } };
@@ -250,11 +253,14 @@ export default function GuardDesk({ user, onLogout }) {
           <button role="tab" aria-selected={mode === 'couriers'} aria-pressed={mode === 'couriers'} onClick={() => switchMode('couriers')}><Mail size={15} /> Couriers</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button type="button" className="btn btn-sm btn-danger-outline" onClick={() => setSos(true)} title="Send an emergency message and start a roll call" aria-label="Emergency"><Siren /><span className="hide-narrow">Emergency</span></button>
           {mode === 'visitors' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setScanning(true)} title="Scan a pass to let someone out, or back in"><ScanLine /><span className="hide-narrow">Scan pass</span></button>}
           <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
         </div>
       </header>
+      <div className="overstay-slot"><EmergencyBar active={emergency} onOpen={() => setSos(true)} /></div>
       <div className="overstay-slot"><OverstayAlert liveTick={liveTick} onChanged={refreshInside} /></div>
+      <EmergencyDialog open={sos} onClose={() => setSos(false)} active={emergency} onChanged={setEmergency} siteName={user.siteName} />
 
       {mode === 'material' ? (
         <main className="guard-main"><MaterialBoard liveTick={liveTick} /></main>

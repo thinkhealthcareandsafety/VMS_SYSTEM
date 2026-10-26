@@ -564,6 +564,7 @@ router.get('/settings', requireRole('admin'), async (req, res) => {
       otp: messaging.otpLive(),
       telegram: telegram.enabled() ? await telegram.botUsername().catch(() => null) || 'connected' : null,
       sms: config.sms.driver !== 'console',
+      smsAlerts: messaging.smsAlertsLive(),
       whatsapp: require('../services/whatsapp').enabled(),
       email: email.enabled() ? config.email.from : null,
       printer: config.printer.mode,
@@ -597,6 +598,7 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
     if (typeof b.fullIdCapture !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
     patch.fullIdCapture = b.fullIdCapture;
   }
+  if (b.assemblyPoint !== undefined) patch.assemblyPoint = cleanText(b.assemblyPoint, 120);
   // Who is told when a visitor overstays: mobile numbers (WhatsApp) and email addresses, in one list.
   if (b.escalateTo !== undefined) {
     const parts = String(Array.isArray(b.escalateTo) ? b.escalateTo.join(',') : b.escalateTo || '').split(/[\s,;]+/).filter(Boolean);

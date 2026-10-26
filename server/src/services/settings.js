@@ -10,6 +10,7 @@ const defaults = () => ({
   otpMode: 'off', // an admin switches mobile verification on in Settings once the SMS provider is ready
   fullIdCapture: true, // the full Aadhaar is kept, encrypted, for the Super Admin
   escalateTo: { mobiles: [], emails: [] }, // security / duty manager: told when a visitor overstays their pass by an hour
+  assemblyPoint: '', // where people gather in an evacuation, e.g. "Main driveway, by the fountain"
 });
 
 let cache = null;
