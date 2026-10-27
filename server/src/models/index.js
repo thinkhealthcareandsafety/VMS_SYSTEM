@@ -306,7 +306,7 @@ const actionTokenSchema = new Schema({
 // `people` is everyone inside when it started, for the roll call at the assembly point. Names are copied in,
 // so the roll call stays exactly as it was even after people check out.
 const emergencySchema = new Schema({
-  status: { type: String, enum: ['active', 'closed'], default: 'active', index: true },
+  status: { type: String, enum: ['active', 'closed'], default: 'active' },
   kind: { type: String, default: 'custom' },        // the first message's template
   title: { type: String, default: '' },
   people: [{
@@ -320,6 +320,8 @@ const emergencySchema = new Schema({
   startedBy: { type: Schema.Types.ObjectId, ref: 'User' }, startedByName: String, gateName: String,
   closedAt: Date, closedByName: String,
 }, opts);
+// Only one emergency at a time: two gates pressing Send together join the same one.
+emergencySchema.index({ status: 1 }, { name: 'one_active_emergency', unique: true, partialFilterExpression: { status: 'active' } });
 
 // A visitor the admin expects: at the gate they are let in without waiting for the host.
 const inviteSchema = new Schema({

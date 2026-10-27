@@ -81,6 +81,8 @@ async function main() {
   await mongoose.connect(config.mongoUri);
   console.log('MongoDB connected');
   await require('./services/passes').ensureDefaultGate();
+  // Swaps the first, non-unique emergency index for the one that allows a single active emergency.
+  await require('./models').Emergency.syncIndexes().catch((err) => console.error('[emergency] index sync failed:', err.message));
   await require('./services/gate').backfillPassCodes(); // passes printed before pass codes existed
   worker.start();
   telegram.init(); // registers the webhook when a bot token is set

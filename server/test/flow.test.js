@@ -1991,3 +1991,23 @@ test('lanyard card: given at check-in, one person at a time, searchable, collect
   assert.equal(given.status, 200, JSON.stringify(given.body));
   assert.equal(given.body.card.no, '07');
 });
+
+test('emergency: two gates pressing Send together join one emergency; a returning pass holder gets a fresh card', async () => {
+  const { Emergency, Visit } = require('../src/models');
+  await Emergency.syncIndexes();
+  const body = { template: 'evacuate', audience: 'both', text: 'Please leave the building now by the nearest exit.' };
+  const [a, b] = await Promise.all([call('POST', '/api/emergency/send', body, guard), call('POST', '/api/emergency/send', body, admin)]);
+  assert.equal(a.status, 201, JSON.stringify(a.body));
+  assert.equal(b.status, 201, JSON.stringify(b.body));
+  assert.equal(a.body.id, b.body.id, 'one emergency');
+  assert.equal(await Emergency.countDocuments({ status: 'active' }), 1);
+  assert.equal((await Emergency.findById(a.body.id).lean()).messages.length, 2, 'both messages kept');
+  await call('POST', `/api/emergency/${a.body.id}/close`, {}, admin);
+
+  // Multi-day holder with card 08 goes out (card handed back) and comes in again: the card is cleared.
+  const r = await call('POST', '/api/visits', { firstName: 'Multi', lastName: 'Day', gender: 'male', mobile: '9700000931', company: 'MD', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), cardNo: '8', validity: '3d' }, guard);
+  await call('POST', `/api/approvals/${await tokenFor(r.body.id)}/decision`, { decision: 'approve' });
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/checkout`, {}, guard)).body.status, 'away');
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/reenter`, {}, guard)).body.card, null);
+  assert.equal((await Visit.findById(r.body.id).lean()).card, undefined);
+});

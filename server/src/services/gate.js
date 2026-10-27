@@ -62,12 +62,12 @@ async function letBackIn(v, user, ip) {
   const gate = await passes.gateOf(user.id);
   const done = await Visit.findOneAndUpdate(
     { _id: v._id, status: 'away', validUntil: { $gt: now } },
-    { status: 'approved', $push: { movements: passes.movement('in', gate, user, now) } },
+    { status: 'approved', $unset: { card: 1 }, $push: { movements: passes.movement('in', gate, user, now) } }, // the card came back at exit
     { new: true },
   ).lean();
   if (!done) return reply('ended', 'This pass has ended. Check them in as a new visitor.', v);
   audit(user, 'visit.reentered', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name, via: 'scan' }, ip });
-  return reply('in', 'Let them in. Same pass, no new approval needed.', done, { undo: { action: 'in', seconds: UNDO_MS / 1000 } });
+  return reply('in', `Let them in. Same pass, no new approval needed.${v.card?.no ? ' Give them a lanyard card and note its number.' : ''}`, done, { undo: { action: 'in', seconds: UNDO_MS / 1000 } });
 }
 
 // A visit found by its pass: what the scan does depends on where the person is now.

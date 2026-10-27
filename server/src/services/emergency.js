@@ -98,25 +98,41 @@ async function send({ template, text, audience, allHosts }, user, gate) {
   if (!['visitors', 'hosts', 'both'].includes(audience)) return { error: 'Choose who gets it: visitors, hosts or both' };
   const t = TEMPLATES.find((x) => x.id === template) || TEMPLATES.find((x) => x.id === 'custom');
   const visits = await inside();
-  let em = await Emergency.findOne({ status: 'active' }).sort({ createdAt: -1 });
-  const started = !em;
+  let em = await Emergency.findOne({ status: 'active' }).lean();
+  let started = false;
   if (!em) {
     if (t.id === 'allclear') return { error: 'There is no emergency going on to end' };
     const groups = new Map((await Group.find({ _id: { $in: visits.filter((v) => v.group).map((v) => v.group) } }, 'name').lean()).map((g) => [String(g._id), g.name]));
-    em = await Emergency.create({
+    const fresh = {
       kind: t.id, title: t.title, startedBy: user.id, startedByName: user.fullName, gateName: gate.name,
       people: visits.map((v) => ({
         visit: v._id, name: `${v.firstName} ${v.lastName}`.trim(), company: v.company || '', pass: v.dailyNumber, host: v.host?.fullName || '',
         hostUnit: v.host?.unit || '', mobile: v.mobile || '', group: v.group ? groups.get(String(v.group)) || 'Event' : '', card: v.card?.no || '',
       })),
-    });
+    };
+    try {
+      em = (await Emergency.create(fresh)).toObject();
+      started = true;
+    } catch (e) {
+      // Another gate started one a moment ago: join it.
+      if (e.code !== 11000) throw e;
+      em = await Emergency.findOne({ status: 'active' }).lean();
+      if (!em) throw e;
+    }
   }
-  const n = em.messages.length;
-  const counts = await queue(em, n, clean, audience, { visitors: visits, allHosts: Boolean(allHosts), title: t.id === 'custom' ? 'Emergency' : t.title });
-  em.messages.push({ at: new Date(), template: t.id, title: t.title, text: clean, audience, allHosts: Boolean(allHosts), by: user.fullName, visitors: counts.visitors, hosts: counts.hosts });
-  if (t.id === 'allclear') Object.assign(em, { status: 'closed', closedAt: new Date(), closedByName: user.fullName });
-  await em.save();
-  return { em, started, counts, closed: t.id === 'allclear' };
+  // Appended atomically, so two messages sent together both stay on record.
+  const msg = { at: new Date(), template: t.id, title: t.title, text: clean, audience, allHosts: Boolean(allHosts), by: user.fullName, visitors: 0, hosts: 0 };
+  const withMsg = await Emergency.findOneAndUpdate({ _id: em._id, status: 'active' }, { $push: { messages: msg } }, { new: true }).lean();
+  if (!withMsg) return { error: 'This emergency has just ended. Send again to start a new one.' };
+  const n = withMsg.messages.length - 1;
+  const counts = await queue(withMsg, n, clean, audience, { visitors: visits, allHosts: Boolean(allHosts), title: t.id === 'custom' ? 'Emergency' : t.title });
+  const closing = t.id === 'allclear' ? { status: 'closed', closedAt: new Date(), closedByName: user.fullName } : {};
+  const final = await Emergency.findOneAndUpdate(
+    { _id: em._id },
+    { $set: { [`messages.${n}.visitors`]: counts.visitors, [`messages.${n}.hosts`]: counts.hosts, ...closing } },
+    { new: true },
+  );
+  return { em: final, started, counts, closed: t.id === 'allclear' };
 }
 
 // Delivery per message and channel: { n: { whatsapp: { sent, failed, queued }, ... } }.

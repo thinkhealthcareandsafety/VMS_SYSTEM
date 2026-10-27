@@ -331,7 +331,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       arrival: { gate: gate.id || undefined, gateName: gate.name, by: req.user.id, byName: req.user.fullName },
       createdBy: req.user.id,
     });
-    audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName }, ip: req.ip });
+    audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName, ...(card ? { card: `${passes.CARD_LABEL[card.type]} ${card.no}` } : {}) }, ip: req.ip });
     if (mobileCheck.mobileVerified === 'otp') await Otp.updateMany({ mobile, verifiedAt: { $exists: true }, usedAt: { $exists: false } }, { usedAt: new Date() });
 
     if (invite) {
@@ -638,7 +638,7 @@ router.post('/:id/reenter', requireRole('guard', 'admin'), async (req, res) => {
   const gate = await passes.gateOf(req.user.id);
   const v = await Visit.findOneAndUpdate(
     { _id: req.params.id, status: 'away', validUntil: { $gt: now } },
-    { status: 'approved', $push: { movements: passes.movement('in', gate, req.user, now) } },
+    { status: 'approved', $unset: { card: 1 }, $push: { movements: passes.movement('in', gate, req.user, now) } }, // the card came back at exit
     { new: true },
   ).populate('host').lean();
   if (!v) return res.status(409).json({ error: 'This pass has ended. Check the visitor in again for a new pass.' });
