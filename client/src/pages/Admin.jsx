@@ -18,6 +18,7 @@ import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
 import { ExtendPassDialog, OverstayAlert } from '../components/Overstay.jsx';
 import { EmergencyBar, EmergencyDialog, useEmergency } from '../components/Emergency.jsx';
+import { LicenseBar, LicensePanel } from '../components/License.jsx';
 import BulkImport from '../components/BulkImport.jsx';
 import { Avatar, Empty, Logo, Modal, Spinner, StatusBadge, STATUS, useToast, useTitle, PoweredBy } from '../components/ui.jsx';
 
@@ -172,6 +173,7 @@ export default function Admin({ user, onLogout }) {
             <button type="button" className="btn btn-ghost btn-icon find-icon" onClick={() => setFindOpen(true)} aria-label="Search"><Search /></button>
           </div>
         </header>
+        <div className="overstay-slot"><LicenseBar admin onOpen={() => go('settings')} /></div>
         <div className="overstay-slot"><EmergencyBar active={emergency} onOpen={() => setSos(true)} /></div>
         <div className="overstay-slot"><OverstayAlert admin liveTick={tick} onChanged={refresh} /></div>
         <EmergencyDialog open={sos} onClose={() => setSos(false)} active={emergency} onChanged={setEmergency} siteName={stats?.siteName} />
@@ -880,6 +882,7 @@ const ACTIONS = {
   'visit.auto_checked_out': ['Checked out automatically: event ended', ''],
   'visit.pass_extended': ['Pass extended', ''],
   'visit.card_set': ['Lanyard card recorded', ''],
+  'license.installed': ['Licence key entered', 'ok'],
   'emergency.started': ['Emergency started, roll call opened', 'bad'],
   'emergency.message': ['Emergency message sent', 'warn'],
   'emergency.safe': ['Marked safe at the assembly point', 'ok'],
@@ -2295,6 +2298,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
 
   return (
     <form className="settings-grid" onSubmit={save}>
+      <LicensePanel />
       <section className="panel">
         <div className="panel-head"><h2>Site</h2></div>
         <div className="panel-body">

@@ -1403,3 +1403,9 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
 .move-tag { display: inline-block; min-width: 28px; margin-right: 6px; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; text-align: center; letter-spacing: 0.04em; text-transform: uppercase; }
 .move-tag.in { background: var(--ok-soft); color: var(--ok); }
 .move-tag.out { background: var(--sunken); color: var(--text-2); }
+/* Licence warning: amber before the end, red after. */
+.license-bar { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--r-lg); border: 1px solid #ecd3a8; background: var(--warn-soft); color: var(--warn); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.license-bar:disabled { cursor: default; }
+.license-bar > svg { width: 18px; height: 18px; flex: none; }
+.license-bar .grow { flex: 1; min-width: 0; }
+.license-bar.is-ended { background: var(--bad-soft); border-color: #efc4c1; color: var(--bad); font-weight: 500; }

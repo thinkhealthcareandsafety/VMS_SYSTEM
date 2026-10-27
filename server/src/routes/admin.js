@@ -17,6 +17,7 @@ const passes = require('../services/passes');
 const settings = require('../services/settings');
 const sheets = require('../services/sheets');
 const overstay = require('../services/overstay');
+const license = require('../services/license');
 const { siteDay, audit, normalizeMobile, cleanText, tidyName, passwordProblem, sha256 } = require('../services/core');
 
 const router = express.Router();
@@ -556,6 +557,14 @@ router.patch('/gates/:id', requireRole('admin'), async (req, res) => {
   res.json(gateRow(gate.toObject()));
 });
 
+// ----- Licence (GateSmartX): see services/license.js -----
+router.post('/license', requireRole('admin'), async (req, res) => {
+  const r = await license.install(req.body?.key);
+  if (r.error) return res.status(400).json({ error: r.error });
+  audit(req.user, 'license.installed', { details: { site: r.lic.site, until: r.lic.until }, ip: req.ip });
+  res.json(await license.status());
+});
+
 // ----- Site settings -----
 const RETENTION_DAYS = [1, 7, 30, 90, 180, 365];
 router.get('/settings', requireRole('admin'), async (req, res) => {
@@ -642,7 +651,7 @@ router.get('/invites', requireRole('admin'), async (req, res) => {
   res.json({ today, rows: rows.map(inviteRow) });
 });
 
-router.post('/invites', requireRole('admin'), async (req, res) => {
+router.post('/invites', requireRole('admin'), license.requireLicense, async (req, res) => {
   const b = req.body || {};
   const firstName = cleanText(b.firstName, 60);
   const lastName = cleanText(b.lastName, 60);

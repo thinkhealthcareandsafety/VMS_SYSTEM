@@ -11,6 +11,7 @@ const { Parcel, Host } = require('../models');
 const passes = require('../services/passes');
 const parcels = require('../services/parcels');
 const settings = require('../services/settings');
+const { requireLicense } = require('../services/license');
 const { siteDay, audit, cleanText, decodeJpeg, normalizeMobile } = require('../services/core');
 
 // Couriers at the gate: parcels coming in for someone, and parcels going out with a courier.
@@ -165,7 +166,7 @@ router.get('/:id/:set(photo|handover)/:n', requireRole('guard', 'admin'), async 
 });
 
 // A parcel arrives (in), or a department hands one over to be sent (out).
-router.post('/', requireRole('guard', 'admin'), async (req, res) => {
+router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res) => {
   const b = req.body || {};
   const direction = b.direction === 'out' ? 'out' : b.direction === 'in' ? 'in' : null;
   if (!direction) return res.status(400).json({ error: 'Is the parcel coming in or going out?' });

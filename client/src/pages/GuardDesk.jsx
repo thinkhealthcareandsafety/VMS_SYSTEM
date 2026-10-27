@@ -20,6 +20,7 @@ import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
 import { ExtendPassDialog, OverstayAlert } from '../components/Overstay.jsx';
 import { EmergencyBar, EmergencyDialog, useEmergency } from '../components/Emergency.jsx';
+import { LicenseBar } from '../components/License.jsx';
 import { warmUp as warmUpMasking } from '../lib/aadhaarMask.js';
 import { bandOf, compare, describePhoto, warmUp as warmUpFaces } from '../lib/faceMatch.js';
 import { checkId, splitCardName } from '../lib/idMatch.js';
@@ -259,6 +260,7 @@ export default function GuardDesk({ user, onLogout }) {
           <UserMenu user={user} onLogout={onLogout} autoPrint={autoPrint} onToggleAutoPrint={toggleAutoPrint} />
         </div>
       </header>
+      <div className="overstay-slot"><LicenseBar /></div>
       <div className="overstay-slot"><EmergencyBar active={emergency} onOpen={() => setSos(true)} /></div>
       <div className="overstay-slot"><OverstayAlert liveTick={liveTick} onChanged={refreshInside} /></div>
       <EmergencyDialog open={sos} onClose={() => setSos(false)} active={emergency} onChanged={setEmergency} siteName={user.siteName} />

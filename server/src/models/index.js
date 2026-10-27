@@ -155,7 +155,9 @@ const settingSchema = new Schema({
   gateName: { type: String, trim: true },     // shown on the guard desk
   idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
   escalateTo: { mobiles: [String], emails: [String] }, // told when a visitor is still inside an hour after the pass ended
-  assemblyPoint: { type: String, trim: true },  // where people gather in an evacuation; filled into the emergency messages
+  assemblyPoint: { type: String, trim: true },
+  license: { type: String },                    // the GateSmartX licence key (services/license)
+  licenseSeenAt: { type: Date },                // the latest time the server has seen: a clock turned back shows here  // where people gather in an evacuation; filled into the emergency messages
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
   fullIdCapture: { type: Boolean },           // keep the full Aadhaar (encrypted) for the Super Admin; only a Super Admin changes it
 }, { versionKey: false, timestamps: true });

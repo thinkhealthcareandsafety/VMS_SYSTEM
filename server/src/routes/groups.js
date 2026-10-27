@@ -1,4 +1,5 @@
 const express = require('express');
+const { requireLicense } = require('../services/license');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const ExcelJS = require('exceljs');
@@ -104,7 +105,7 @@ router.get('/template.xlsx', requireRole('admin'), async (req, res) => {
   res.type(XLSX).attachment('guest list template.xlsx').send(Buffer.from(await wb.xlsx.writeBuffer()));
 });
 
-router.post('/', requireRole('admin'), async (req, res) => {
+router.post('/', requireRole('admin'), requireLicense, async (req, res) => {
   const b = req.body || {};
   const { error, patch } = validateGroup(b);
   if (error) return res.status(400).json({ error });
@@ -379,7 +380,7 @@ publicRouter.get('/join/:code', async (req, res) => {
   if (!g) return res.status(404).json({ error: 'This link is not valid' });
   res.json({ group: g.name, days: groups.dayRange(g), state: await joinState(g), siteName: (await settings.get()).siteName });
 });
-publicRouter.post('/join/:code', joinLimiter, async (req, res) => {
+publicRouter.post('/join/:code', joinLimiter, requireLicense, async (req, res) => {
   const g = await joinGroup(req.params.code);
   if (!g) return res.status(404).json({ error: 'This link is not valid' });
   const state = await joinState(g);

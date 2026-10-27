@@ -9,6 +9,10 @@ module.exports = {
   defaultCountryCode: env.DEFAULT_COUNTRY_CODE || '+91',
   uploadDir: env.UPLOAD_DIR || 'uploads',
   cookieSecure: env.COOKIE_SECURE === 'true',
+  // On the hotel's own server: a GateSmartX licence is needed for new entries, and the internet tunnel
+  // reaches only the pages hosts and guests open (the console and guard desk stay inside the hotel).
+  licenseRequired: env.LICENSE_REQUIRED === 'true',
+  lanOnly: env.LAN_ONLY === 'true',
   // Proxies in front of the app, so req.ip is the visitor's address. Vercel -> Render = 2.
   trustProxy: Number(env.TRUST_PROXY || 1),
   sessionHours: Number(env.SESSION_HOURS || 12),

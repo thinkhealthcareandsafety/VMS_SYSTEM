@@ -11,6 +11,7 @@ const { Material } = require('../models');
 const settings = require('../services/settings');
 const passes = require('../services/passes');
 const material = require('../services/material');
+const { requireLicense } = require('../services/license');
 const { siteDay, audit, cleanText, decodeJpeg } = require('../services/core');
 
 // Material gate passes and gate entries. Guards and admins work them at the gate; heads approve from WhatsApp,
@@ -165,7 +166,7 @@ router.get('/:id/:set(photo|doc|exit)/:n', requireRole('guard', 'admin'), async 
 
 // ---------- Create ----------
 // Outward: waits for the head's approval (or is approved at once by an admin). Inward: recorded as it arrives.
-router.post('/', requireRole('guard', 'admin'), async (req, res) => {
+router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res) => {
   const b = req.body || {};
   const direction = b.direction === 'in' ? 'in' : b.direction === 'out' ? 'out' : null;
   if (!direction) return res.status(400).json({ error: 'Is the material coming in or going out?' });

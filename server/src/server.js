@@ -46,6 +46,14 @@ function createApp() {
   // Public privacy policy, linked from the WhatsApp (Meta) app settings.
   app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'privacy.html')));
   app.get('/api/health', (req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
+  // On the hotel's server, the internet tunnel reaches only what hosts and guests open; the console, the guard
+  // desk and sign-in answer inside the hotel only. Cloudflare marks every tunnelled request with Cf-Connecting-Ip.
+  const PUBLIC_API = /^\/api\/(approvals|parcel-responses|material-approvals|passes|whatsapp|telegram|health)(\/|$)/;
+  app.use((req, res, next) => {
+    if (!config.lanOnly || !req.get('cf-connecting-ip') || !req.path.startsWith('/api/') || PUBLIC_API.test(req.path)) return next();
+    return res.status(403).json({ error: 'This is available only inside the hotel.' });
+  });
+  app.get('/api/license', requireRole('guard', 'admin'), async (req, res) => res.json(await require('./services/license').status()));
   app.get('/api/events', requireRole('guard', 'admin'), stream);
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/visits', require('./routes/visits'));

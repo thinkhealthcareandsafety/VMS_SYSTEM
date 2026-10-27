@@ -2011,3 +2011,47 @@ test('emergency: two gates pressing Send together join one emergency; a returnin
   assert.equal((await call('POST', `/api/visits/${r.body.id}/reenter`, {}, guard)).body.card, null);
   assert.equal((await Visit.findById(r.body.id).lean()).card, undefined);
 });
+
+test('licence: without one new entries pause but check-outs and emergencies work; a key restores them; the tunnel reaches public pages only', async () => {
+  const config = require('../src/config');
+  const license = require('../src/services/license');
+  const { Setting } = require('../src/models');
+  const TEST_KEY = 'eyJzaXRlIjoiVGVzdCBzaXRlIiwidW50aWwiOiIyMDI3LTAxLTI3IiwiZ2F0ZXMiOjMsImlzc3VlZCI6IjIwMjYtMTAtMjcifQ.vNW2YYe7gUsO4Hd8KdIeJgr1BBgjCDDmRMhiMEUZTKNeyy8VGrvEohV6bZ88tkDtt_thjIvx2w4xDVADq47gBg';
+  Object.assign(config, { licenseRequired: true, lanOnly: true });
+  license.forget();
+  try {
+    assert.equal((await call('GET', '/api/license', null, guard)).body.state, 'missing');
+    const blocked = await call('POST', '/api/visits', { firstName: 'Lic', lastName: 'Ence', gender: 'male', mobile: '9700000941', company: 'L', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg() }, guard);
+    assert.equal(blocked.status, 402);
+    assert.match(blocked.body.error, /Check-outs, emergency messages and all records still work/);
+    assert.equal((await call('POST', '/api/material', { direction: 'in', party: { company: 'X' }, items: [{ name: 'Y', qty: 1 }] }, guard)).status, 402);
+    assert.equal((await call('GET', '/api/emergency/setup', null, guard)).status, 200, 'emergency never blocked');
+
+    assert.equal((await call('POST', '/api/admin/license', { key: 'not-a-key' }, admin)).status, 400);
+    assert.equal((await call('POST', '/api/admin/license', { key: TEST_KEY.slice(0, -4) + 'AAAA' }, admin)).status, 400, 'a changed key fails the signature');
+    assert.equal((await call('POST', '/api/admin/license', { key: TEST_KEY }, guard)).status, 403);
+    const ok = await call('POST', '/api/admin/license', { key: TEST_KEY }, admin);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.until, '2027-01-27');
+    assert.equal((await call('POST', '/api/material', { direction: 'in', party: { company: 'X' }, items: [{ name: 'Y', qty: 1 }] }, guard)).status, 201, 'entries work again');
+
+    // After the last day: ended; a clock turned back is caught.
+    license.forget();
+    assert.equal((await license.status(new Date('2027-02-01T10:00:00Z'))).state, 'expired');
+    license.forget();
+    assert.equal((await license.status(new Date('2027-01-15T10:00:00Z'))).state, 'clock', 'the server had seen 1 Feb 2027');
+    await Setting.updateOne({ _id: 'site' }, { $set: { licenseSeenAt: new Date() } });
+    license.forget();
+    assert.equal((await license.status()).state, 'ok');
+
+    // Through the tunnel: approval pages yes, sign-in and the console no.
+    const tunnel = (url) => fetch(base + url, { headers: { 'Cf-Connecting-Ip': '1.2.3.4' } });
+    assert.equal((await tunnel('/api/auth/me')).status, 403);
+    assert.equal((await tunnel('/api/admin/stats')).status, 403);
+    assert.equal((await tunnel('/api/approvals/not-a-real-token-at-all-xyz')).status, 404, 'approval links still reachable');
+    assert.equal((await tunnel('/api/health')).status, 200);
+  } finally {
+    Object.assign(config, { licenseRequired: false, lanOnly: false });
+    license.forget();
+  }
+});

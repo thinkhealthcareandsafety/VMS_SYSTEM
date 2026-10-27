@@ -1,0 +1,8 @@
+# The address the gate tablets and the admin PC open inside the hotel, e.g. https://stregis-desk.gatesmartx.com
+{$LAN_HOST} {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	encode gzip
+	reverse_proxy app:4000
+}

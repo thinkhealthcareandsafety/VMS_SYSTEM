@@ -1,0 +1,13 @@
+**/node_modules
+client/dist
+client/public/ocr
+client/public/faces
+uploads
+print-out
+data
+.env
+deploy/.env
+.git
+.vercel
+.impeccable
+*.log

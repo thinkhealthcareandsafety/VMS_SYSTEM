@@ -16,6 +16,7 @@ const passes = require('../services/passes');
 const gate = require('../services/gate');
 const vault = require('../services/vault');
 const overstay = require('../services/overstay');
+const { requireLicense } = require('../services/license');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
@@ -246,7 +247,7 @@ router.post('/otp/verify', requireRole('guard', 'admin'), async (req, res) => {
 });
 
 // Guard check-in: captures visitor, masked Aadhaar, host, and sends approval SMS.
-router.post('/', requireRole('guard', 'admin'), async (req, res) => {
+router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res) => {
   const b = req.body || {};
   const firstName = tidyName(cleanText(b.firstName, 60));
   const lastName = tidyName(cleanText(b.lastName, 60));

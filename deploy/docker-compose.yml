@@ -1,0 +1,61 @@
+# The visitor system on the hotel's own mini PC. Every service restarts by itself after a power cut.
+#   mongo       the database (on this PC only, never exposed to the network)
+#   app         the system: guard desk, admin console, approvals, the worker that sends messages
+#   caddy       https on the hotel network, so tablet cameras work (certificate from Let's Encrypt)
+#   cloudflared the outgoing tunnel: hosts' approval links and the WhatsApp webhook reach the app from outside;
+#               the app answers only those pages through it (LAN_ONLY)
+#   backup      every night at 02:00: the database and new photos to the backup drive, 30 days kept
+name: vms
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - ${DATA_DIR:-/srv/vms/data}/mongo:/data/db
+
+  app:
+    build: { context: .., dockerfile: Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/vms
+      UPLOAD_DIR: /data/uploads
+      TRUST_PROXY: "1"
+      COOKIE_SECURE: "true"
+      LAN_ONLY: "true"
+      LICENSE_REQUIRED: "true"
+      PRINTER_MODE: "off"
+      TZ: Asia/Kolkata
+    volumes:
+      - ${DATA_DIR:-/srv/vms/data}/uploads:/data/uploads
+    depends_on: [mongo]
+
+  caddy:
+    build: { context: ., dockerfile: Dockerfile.caddy }
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      LAN_HOST: ${LAN_HOST}
+      CF_API_TOKEN: ${CF_API_TOKEN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_DIR:-/srv/vms/data}/caddy:/data
+    depends_on: [app]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2024.12.2
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on: [app]
+
+  backup:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment: { TZ: Asia/Kolkata }
+    entrypoint: ["/bin/bash", "/backup.sh"]
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - ${DATA_DIR:-/srv/vms/data}/uploads:/uploads:ro
+      - ${BACKUP_DIR:-/mnt/vms-backup}:/backup
+    depends_on: [mongo]
