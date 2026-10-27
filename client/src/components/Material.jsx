@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowDownToLine, Check, CheckCircle2, Download, FileText, Loader2, LogIn, LogOut, Package, Plus, ScanText, Search, Trash2, Truck, X,
+  AlertTriangle, ArrowDownToLine, Printer, Check, CheckCircle2, Download, FileText, Loader2, LogIn, LogOut, Package, Plus, ScanText, Search, Trash2, Truck, X,
 } from 'lucide-react';
+import { DailyReportDialog } from './DailyReport.jsx';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import { readInvoice, warmUpInvoiceReader } from '../lib/invoiceRead.js';
@@ -34,6 +35,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0, lanyard = f
   const [data, setData] = useState(null);
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState(null);
+  const [report, setReport] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 250); return () => clearTimeout(t); }, [q]);
   const load = useCallback(() => {
@@ -49,6 +51,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0, lanyard = f
         <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Entry no., supplier, item, invoice, challan, vehicle, GSTIN" aria-label="Search material" /></div>
         <span className="spacer-x" />
         <button className="btn btn-sm btn-primary" onClick={() => setAdding(true)}><ArrowDownToLine />Vendor arrived: record goods</button>
+        {admin && <button className="btn btn-sm" onClick={() => setReport(true)}><Printer />Daily report</button>}
         {admin && <a className="btn btn-sm" href={`/api/material/export.xlsx?${new URLSearchParams(term ? { q: term, view: 'inward' } : { view })}`}><Download />Excel register</a>}
       </div>
       {!term && (
@@ -86,6 +89,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0, lanyard = f
       <InwardForm open={adding} lanyard={lanyard} units={data?.units || UNITS} onClose={() => setAdding(false)}
         onDone={(m) => { setAdding(false); toast(`${m.number} recorded. When the vendor leaves, open it and press Check out vendor.`); load(); setOpenId(m.id); }} />
       <MaterialDetail id={openId} liveTick={liveTick} onClose={() => setOpenId(null)} onChanged={load} />
+      <DailyReportDialog open={report} onClose={() => setReport(false)} />
     </section>
   );
 }

@@ -69,6 +69,7 @@ function createApp() {
   app.use('/api/parcels', require('./routes/parcels').router);
   app.use('/api/parcel-responses', require('./routes/parcels').publicRouter);
   app.use('/api/emergency', require('./routes/emergency'));
+  app.use('/api/reports', require('./routes/reports'));
 
   // Production: serve the built React app. Development: Vite serves it on :5173.
   const dist = path.resolve(__dirname, '../../client/dist');

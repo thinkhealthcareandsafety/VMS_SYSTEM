@@ -325,4 +325,4 @@ publicRouter.post('/:token/decision', async (req, res) => {
   res.status(r.status).json(r.body);
 });
 
-module.exports = { router, publicRouter };
+module.exports = { router, publicRouter, row };

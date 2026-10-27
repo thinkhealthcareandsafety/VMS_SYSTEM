@@ -2141,3 +2141,16 @@ test('admin can delete a host: refused while a visitor is here for them; kept fo
   assert.equal((await call('DELETE', `/api/admin/hosts/${used}`, null, admin)).status, 404);
   await Visit.collection.deleteOne({ _id: visit.insertedId });
 });
+
+test('daily report: the day\'s material received, parcels in and parcels out, for admins only', async () => {
+  const r = await call('GET', '/api/reports/daily', null, admin);
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.material) && Array.isArray(r.body.parcelsIn) && Array.isArray(r.body.parcelsOut));
+  assert.match(r.body.day, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(r.body.material.every((m) => m.direction === 'in'));
+  assert.ok(r.body.parcelsIn.every((p) => p.direction === 'in' && p.status !== 'void'));
+  assert.ok(r.body.parcelsOut.every((p) => p.direction === 'out'));
+  assert.equal((await call('GET', '/api/reports/daily', null, guard)).status, 403);
+  assert.equal((await call('GET', '/api/reports/daily?day=2999-01-01', null, admin)).status, 400);
+  assert.deepEqual((await call('GET', '/api/reports/daily?day=2020-01-01', null, admin)).body.material, []);
+});

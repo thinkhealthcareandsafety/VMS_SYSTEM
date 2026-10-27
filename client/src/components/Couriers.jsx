@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Barcode, BellRing, Check, CheckCircle2, Download, Lock, Mail, Package, Search, Send, ShieldAlert,
+  AlertTriangle, ArrowDownToLine, Printer, ArrowUpFromLine, Barcode, BellRing, Check, CheckCircle2, Download, Lock, Mail, Package, Search, Send, ShieldAlert,
   Truck, Undo2, UserRound, X, XCircle,
 } from 'lucide-react';
+import { DailyReportDialog } from './DailyReport.jsx';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import HostPicker from './HostPicker.jsx';
 import BarcodeScan, { carrierFromAwb } from './BarcodeScan.jsx';
@@ -40,6 +41,7 @@ export default function CourierBoard({ admin = false, liveTick = 0 }) {
   const [data, setData] = useState(null);
   const [form, setForm] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [report, setReport] = useState(false);
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 250); return () => clearTimeout(t); }, [q]);
   const load = useCallback(() => {
     api(`/api/parcels?${new URLSearchParams(term ? { q: term } : { view })}`).then(setData).catch(() => setData({ rows: [], counts: {} }));
@@ -55,6 +57,7 @@ export default function CourierBoard({ admin = false, liveTick = 0 }) {
         <span className="spacer-x" />
         <button className="btn btn-sm btn-primary" onClick={() => setForm('in')}><ArrowDownToLine />Parcel arrived</button>
         <button className="btn btn-sm" onClick={() => setForm('out')}><ArrowUpFromLine />Send a parcel</button>
+        {admin && <button className="btn btn-sm" onClick={() => setReport(true)}><Printer />Daily report</button>}
         {admin && <a className="btn btn-sm" href={`/api/parcels/export.xlsx?${new URLSearchParams(term ? { q: term } : { view })}`}><Download />Excel register</a>}
       </div>
       {!term && (
@@ -94,6 +97,7 @@ export default function CourierBoard({ admin = false, liveTick = 0 }) {
           load();
         }} />
       <ParcelDetail id={openId} admin={admin} liveTick={liveTick} onClose={() => setOpenId(null)} onChanged={load} />
+      <DailyReportDialog open={report} onClose={() => setReport(false)} />
     </section>
   );
 }

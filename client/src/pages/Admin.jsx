@@ -6,13 +6,14 @@ import {
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
   CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown, TimerReset, Trash2,
 } from 'lucide-react';
-import { api, cardLabel, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
+import { api, cardLabel, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel, today } from '../api.js';
 import QRCode from 'qrcode';
 import HostPicker from '../components/HostPicker.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
 import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
 import { printEvacuation } from '../lib/evacuation.js';
+import { printDailyReport, REPORT_PARTS } from '../lib/dailyReport.js';
 import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
@@ -214,6 +215,7 @@ const ACTIONS_QUICK = [
   { label: 'New event or group', icon: PartyPopper, to: ['groups', {}, { action: 'add' }] },
   { label: 'Download visitor data', icon: Download, run: ({ openExport }) => openExport({}) },
   { label: 'Print the evacuation list', icon: Siren, run: ({ toast }) => printEvacuation({ onError: (m) => toast(m, 'bad') }) },
+  { label: "Print today's report: material, parcels in and out", icon: Printer, run: ({ toast }) => printDailyReport({ day: today(), parts: REPORT_PARTS.map((p) => p.key), onError: (m) => toast(m, 'bad') }) },
 ];
 function QuickFind({ open, onClose, go, openVisit, openExport, toast }) {
   const [q, setQ] = useState('');

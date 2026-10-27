@@ -4,7 +4,7 @@
 #   caddy       https on the hotel network, so tablet cameras work (certificate from Let's Encrypt)
 #   cloudflared the outgoing tunnel: hosts' approval links and the WhatsApp webhook reach the app from outside;
 #               the app answers only those pages through it (LAN_ONLY)
-#   backup      every night at 02:00: the database and new photos to the backup drive, 30 days kept
+#   backup      every night at 02:00: the database and new photos to the backup drive, one year kept
 name: vms
 
 services:

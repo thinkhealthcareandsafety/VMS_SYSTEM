@@ -1102,43 +1102,42 @@ function PrintStatus({ status }) {
 }
 
 // ---------------------------------------------------------------- Printable pass
-// Printed from a tiny hidden page of its own (80 mm receipt layout; on A4 it prints as a small slip), so the
-// print dialog opens at once on every computer, Macs included, instead of rendering the whole app first.
+// Printed from a tiny hidden page of its own, on the hotel's 1.5 x 2.5 inch slip (38 x 64 mm, portrait; adhesive or plain),
+// so the print dialog opens at once on every computer instead of rendering the whole app first. Everything fits on one slip.
 const PASS_CSS = `
-@page { size: 80mm auto; margin: 0; }
+@page { size: 38.1mm 63.5mm; margin: 0; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: #fff; }
-body { width: 72mm; margin: 0 auto; padding: 3mm 0 5mm; color: #000; font: 9pt/1.25 -apple-system, "Segoe UI", Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.logos { display: flex; align-items: center; justify-content: center; gap: 3.5mm; }
-.logos img { display: block; height: 8.5mm; width: auto; }
-.logos img:first-child { height: 11mm; }
-.logos span { width: .25mm; height: 8mm; background: #000; }
-.band { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.4mm 2.5mm; background: #9c1c2e; color: #fff; }
-.band b { font-size: 10pt; letter-spacing: .24em; }
-.band span { font-size: 8pt; letter-spacing: .06em; }
-.id { display: grid; grid-template-columns: 23mm 1fr; gap: 3mm; margin-top: 3mm; align-items: start; }
-.photo { display: block; width: 23mm; height: 28mm; object-fit: cover; border: .4mm solid #000; }
-.nophoto { width: 23mm; height: 28mm; border: .4mm dashed #000; }
-.nums { display: flex; gap: 3mm; }
-.nums div { flex: 1; border: .4mm solid #000; padding: .6mm 1.5mm 1mm; }
+body { width: 38.1mm; height: 63.5mm; overflow: hidden; padding: 1.8mm 2mm 1.6mm; color: #000; font: 6pt/1.2 -apple-system, "Segoe UI", Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; display: flex; flex-direction: column; }
+.logos { display: flex; align-items: center; justify-content: center; gap: 1.6mm; }
+.logos img { display: block; height: 3.6mm; width: auto; }
+.logos img:first-child { height: 4.6mm; }
+.logos span { width: .2mm; height: 3.6mm; background: #000; }
+.band { display: flex; justify-content: space-between; align-items: center; margin-top: 1.2mm; padding: .5mm 1.2mm; background: #9c1c2e; color: #fff; }
+.band b { font-size: 6pt; letter-spacing: .14em; }
+.band span { font-size: 5.5pt; }
+.id { display: grid; grid-template-columns: 12.5mm 1fr; gap: 1.6mm; margin-top: 1.3mm; align-items: start; }
+.photo { display: block; width: 12.5mm; height: 15mm; object-fit: cover; border: .3mm solid #000; }
+.nophoto { width: 12.5mm; height: 15mm; border: .3mm dashed #000; }
+.nums { display: flex; flex-direction: column; gap: .8mm; }
+.nums div { border: .3mm solid #000; padding: .2mm 1mm .4mm; }
 .nums div:first-child { border-color: #9c1c2e; }
 .nums div:first-child strong { color: #9c1c2e; }
-.nums small { display: block; font-size: 6.5pt; letter-spacing: .16em; }
-.nums strong { display: block; font-size: 20pt; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
-.name { font-size: 12.5pt; font-weight: 700; line-height: 1.15; margin-top: 2mm; word-break: break-word; }
-.company { font-size: 8.5pt; margin-top: .4mm; }
-.rows { margin-top: 2.5mm; border-top: .3mm solid #000; }
-.row { display: flex; justify-content: space-between; gap: 3mm; padding: 1mm 0; border-bottom: .2mm solid #999; font-size: 8.5pt; }
-.row span { color: #222; white-space: nowrap; }
-.row strong { text-align: right; font-weight: 600; }
-.valid { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.6mm 2.5mm; border: .6mm solid #9c1c2e; }
-.valid small { font-size: 7pt; letter-spacing: .16em; }
-.valid strong { font-size: 11.5pt; }
-.scan { display: grid; grid-template-columns: 22mm 1fr; gap: 3mm; align-items: center; margin-top: 2.5mm; }
-.qr { display: block; width: 22mm; height: 22mm; image-rendering: pixelated; }
-.code { font: 700 11pt ui-monospace, Consolas, monospace; letter-spacing: .08em; }
-.scan p { margin: .8mm 0 0; font-size: 7.5pt; line-height: 1.3; }
-.foot { margin-top: 2.5mm; padding-top: 1.8mm; border-top: .3mm dashed #000; font-size: 7pt; line-height: 1.35; text-align: center; }
+.nums small { display: block; font-size: 4.5pt; letter-spacing: .14em; }
+.nums strong { display: block; font-size: 12pt; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
+.nums div + div strong { font-size: 8pt; }
+.name { font-size: 7.5pt; font-weight: 700; line-height: 1.12; margin-top: 1.1mm; max-height: 2.24em; overflow: hidden; word-break: break-word; }
+.company { font-size: 5.5pt; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rows { margin-top: .8mm; border-top: .2mm solid #000; }
+.row { display: flex; gap: 1mm; padding: .35mm 0; border-bottom: .15mm solid #999; font-size: 5.5pt; }
+.row span { color: #333; flex: none; width: 8.5mm; }
+.row strong { font-weight: 600; line-height: 1.3; max-height: 2.6em; overflow: hidden; word-break: break-word; }
+.scan { display: grid; grid-template-columns: 13mm 1fr; gap: 1.6mm; align-items: center; margin-top: auto; }
+.qr { display: block; width: 13mm; height: 13mm; image-rendering: pixelated; }
+.valid { border: .4mm solid #9c1c2e; padding: .4mm .9mm .5mm; }
+.valid small { display: block; font-size: 4.5pt; letter-spacing: .14em; }
+.valid strong { display: block; font-size: 6.5pt; line-height: 1.15; }
+.code { margin-top: .8mm; font: 700 6pt ui-monospace, Consolas, monospace; letter-spacing: .04em; }
 `;
 const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -1167,34 +1166,34 @@ async function fetchPhoto(id) {
   } catch { return ''; }
 }
 
-// The pass slip: stuck on the back of the hotel's lanyard card. Compact, in the hotels' colours (it still prints cleanly on a black-only slip printer), and
-// laid out for a glance from a guard: face, pass and card numbers, whom they meet, until when, and the code to scan.
+// The pass slip, in the hotels' colours (it still prints cleanly on a black-only label printer), laid out for a glance
+// from a guard: face, pass and card numbers, whom they meet, until when, and the code to scan.
 function passHtml(visit, siteName, photo, qr) {
   const name = `${visit.firstName} ${visit.lastName}`;
   const at = visit.entry?.at || visit.decidedAt;
-  const multiDay = visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
 <div class="logos"><img src="${location.origin}/brand/stregis.png" alt="St. Regis"><span></span><img src="${location.origin}/brand/marquis.png" alt="Marriott Marquis"></div>
-<div class="band"><b>${visit.card?.type === 'vendor' ? 'VENDOR' : 'VISITOR'} PASS</b><span>${escHtml(fmtDate(at).toUpperCase())}</span></div>
+<div class="band"><b>${visit.card?.type === 'vendor' ? 'VENDOR' : 'VISITOR'}</b><span>${escHtml(fmtDate(at).toUpperCase())}</span></div>
 <div class="id">
   ${photo ? `<img class="photo" src="${photo}" alt="">` : '<div class="nophoto"></div>'}
-  <div>
-    <div class="nums">
-      <div><small>PASS</small><strong>${escHtml(visit.dailyNumber)}</strong></div>
-      ${visit.card?.no ? `<div><small>CARD</small><strong>${escHtml(visit.card.no)}</strong></div>` : ''}
-    </div>
-    <div class="name">${escHtml(name)}</div>
-    <div class="company">${escHtml(visit.company)}</div>
+  <div class="nums">
+    <div><small>PASS</small><strong>${escHtml(visit.dailyNumber)}</strong></div>
+    ${visit.card?.no ? `<div><small>CARD</small><strong>${escHtml(visit.card.no)}</strong></div>` : ''}
   </div>
 </div>
+<div class="name">${escHtml(name)}</div>
+${visit.company ? `<div class="company">${escHtml(visit.company)}</div>` : ''}
 <div class="rows">
   <div class="row"><span>Meeting</span><strong>${escHtml(visit.host?.name)}${visit.host?.unit ? ` · ${escHtml(visit.host.unit)}` : ''}</strong></div>
   <div class="row"><span>In</span><strong>${escHtml(fmtTime(at))}${visit.entry?.gate ? ` · ${escHtml(visit.entry.gate)}` : ''}</strong></div>
-  <div class="row"><span>Visitor ID</span><strong>${escHtml(visit.ref)}</strong></div>
 </div>
-${visit.validUntil ? `<div class="valid"><small>VALID TILL</small><strong>${escHtml(fmtUntil(visit.validUntil))}</strong></div>` : ''}
-${qr ? `<div class="scan"><img class="qr" src="${qr}" alt=""><div><div class="code">${escHtml(showCode(visit.passCode))}</div><p>${multiDay ? 'Scan at any gate each time you go out or come back in.' : 'Scan at the gate when you leave.'}</p></div></div>` : ''}
-<div class="foot">Wear this pass where it can be seen. Return the lanyard card at the gate when you leave.<br>In an emergency, follow hotel staff to the assembly point.</div>
+<div class="scan">
+  ${qr ? `<img class="qr" src="${qr}" alt="">` : '<span></span>'}
+  <div>
+    ${visit.validUntil ? `<div class="valid"><small>VALID TILL</small><strong>${escHtml(fmtUntil(visit.validUntil))}</strong></div>` : ''}
+    ${qr ? `<div class="code">${escHtml(showCode(visit.passCode))}</div>` : ''}
+  </div>
+</div>
 </body></html>`;
 }
 
