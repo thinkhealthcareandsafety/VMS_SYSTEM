@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowDown, BadgeCheck, Bell, ChevronRight, Plus, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, TimerReset, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
-import { api, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
+import { api, cardLabel, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
 import { cue } from '../lib/notify.js';
 import { printEvacuation } from '../lib/evacuation.js';
@@ -27,7 +27,8 @@ import { checkId, splitCardName } from '../lib/idMatch.js';
 const DRAFT_KEY = 'vms-guard-draft';
 const DISMISS_KEY = 'vms-guard-dismissed';
 const AUTOPRINT_KEY = 'vms-guard-autoprint';
-const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '', validity: '8h', validUntilDay: '', idType: 'aadhaar', idTypeOther: '' };
+const EMPTY = { mobile: '', firstName: '', lastName: '', gender: '', email: '', company: '', purpose: '', validity: '8h', validUntilDay: '', idType: 'aadhaar', idTypeOther: '', cardNo: '', cardType: 'visitor' };
+const CARD_TYPES = [['visitor', 'Visitor card'], ['vendor', 'Vendor card']];
 // How long a pass lasts. Hours count from when the host lets the visitor in; days run to 11:59 pm on the last day.
 const VALIDITY = [['2h', '2 hours'], ['4h', '4 hours'], ['8h', '8 hours'], ['today', 'Today'], ['3d', '3 days'], ['7d', '7 days'], ['10d', '10 days'], ['20d', '20 days'], ['30d', '30 days'], ['date', 'Pick a date']];
 const VALIDITY_HOURS = { '2h': 2, '4h': 4, '8h': 8 };
@@ -282,6 +283,7 @@ export default function GuardDesk({ user, onLogout }) {
                 onCancel={() => act.cancel(open)}
                 onReprint={() => act.reprint(open)}
                 onPrint={() => printPass(open)}
+                onCard={(v) => setOpen((cur) => (cur && cur.id === v.id ? { ...cur, card: v.card } : cur))}
               />
             ) : (
               <CheckInForm
@@ -600,7 +602,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
           ...(verify === 'skipped' ? { otpSkip: true } : {}),
           ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, idType, ...(idType === 'other' && form.idTypeOther?.trim() ? { idTypeOther: form.idTypeOther.trim() } : {}),
           ...(idCheck ? { idCheck: { status: idCheck.status, source: idCheck.source, nameScore: idCheck.nameScore, gender: idCheck.gender, tamper: idCheck.tamper } } : {}), ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}),
-          validity: form.validity || '8h', ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}) },
+          validity: form.validity || '8h', ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}),
+          ...(form.cardNo ? { cardNo: form.cardNo, cardType: form.cardType || 'visitor' } : {}) },
       });
       store.clear();
       onSubmitted({
@@ -743,6 +746,19 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
           )}
           <span className="hint">{validityPreview(form.validity || '8h', form.validUntilDay)}</span>
         </div>
+        <div className="field">
+          <span id="lbl-card">Hotel lanyard card <span className="faint">· the number on the card you hand over</span></span>
+          <div className="card-entry">
+            <div className="seg" role="radiogroup" aria-labelledby="lbl-card">
+              {CARD_TYPES.map(([key, label]) => (
+                <button type="button" role="radio" key={key} aria-checked={(form.cardType || 'visitor') === key} aria-pressed={(form.cardType || 'visitor') === key} onClick={() => update({ cardType: key })}>{label}</button>
+              ))}
+            </div>
+            <input className="input mono card-no" value={form.cardNo || ''} onChange={(e) => update({ cardNo: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 10) })}
+              placeholder="e.g. 01" aria-label="Lanyard card number" autoComplete="off" />
+          </div>
+          <span className="hint">Printed on the pass slip that goes on the back of the card. Collect the card when they leave.</span>
+        </div>
       </section>
 
       <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
@@ -865,7 +881,40 @@ function CamTile({ icon: Icon, label, onClick }) {
 }
 
 // ---------------------------------------------------------------- One visit, after sending
-function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprint, onPrint }) {
+// The lanyard card on the approved pass: shown, or entered / changed here before the slip is printed.
+function CardOnPass({ visit, onSaved }) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [no, setNo] = useState('');
+  const [type, setType] = useState('visitor');
+  const [busy, setBusy] = useState(false);
+  const start = () => { setNo(visit.card?.no || ''); setType(visit.card?.type || 'visitor'); setEditing(true); };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const v = await api(`/api/visits/${visit.id}/card`, { method: 'POST', body: { cardNo: no, cardType: type } });
+      onSaved?.(v); setEditing(false); toast(v.card ? `${cardLabel(v.card)} recorded.` : 'Card removed.');
+    } catch (e) { toast(e.message, 'bad'); } finally { setBusy(false); }
+  };
+  if (!editing) {
+    return visit.card
+      ? <div className="pass-valid"><CreditCard size={14} /><strong>{cardLabel(visit.card)}</strong><button type="button" className="link-btn" onClick={start}>Change</button></div>
+      : <button type="button" className="btn btn-sm" style={{ justifySelf: 'start' }} onClick={start}><CreditCard />Add lanyard card no.</button>;
+  }
+  return (
+    <div className="card-entry">
+      <div className="seg" role="radiogroup" aria-label="Card type">
+        {CARD_TYPES.map(([k, l]) => <button type="button" key={k} role="radio" aria-checked={type === k} aria-pressed={type === k} onClick={() => setType(k)}>{l}</button>)}
+      </div>
+      <input className="input mono card-no" value={no} onChange={(e) => setNo(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 10))} placeholder="e.g. 01" aria-label="Lanyard card number" autoFocus
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } }} />
+      <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={save}>{busy ? <Spinner /> : <Check />}Save</button>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(false)}>Cancel</button>
+    </div>
+  );
+}
+
+function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprint, onPrint, onCard }) {
   useTick(1000);
   const name = `${visit.firstName} ${visit.lastName}`;
   const hostFirst = visit.host?.name?.split(' ')[0] || 'the host';
@@ -922,6 +971,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
                 <div><small>Visitor ID</small><span className="mono">{visit.ref}</span></div>
               </div>
               {visit.validUntil && <div className="pass-valid"><Clock size={14} />Valid till <strong>{fmtUntil(visit.validUntil)}</strong></div>}
+              <CardOnPass visit={visit} onSaved={onCard} />
               {visit.passCode && (
                 <div className="pass-code">
                   <QrImage value={visit.passCode} />
@@ -1016,7 +1066,7 @@ body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/
 .logos { display: flex; align-items: center; justify-content: center; gap: 4mm; margin-bottom: 1mm; }
 .logos img { display: block; height: 11mm; width: auto; }
 .logos img + span { width: .25mm; height: 10mm; background: #000; }
-.logos img:last-child { height: 14mm; }
+.logos img:first-child { height: 14mm; }
 .title { font-size: 9pt; letter-spacing: .22em; margin-top: 1mm; }
 .no { font-size: 64pt; font-weight: 700; line-height: 1; margin: 3mm 0 1mm; letter-spacing: -.03em; }
 .date { font-size: 10pt; margin-bottom: 3mm; }
@@ -1027,6 +1077,8 @@ body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/
 .row { display: flex; justify-content: space-between; gap: 4mm; font-size: 10pt; text-align: left; padding: .6mm 0; }
 .row strong { text-align: right; font-weight: 600; }
 .foot { font-size: 8.5pt; }
+.cardno { display: inline-block; border: .6mm solid #000; padding: 1mm 4mm; margin: 0 0 3mm; font-size: 8pt; letter-spacing: .14em; }
+.cardno strong { display: block; font-size: 20pt; letter-spacing: .02em; line-height: 1.1; }
 .valid { border: .5mm solid #000; padding: 1.5mm 2mm; margin: 0 0 3mm; font-size: 9pt; letter-spacing: .06em; }
 .valid strong { display: block; font-size: 13pt; letter-spacing: 0; margin-top: .5mm; }
 .qr { display: block; width: 32mm; height: 32mm; margin: 0 auto 1mm; image-rendering: pixelated; }
@@ -1063,9 +1115,10 @@ async function fetchPhoto(id) {
 function passHtml(visit, siteName, photo, qr) {
   const name = `${visit.firstName} ${visit.lastName}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
-<div class="logos"><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"><span></span><img src="${location.origin}/brand/stregis-print.png" alt="St. Regis"></div>
-<div class="title">VISITOR PASS</div>
+<div class="logos"><img src="${location.origin}/brand/stregis-print.png" alt="St. Regis"><span></span><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"></div>
+<div class="title">${visit.card?.type === 'vendor' ? 'VENDOR' : 'VISITOR'} PASS</div>
 <div class="no">${escHtml(visit.dailyNumber)}</div>
+${visit.card?.no ? `<div class="cardno">LANYARD CARD<strong>${escHtml(visit.card.no)}</strong></div>` : ''}
 <div class="date">${escHtml(fmtDate(visit.decidedAt))} · ${escHtml(fmtTime(visit.decidedAt))}</div>
 ${visit.validUntil ? `<div class="valid">VALID TILL<strong>${escHtml(fmtUntil(visit.validUntil))}</strong></div>` : ''}
 ${photo ? `<img class="photo" src="${photo}" alt="">` : ''}
@@ -1197,7 +1250,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
   const [extending, setExtending] = useState(null);
 
   const term = q.trim().toLowerCase();
-  const match = (v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref}`.toLowerCase().includes(term);
+  const match = (v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref} card ${v.card?.no || ''}`.toLowerCase().includes(term);
   const rows = (data?.visits || []).filter(match).slice().reverse();
   // People who should have left: their pass ended (or, for old passes, they have been in far too long). They come
   // first, oldest first, with a plain instruction, so nobody stays on the list by mistake.
@@ -1222,9 +1275,10 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
     }
   };
   const name = (v) => `${v.firstName} ${v.lastName}`;
+  const collect = (r) => (r.card?.no ? ` Collect ${cardLabel(r.card).toLowerCase()} from them.` : '');
   const checkout = (v) => run(v, 'out', 'checkout', (r) => toast(r.status === 'away'
-    ? `${name(v)} is out. The pass stays valid till ${fmtUntil(r.validUntil)}, so they can come back on it.`
-    : `${name(v)} checked out.`));
+    ? `${name(v)} is out. The pass stays valid till ${fmtUntil(r.validUntil)}, so they can come back on it.${collect(r)}`
+    : `${name(v)} checked out.${collect(r)}`));
   const letIn = (v) => run(v, 'in', 'reenter', () => toast(`${name(v)} let in again on pass ${v.dailyNumber}.`, 'ok'));
   const endPass = (v) => run(v, 'end', 'end-pass', () => toast(`${name(v)}’s pass has ended. It can no longer be used.`));
   const armed = (key, v) => confirmId === `${key}:${v.id}`;
@@ -1238,7 +1292,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
       <div className={`visitor-item${isLate ? ' is-expired' : ''}`} key={v.id}>
         <Avatar src={`/api/visits/${v.id}/photo`} name={name(v)} size={48} square />
         <div style={{ minWidth: 0 }}>
-          <div className="top"><span className="pass-chip" title={`Pass number ${v.dailyNumber}`}>{v.dailyNumber}</span><span className="name">{name(v)}</span></div>
+          <div className="top"><span className="pass-chip" title={`Pass number ${v.dailyNumber}`}>{v.dailyNumber}</span><span className="name">{name(v)}</span>{v.card && <span className="card-chip">{cardLabel(v.card)}</span>}</div>
           <div className="meta"><Building2 size={13} style={{ verticalAlign: -2 }} /> {v.company} · to {v.host?.name}, {v.host?.unit}</div>
           <div className="time">
             In {day}{fmtTime(since)}{v.lastIn?.gate ? ` · ${v.lastIn.gate}` : ''} · {fmtDuration(mins)}
@@ -1286,7 +1340,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
       )}
       <div className="input-group">
         <Search />
-        <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, flat" aria-label="Search visitors" />
+        <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, card, flat" aria-label="Search visitors" />
       </div>
       <div className="visitor-list">
         {!data && [0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 74, borderRadius: 16 }} />)}

@@ -74,7 +74,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0 }) {
                   <span className="material-top"><strong className="mono">{m.number}</strong><span className="faint">{supplier(m.party)}</span><StatusBadge m={m} /></span>
                   <span className="material-what">{itemsLine(m)}</span>
                   <span className="faint">
-                    {docsLine(m.docs) || 'No invoice or challan'}{m.department ? ` · ${m.department}` : ''}{m.vehicle?.number ? ` · ${m.vehicle.number}` : ''}
+                    {docsLine(m.docs) || 'No invoice or challan'}{m.cardNo ? ` · card ${m.cardNo}` : ''}{m.department ? ` · ${m.department}` : ''}{m.vehicle?.number ? ` · ${m.vehicle.number}` : ''}
                     {` · in ${fmtDateTime(m.createdAt)}`}{m.checkedOutAt ? ` · out ${fmtDateTime(m.checkedOutAt)}` : ''}
                   </span>
                 </span>
@@ -94,7 +94,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0 }) {
 const blankItem = () => ({ code: '', name: '', qty: '1', unit: 'nos' });
 const blank = () => ({
   items: [blankItem()], party: { company: '', name: '', address: '', mobile: '', gstin: '' }, docs: { invoice: '', dc: '' },
-  department: '', vehicle: { number: '', driver: '' }, note: '',
+  department: '', vehicle: { number: '', driver: '' }, note: '', cardNo: '',
 });
 
 function InwardForm({ open, units, onClose, onDone }) {
@@ -213,6 +213,9 @@ function InwardForm({ open, units, onClose, onDone }) {
             <label className="field"><span>For department <span className="faint">· optional</span></span><input className="input" value={f.department} onChange={(e) => set('department', e.target.value)} placeholder="Kitchen, Engineering, Stores…" maxLength={60} /></label>
             <label className="field"><span>Vehicle no. <span className="faint">· optional</span></span><input className="input mono" value={f.vehicle.number} onChange={(e) => setIn('vehicle', 'number', e.target.value.toUpperCase())} placeholder="DL 1L AB 1234" maxLength={20} /></label>
           </div>
+          <label className="field" style={{ maxWidth: 260 }}><span>Vendor card no. <span className="faint">· the hotel lanyard card you hand over</span></span>
+            <input className="input mono" value={f.cardNo} onChange={(e) => set('cardNo', e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 10))} placeholder="e.g. 01" autoComplete="off" />
+          </label>
           <div className="field">
             <span>Photos of the goods <span className="faint">· optional, up to 3</span></span>
             <PhotoPicker photos={photos} onChange={setPhotos} max={3} onError={setErr} />
@@ -274,6 +277,7 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
               {m.party?.gstin && <><dt>GSTIN</dt><dd className="mono">{m.party.gstin}</dd></>}
               <dt>Invoice / challan</dt><dd className="mono">{docsLine(m.docs) || <span className="faint">None given</span>}</dd>
               {m.department && <><dt>For</dt><dd>{m.department}</dd></>}
+              {m.cardNo && <><dt>Vendor card</dt><dd className="mono">{m.cardNo}</dd></>}
               {m.vehicle?.number && <><dt>Vehicle</dt><dd className="mono">{m.vehicle.number}{m.vehicle.driver ? ` · ${m.vehicle.driver}` : ''}</dd></>}
               {m.note && <><dt>Remarks</dt><dd>{m.note}</dd></>}
               <dt>Recorded</dt><dd>{m.createdBy} · {fmtDateTime(m.createdAt)}</dd>
@@ -299,7 +303,7 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
                 </ol>
               </div>
             )}
-            {leaving && <CheckoutForm m={m} onCancel={() => setLeaving(false)} onDone={(next) => { setM(next); setLeaving(false); onChanged(); toast(next.takenBack ? `${next.number}: vendor checked out with part of the goods.` : `${next.number}: vendor checked out.`); }} />}
+            {leaving && <CheckoutForm m={m} onCancel={() => setLeaving(false)} onDone={(next) => { setM(next); setLeaving(false); onChanged(); toast(`${next.number}: vendor checked out${next.takenBack ? ' with part of the goods' : ''}.${next.cardNo ? ` Collect vendor card ${next.cardNo}.` : ''}`); }} />}
           </>
         )}
       </div>
@@ -331,6 +335,7 @@ function CheckoutForm({ m, onCancel, onDone }) {
   return (
     <div className="return-form">
       <h3 className="section-title">Check out vendor</h3>
+      {m.cardNo && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Collect vendor card <strong>{m.cardNo}</strong> before they leave.</span></div>}
       <div className="field">
         <span>Invoice as stamped by the hotel <span className="faint">· required</span></span>
         <PhotoPicker photos={photos} onChange={setPhotos} max={4} addLabel="Photo of stamped invoice" onError={setErr} />

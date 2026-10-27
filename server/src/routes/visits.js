@@ -66,6 +66,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   checkedOutAt: v.checkedOutAt,
   validity: passes.validityLabel(v.validity),
   validUntil: v.validUntil ?? null,
+  card: v.card?.no ? { no: v.card.no, type: v.card.type || 'visitor' } : null,
   extensions: (v.extensions || []).map((x) => ({ at: x.at, from: x.from, to: x.to, by: x.byName, note: x.note || '' })),
   overstay: v.overstay?.ackAt || v.overstay?.escalatedAt ? { ackAt: v.overstay.ackAt || null, ackBy: v.overstay.ackByName || '', ackNote: v.overstay.ackNote || '', escalatedAt: v.overstay.escalatedAt || null } : null,
   groupId: v.group ? String(v.group) : null,
@@ -73,6 +74,19 @@ const publicVisit = (v, host, withMobile = false) => ({
   ...passes.entryExit(v),
   ...(withMobile ? { movements: (v.movements || []).map((m) => ({ kind: m.kind, at: m.at, gate: m.gateName, by: m.byName })) } : {}),
 });
+
+// The lanyard card from the request: null when none was given, { error } when the number is not a card number.
+function readCard(b) {
+  const no = passes.cardNo(b.cardNo);
+  if (!no) return null;
+  if (!passes.CARD_RE.test(no)) return { error: 'Card number: letters and digits only, as printed on the card' };
+  return { no, type: b.cardType === 'vendor' ? 'vendor' : 'visitor' };
+}
+// Who has this card now (waiting or inside), as a sentence for the guard; null when it is free.
+async function cardHolder(card, exceptId) {
+  const v = await Visit.findOne({ 'card.no': card.no, 'card.type': card.type, status: { $in: ['pending', 'approved'] }, ...(exceptId ? { _id: { $ne: exceptId } } : {}) }, 'firstName lastName status').lean();
+  return v ? `${passes.CARD_LABEL[card.type]} card ${card.no} is with ${v.firstName} ${v.lastName} (${v.status === 'pending' ? 'waiting for the host' : 'inside'}). Give another card, or check them out first.` : null;
+}
 
 // Creates a fresh single-use approval link and queues the SMS to the host.
 async function issueApprovalLink(visit, host, visitorName, company) {
@@ -250,6 +264,8 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(b.hostId)) return res.status(400).json({ error: 'Select whom to meet' });
   const pass = passes.parseValidity(b);
   if (pass.error) return res.status(400).json({ error: pass.error });
+  const card = readCard(b);
+  if (card?.error) return res.status(400).json({ error: card.error });
 
   const host = await Host.findOne({ _id: b.hostId, active: true }).lean();
   if (!host) return res.status(400).json({ error: 'Selected host is not active' });
@@ -263,6 +279,8 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
   // One person cannot be inside, or waiting at the gate, twice.
   const active = await activeVisitFor(mobile);
   if (active) return res.status(409).json({ code: 'already_active', error: activeMessage(active), visit: activeSummary(active) });
+  const holder = card && await cardHolder(card);
+  if (holder) return res.status(409).json({ code: 'card_in_use', error: holder });
 
   // Expected visitor: only honoured for the same person, today, meeting the same host.
   let invite = null;
@@ -309,6 +327,7 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
       photoPath, idImagePath: idPath, idFullPath, idMaskMethod, idType, idTypeOther, idCheck: idCheckFrom(b.idCheck),
       ...faceMatchFrom(b), ...mobileCheck,
       validity: pass.validity,
+      ...(card ? { card } : {}),
       arrival: { gate: gate.id || undefined, gateName: gate.name, by: req.user.id, byName: req.user.fullName },
       createdBy: req.user.id,
     });
@@ -328,11 +347,11 @@ router.post('/', requireRole('guard', 'admin'), async (req, res) => {
         await visit.save();
         if (config.printer.mode !== 'off') await Outbox.create({ kind: 'print', visit: visit._id });
         audit(req.user, 'visit.approved', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, dailyNumber: number, via: 'expected' }, ip: req.ip });
-        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number, validUntil: visit.validUntil, passCode: visit.passCode });
+        return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number, validUntil: visit.validUntil, passCode: visit.passCode, card: card || null });
       }
     }
     const share = await issueApprovalLink(visit, host, visitorName, company);
-    res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, whatsapp: share });
+    res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, whatsapp: share, card: card || null });
   } catch (err) {
     await Promise.all([photoPath, idPath, idFullPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
     console.error('check-in failed', err);
@@ -421,6 +440,23 @@ router.get('/queue', requireRole('guard', 'admin'), async (req, res) => {
   res.json({
     rows: visits.map((v) => ({ ...publicVisit(v, v.host), createdAt: v.createdAt, smsStatus: sms.get(String(v._id))?.status || null })),
   });
+});
+
+// The lanyard card given at the gate, set or changed after check-in (the guard handed it over once the host said yes).
+router.post('/:id/card', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const card = readCard(req.body || {});
+  if (card?.error) return res.status(400).json({ error: card.error });
+  const holder = card && await cardHolder(card, req.params.id);
+  if (holder) return res.status(409).json({ code: 'card_in_use', error: holder });
+  const v = await Visit.findOneAndUpdate(
+    { _id: req.params.id, status: { $in: ['pending', 'approved'] } },
+    card ? { $set: { card } } : { $unset: { card: 1 } },
+    { new: true },
+  ).populate('host').lean();
+  if (!v) return res.status(409).json({ error: 'A card can be given only to someone waiting or inside' });
+  audit(req.user, 'visit.card_set', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, card: card ? `${passes.CARD_LABEL[card.type]} ${card.no}` : 'none' }, ip: req.ip });
+  res.json(publicVisit(v, v.host));
 });
 
 // Still inside after the pass ended: the pop-up on the guard desk and the admin console.
@@ -567,7 +603,7 @@ router.post('/:id/cancel', requireRole('guard', 'admin'), async (req, res) => {
 router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
   const now = new Date();
-  const current = await Visit.findOne({ _id: req.params.id, status: 'approved' }, 'validity validUntil').lean();
+  const current = await Visit.findOne({ _id: req.params.id, status: 'approved' }, 'validity validUntil card').lean();
   if (!current) return res.status(409).json({ error: 'Visitor is not currently inside' });
   const gate = await passes.gateOf(req.user.id);
   const keep = req.body?.final !== true && passes.staysOpen(current.validity, current.validUntil, now);
@@ -581,7 +617,7 @@ router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => 
   );
   if (!v) return res.status(409).json({ error: 'Visitor is not currently inside' });
   audit(req.user, keep ? 'visit.went_out' : 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name }, ip: req.ip });
-  res.json({ ok: true, status: v.status, checkedOutAt: v.checkedOutAt, validUntil: v.validUntil });
+  res.json({ ok: true, status: v.status, checkedOutAt: v.checkedOutAt, validUntil: v.validUntil, card: current.card?.no ? current.card : null });
 });
 
 // A pass holder comes back while the pass is valid: in again at this gate, no new approval.

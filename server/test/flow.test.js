@@ -209,11 +209,11 @@ test('admin can download visits as an Excel-safe sheet and as a ZIP with photos'
   await wb.xlsx.load(Buffer.from(await xr.arrayBuffer()));
   const ws = wb.getWorksheet('Visits');
   const header = ws.getRow(1).values.slice(1);
-  assert.deepEqual(header.slice(0, 6), ['Visitor ID', 'Date', 'Pass no', 'Name', 'Gender', 'Mobile (+91)']);
-  const ravi = ws.getSheetValues().find((r) => r && r[4] === 'Ravi Sharma');
+  assert.deepEqual(header.slice(0, 7), ['Visitor ID', 'Date', 'Pass no', 'Lanyard card', 'Name', 'Gender', 'Mobile (+91)']);
+  const ravi = ws.getSheetValues().find((r) => r && r[5] === 'Ravi Sharma');
   assert.ok(ravi, 'a row per visit');
-  assert.equal(ravi[5], 'Male');
-  assert.equal(ravi[6], '98765 43210');
+  assert.equal(ravi[6], 'Male');
+  assert.equal(ravi[7], '98765 43210');
   assert.ok(ravi[2] instanceof Date, 'Date is a real date, sortable in Excel');
   assert.ok(wb.getWorksheet('About this download'), 'says what the file contains');
 });
@@ -1376,7 +1376,7 @@ test('material: gate passes approved by the head (older API); the inward registe
   await book.xlsx.load(Buffer.from(await xl.arrayBuffer()));
   const ws = book.getWorksheet('Material inward');
   const lines = [];
-  ws.eachRow((r, i) => { if (i > 1) lines.push({ item: r.getCell(11).text, accepted: r.getCell(14).text, back: r.getCell(15).text }); });
+  ws.eachRow((r, i) => { if (i > 1) lines.push({ item: r.getCell(12).text, accepted: r.getCell(15).text, back: r.getCell(16).text }); });
   assert.ok(lines.some((l) => l.item === 'Vegetables' && l.accepted === '50' && l.back === '50'));
   assert.ok(!lines.some((l) => l.item === 'Split AC compressor'), 'the inward register only');
 });
@@ -1963,4 +1963,31 @@ test('emergency: a template to visitors, hosts or both on every channel, roll ca
 
   assert.equal((await call('GET', '/api/emergency/history', null, guard)).status, 403);
   assert.equal((await call('GET', '/api/emergency/history', null, admin)).body.rows[0].safe, 1);
+});
+
+test('lanyard card: given at check-in, one person at a time, searchable, collected at exit, then free again', async () => {
+  const visit = (first, mobile, extra) => call('POST', '/api/visits', {
+    firstName: first, lastName: 'Card', gender: 'male', mobile, company: 'Card Co', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), cardNo: ' 7 ', cardType: 'visitor', ...extra,
+  }, guard);
+  assert.match((await visit('Badcard', '9700000920', { cardNo: '#!' })).body.error, /Card number/);
+  const a = await visit('Lanyard', '9700000921');
+  assert.equal(a.status, 201, JSON.stringify(a.body));
+  assert.deepEqual(a.body.card, { no: '07', type: 'visitor' }, 'a typed 7 is card 07');
+  const taken = await visit('Second', '9700000922');
+  assert.equal(taken.body.code, 'card_in_use');
+  assert.match(taken.body.error, /Visitor card 07 is with Lanyard Card \(waiting for the host\)/);
+  assert.equal((await visit('Vendorcard', '9700000923', { cardType: 'vendor' })).status, 201, 'vendor card 07 is a different card');
+
+  await call('POST', `/api/approvals/${await tokenFor(a.body.id)}/decision`, { decision: 'approve' });
+  assert.ok((await call('GET', '/api/admin/search?q=07', null, admin)).body.visits.some((v) => v.id === a.body.id), 'who has card 07 now');
+  assert.equal((await call('GET', '/api/admin/visits?name=7', null, admin)).body.rows.find((r) => r.id === a.body.id).card.no, '07');
+  const out = await call('POST', `/api/visits/${a.body.id}/checkout`, { final: true }, guard);
+  assert.equal(out.body.card.no, '07', 'the guard is reminded to collect it');
+
+  // Card 07 is free again: given to someone after check-in.
+  const late = await visit('Later', '9700000924', { cardNo: '' });
+  assert.equal(late.body.card, null);
+  const given = await call('POST', `/api/visits/${late.body.id}/card`, { cardNo: '07', cardType: 'visitor' }, guard);
+  assert.equal(given.status, 200, JSON.stringify(given.body));
+  assert.equal(given.body.card.no, '07');
 });

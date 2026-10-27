@@ -176,7 +176,7 @@ function RollCall({ em, siteName, onChanged, onAllClear }) {
   const term = q.trim().toLowerCase();
   const missing = em.people.filter((p) => !p.safeAt);
   const list = (show === 'missing' ? missing : show === 'safe' ? em.people.filter((p) => p.safeAt) : em.people)
-    .filter((p) => !term || `${p.name} ${p.company} ${p.host} ${p.hostUnit} ${p.pass} ${p.group}`.toLowerCase().includes(term));
+    .filter((p) => !term || `${p.name} ${p.company} ${p.host} ${p.hostUnit} ${p.pass} ${p.group} card ${p.card}`.toLowerCase().includes(term));
   const mark = async (p) => {
     setBusy(p.visitId);
     try { onChanged(await api(`/api/emergency/${em.id}/safe`, { method: 'POST', body: { visitId: p.visitId, safe: !p.safeAt } })); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
@@ -200,7 +200,7 @@ function RollCall({ em, siteName, onChanged, onAllClear }) {
               <button type="button" key={k} role="tab" aria-selected={show === k} aria-pressed={show === k} onClick={() => setShow(k)}>{l}</button>
             ))}
           </div>
-          <div className="input-group"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass, host" aria-label="Search the roll call" /></div>
+          <div className="input-group"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass, card, host" aria-label="Search the roll call" /></div>
         </div>
         <ul className="roll-list">
           {list.length === 0 && <li className="faint" style={{ padding: 12 }}>{show === 'missing' && !term ? 'Everyone is accounted for.' : 'Nobody here.'}</li>}
@@ -209,7 +209,7 @@ function RollCall({ em, siteName, onChanged, onAllClear }) {
               {p.pass != null && <span className="pass-chip">{p.pass}</span>}
               <span className="grow" style={{ minWidth: 0 }}>
                 <strong>{p.name}</strong>
-                <small>{[p.company, p.group || (p.host && `to ${p.host}${p.hostUnit ? `, ${p.hostUnit}` : ''}`)].filter(Boolean).join(' · ')}{p.safeAt ? ` · safe ${fmtTime(p.safeAt)} (${p.safeBy})` : ''}</small>
+                <small>{[p.card && `card ${p.card}`, p.company, p.group || (p.host && `to ${p.host}${p.hostUnit ? `, ${p.hostUnit}` : ''}`)].filter(Boolean).join(' · ')}{p.safeAt ? ` · safe ${fmtTime(p.safeAt)} (${p.safeBy})` : ''}</small>
               </span>
               {p.mobile && !p.safeAt && <a className="btn btn-sm btn-icon" href={`tel:${p.mobile}`} aria-label={`Call ${p.name}, ${fmtMobile(p.mobile)}`} title={`Call ${fmtMobile(p.mobile)}`}><Phone /></a>}
               <button type="button" className={`btn btn-sm ${p.safeAt ? 'btn-ghost' : 'btn-success'}`} disabled={busy === p.visitId} onClick={() => mark(p)}>

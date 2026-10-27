@@ -55,7 +55,7 @@ export default function Login({ onLogin }) {
         <GateArt />
         <div>
           <h2>Every arrival, welcomed and accounted for.</h2>
-          <p>Security and guest access for Marriott Marquis and St. Regis, New Delhi: visitors, events, material and couriers at every gate, live.</p>
+          <p>Security and guest access for The St. Regis New Delhi and New Delhi Marriott Marquis: visitors, events, material and couriers at every gate, live.</p>
         </div>
         <div className="foot">
           <span className="frame-label on-ink">Security desk</span>

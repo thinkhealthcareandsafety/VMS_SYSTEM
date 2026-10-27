@@ -24,7 +24,8 @@ async function card(v, extra = {}) {
   return {
     id: String(v._id), ref: v.ref, name: nameOf(v), company: v.company, status: v.status,
     dailyNumber: v.dailyNumber ?? null, dailyDay: v.dailyDay ?? null, validUntil: v.validUntil ?? null,
-    host: host ? { name: host.fullName, unit: host.unit } : null, group: group ? group.name : null, ...extra,
+    host: host ? { name: host.fullName, unit: host.unit } : null, group: group ? group.name : null,
+    card: v.card?.no ? { no: v.card.no, type: v.card.type || 'visitor' } : null, ...extra,
   };
 }
 
@@ -45,9 +46,11 @@ async function checkOut(v, user, ip) {
   if (!done) return reply('busy', 'Another gate just recorded this person. Scan again.', v);
   audit(user, keep ? 'visit.went_out' : 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name, via: 'scan' }, ip });
   const ended = v.validUntil && new Date(v.validUntil) < now;
+  // The hotel's lanyard card comes back at every exit, even on a pass that stays valid.
+  const cardBack = v.card?.no ? ` Collect ${v.card.type === 'vendor' ? 'vendor' : 'visitor'} card ${v.card.no}.` : '';
   return reply('out', keep
-    ? `They keep the pass: it is valid till ${until(v.validUntil)}. Scan it again when they come back.`
-    : ended ? 'Their pass had already ended. Take the pass back.' : 'Take the pass back.', done, { undo: { action: 'out', seconds: UNDO_MS / 1000 } });
+    ? `They keep the pass: it is valid till ${until(v.validUntil)}. Scan it again when they come back.${cardBack}`
+    : `${ended ? 'Their pass had already ended. ' : ''}Take the pass back.${cardBack}`, done, { undo: { action: 'out', seconds: UNDO_MS / 1000 } });
 }
 
 async function letBackIn(v, user, ip) {

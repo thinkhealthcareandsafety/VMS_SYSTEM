@@ -96,6 +96,9 @@ const visitSchema = new Schema({
   // How long the pass lasts ('8h', '10d', 'date:2026-10-30'); validUntil is fixed when the visitor is let in.
   validity: { type: String },
   validUntil: { type: Date },
+  // The hotel's numbered lanyard card handed over at the gate ("01 Visitor" / "01 Vendor"); the printed pass slip is
+  // stuck on its back. Collected again at exit. One card can be with only one person at a time.
+  card: { no: { type: String }, type: { type: String, enum: ['visitor', 'vendor'] } },
   // Each time the pass was made longer at the gate or in the console: from when, to when, by whom.
   extensions: { type: [{ _id: false, at: Date, from: Date, to: Date, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String, note: String }], default: undefined },
   // Still inside after the pass ended: the guard acknowledges it; an hour later it is escalated. Cleared when extended.
@@ -112,6 +115,7 @@ visitSchema.index({ status: 1, checkedOutAt: 1 });
 visitSchema.index({ mobile: 1, status: 1 }); // duplicate check-in guard
 visitSchema.index({ status: 1, validUntil: 1 }); // passes that expire while the holder is away
 visitSchema.index({ passCode: 1 }, { unique: true, sparse: true });
+visitSchema.index({ 'card.no': 1, status: 1 }, { partialFilterExpression: { 'card.no': { $exists: true } } }); // who holds card 07 now
 
 const approvalTokenSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true, index: true },
@@ -239,6 +243,7 @@ const materialSchema = new Schema({
   docPhotos: { type: [String], default: undefined },  // invoice / challan as it arrived
   exitPhotos: { type: [String], default: undefined }, // invoice as stamped by the hotel, at the vendor's checkout
   receivedBy: { name: { type: String, default: '' }, department: { type: String, default: '' } },
+  cardNo: { type: String },                           // the hotel's vendor lanyard card given at the gate, collected at checkout
   exitNote: String,
   checkedOutAt: Date,
   takenBack: { type: Boolean, default: false },       // the vendor took some of it back (accepted less than delivered)
@@ -306,7 +311,7 @@ const emergencySchema = new Schema({
   title: { type: String, default: '' },
   people: [{
     _id: false, visit: { type: Schema.Types.ObjectId, ref: 'Visit' }, name: String, company: String, pass: Number,
-    host: String, hostUnit: String, mobile: String, group: String, safeAt: Date, safeBy: String,
+    host: String, hostUnit: String, mobile: String, group: String, card: String, safeAt: Date, safeBy: String,
   }],
   messages: [{
     _id: false, at: Date, template: String, title: String, text: String, audience: { type: String, enum: ['visitors', 'hosts', 'both'] },

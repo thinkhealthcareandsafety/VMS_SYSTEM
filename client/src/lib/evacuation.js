@@ -28,7 +28,7 @@ export async function printEvacuation({ siteName, onError }) {
     byGroup.get(v.groupId).push(v);
   }
   const since = (v) => v.lastIn?.at || v.decidedAt;
-  const row = (v, i, withHost) => `<tr><td class="n">${i + 1}</td><td>${esc(v.dailyNumber)}</td><td><strong>${esc(`${v.firstName} ${v.lastName}`.trim())}</strong><br><span>${esc(v.company)}</span></td>${withHost ? `<td>${esc(v.host?.name)}<br><span>${esc(v.host?.unit)}</span></td>` : ''}<td>${esc(fmtTime(since(v)))}<br><span>${esc(v.lastIn?.gate || '')}</span></td><td>${esc(v.mobile || '')}</td><td class="tick"></td></tr>`;
+  const row = (v, i, withHost) => `<tr><td class="n">${i + 1}</td><td>${esc(v.dailyNumber)}${v.card?.no ? `<br><span>card ${esc(v.card.no)}</span>` : ''}</td><td><strong>${esc(`${v.firstName} ${v.lastName}`.trim())}</strong><br><span>${esc(v.company)}</span></td>${withHost ? `<td>${esc(v.host?.name)}<br><span>${esc(v.host?.unit)}</span></td>` : ''}<td>${esc(fmtTime(since(v)))}<br><span>${esc(v.lastIn?.gate || '')}</span></td><td>${esc(v.mobile || '')}</td><td class="tick"></td></tr>`;
   const table = (list, withHost) => `<table><thead><tr><th class="n">#</th><th>Pass</th><th>Name</th>${withHost ? '<th>Meeting</th>' : ''}<th>In since</th><th>Mobile</th><th class="tick">✓</th></tr></thead><tbody>${list.map((v, i) => row(v, i, withHost)).join('')}</tbody></table>`;
   const sections = [
     visitors.length ? `<h2>Visitors <small>${visitors.length}</small></h2>${table(visitors, true)}` : '',
@@ -45,7 +45,7 @@ td span { color: #444; font-size: 8.5pt; } .n { width: 8mm; text-align: right; }
 .empty { font-size: 13pt; padding: 10mm 0; }
 .lg { display: flex; align-items: center; gap: 4mm; margin-bottom: 3mm; } .lg img { height: 9mm; width: auto; } .lg img.sr { height: 12mm; } .lg i { width: .25mm; height: 9mm; background: #000; }
 </style></head><body>
-<header><div><div class="lg"><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"><i></i><img class="sr" src="${location.origin}/brand/stregis-print.png" alt="St. Regis"></div><h1>Evacuation list</h1><div>${esc(siteName || 'Marriott Marquis and St. Regis, New Delhi')} · printed ${esc(fmtDate(now))}, ${esc(fmtTime(now))}</div></div><div class="total">${people.length} on premises</div></header>
+<header><div><div class="lg"><img class="sr" src="${location.origin}/brand/stregis-print.png" alt="St. Regis"><i></i><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"></div><h1>Evacuation list</h1><div>${esc(siteName || 'The St. Regis New Delhi & New Delhi Marriott Marquis')} · printed ${esc(fmtDate(now))}, ${esc(fmtTime(now))}</div></div><div class="total">${people.length} on premises</div></header>
 ${people.length ? sections : '<p class="empty">Nobody is recorded as inside.</p>'}
 <p style="margin-top:6mm;font-size:8.5pt;color:#444">Visitors and guests let in at the gates and not yet checked out. Staff and residents are not on this list.</p>
 </body></html>`);

@@ -44,5 +44,7 @@ export const fmtMobile = (m = '') => m.replace(/^\+91(\d{5})(\d{5})$/, '+91 $1 $
 export const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
 // "Pass 5" is only unique within a day; anything older carries its date.
 export const passLabel = (v) => (v.dailyDay && v.dailyDay !== today() ? `${v.dailyNumber} · ${fmtDate(`${v.dailyDay}T12:00:00+05:30`)}` : String(v.dailyNumber));
+// The hotel's lanyard card, as a short label: "Visitor card 07".
+export const cardLabel = (c) => (c?.no ? `${c.type === 'vendor' ? 'Vendor' : 'Visitor'} card ${c.no}` : '');
 export const clock = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 export const secondsSince = (iso) => (iso ? Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000)) : 0);

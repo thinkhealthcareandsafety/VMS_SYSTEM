@@ -81,6 +81,16 @@ function staysOpen(validity, until, now = new Date()) {
   return (VALIDITY[v]?.days || 0) >= 2;
 }
 
+// ---------- The hotel's lanyard cards ----------
+// Card numbers as printed on the cards ("01", "07", "V12"): a typed "1" or " 01 " is card 01. '' = none given.
+function cardNo(raw) {
+  const s = String(raw ?? '').trim().toUpperCase().replace(/\s+/g, '').slice(0, 10);
+  if (!s) return '';
+  return /^\d+$/.test(s) ? String(Number(s)).padStart(2, '0') : s;
+}
+const CARD_RE = /^[A-Z0-9-]{1,10}$/;
+const CARD_LABEL = { visitor: 'Visitor', vendor: 'Vendor' };
+
 // ---------- Making a pass longer ----------
 // Hours are added to whichever is later, the current end or now (a pass that already ended starts again from now);
 // 'today' runs to tonight; 'date' to the end of that day. The new end must be later than the current one.
@@ -139,5 +149,6 @@ function entryExit(v) {
 
 module.exports = {
   VALIDITY, DEFAULT_VALIDITY, MAX_DAYS, parseValidity, validUntil, validityLabel, staysOpen, endOfSiteDay, addDays, EXTEND, extendedUntil,
+  cardNo, CARD_RE, CARD_LABEL,
   ensureDefaultGate, gateOf, movement, entryExit,
 };

@@ -55,7 +55,7 @@ function row(m, admin) {
     docPhotos: (m.docPhotos || []).map((_, i) => `/api/material/${m._id}/doc/${i}`),
     exitPhotos: (m.exitPhotos || []).map((_, i) => `/api/material/${m._id}/exit/${i}`),
     receivedBy: m.receivedBy?.name || m.receivedBy?.department ? m.receivedBy : null, exitNote: m.exitNote || '',
-    checkedOutAt: m.checkedOutAt || null, takenBack: Boolean(m.takenBack),
+    checkedOutAt: m.checkedOutAt || null, takenBack: Boolean(m.takenBack), cardNo: m.cardNo || null,
     createdAt: m.createdAt, createdBy: m.createdByName || '',
   };
 }
@@ -94,7 +94,7 @@ function search(query) {
   const term = cleanText(query.q, 60);
   if (term) {
     const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    q.$or = [{ number: re }, { 'party.name': re }, { 'party.company': re }, { 'party.mobile': re }, { 'party.gstin': re }, { 'items.name': re }, { 'items.code': re }, { 'receivedBy.name': re }, { 'items.serial': re }, { 'vehicle.number': re }, { department: re }, { 'docs.dc': re }, { 'docs.invoice': re }, { 'docs.po': re }];
+    q.$or = [{ number: re }, { 'party.name': re }, { 'party.company': re }, { 'party.mobile': re }, { 'party.gstin': re }, { 'items.name': re }, { 'items.code': re }, { 'receivedBy.name': re }, { cardNo: re }, { 'items.serial': re }, { 'vehicle.number': re }, { department: re }, { 'docs.dc': re }, { 'docs.invoice': re }, { 'docs.po': re }];
   }
   return q;
 }
@@ -118,7 +118,7 @@ router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
   ws.columns = [
     { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'Entry no.', key: 'number', width: 12 }, { header: 'Date', key: 'date', width: 12 },
     { header: 'Time in', key: 'time', width: 9 }, { header: 'Supplier / company', key: 'company', width: 26 }, { header: 'Address', key: 'address', width: 30 },
-    { header: 'Contact', key: 'contact', width: 18 }, { header: 'Mobile', key: 'mobile', width: 15 }, { header: 'GSTIN', key: 'gstin', width: 17 },
+    { header: 'Vendor card', key: 'card', width: 11 }, { header: 'Contact', key: 'contact', width: 18 }, { header: 'Mobile', key: 'mobile', width: 15 }, { header: 'GSTIN', key: 'gstin', width: 17 },
     { header: 'Item no.', key: 'code', width: 10 }, { header: 'Goods / material', key: 'item', width: 30 }, { header: 'Quantity', key: 'qty', width: 9 },
     { header: 'Unit', key: 'unit', width: 8 }, { header: 'Accepted', key: 'accepted', width: 9 }, { header: 'Taken back', key: 'back', width: 10 },
     { header: 'Invoice no.', key: 'invoice', width: 14 }, { header: 'Challan no.', key: 'dc', width: 14 }, { header: 'Vehicle', key: 'vehicle', width: 14 },
@@ -134,7 +134,7 @@ router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
     for (const it of m.items) {
       const kept = it.acceptedQty ?? null;
       ws.addRow({
-        sr: n + 1, number: m.number, date: fmt(m.createdAt, DAY), time: fmt(m.createdAt, TIME), company: m.party?.company || m.party?.name, address: m.party?.address,
+        sr: n + 1, number: m.number, date: fmt(m.createdAt, DAY), time: fmt(m.createdAt, TIME), company: m.party?.company || m.party?.name, address: m.party?.address, card: m.cardNo || '',
         contact: m.party?.company ? m.party?.name : '', mobile: m.party?.mobile || '', gstin: m.party?.gstin, code: it.code, item: it.name, qty: it.qty, unit: it.unit,
         accepted: kept ?? '', back: kept == null ? '' : Math.round((it.qty - kept) * 1000) / 1000, invoice: m.docs?.invoice, dc: m.docs?.dc, vehicle: m.vehicle?.number,
         dept: m.department, receivedBy: [m.receivedBy?.department, m.receivedBy?.name].filter(Boolean).join(' / ') || m.handedTo || '',

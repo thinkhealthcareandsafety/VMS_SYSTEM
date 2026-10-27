@@ -421,7 +421,7 @@ async function printBadges(g, rows, toast) {
   win.document.write('<p style="font:16px system-ui;padding:24px">Preparing badges…</p>');
   const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const qrs = await Promise.all(list.map((r) => QRCode.toDataURL(r.link, { width: 240, margin: 0, errorCorrectionLevel: 'M' }).catch(() => '')));
-  const marks = `<div class="lg"><img src="${location.origin}/brand/marquis-mark.png" alt="Marriott Marquis"><i></i><img class="sr" src="${location.origin}/brand/stregis-mark.png" alt="St. Regis"></div>`;
+  const marks = `<div class="lg"><img class="sr" src="${location.origin}/brand/stregis-mark.png" alt="St. Regis"><i></i><img src="${location.origin}/brand/marquis-mark.png" alt="Marriott Marquis"></div>`;
   const badges = list.map((r, i) => `<div class="b">${marks}<div class="ev">${esc(g.name)}</div><div class="nm">${esc(`${r.firstName} ${r.lastName}`.trim())}</div><div class="co">${esc(r.company)}</div><img src="${qrs[i]}" alt=""><div class="cd">${esc(r.code)}</div><div class="dy">${esc(g.days)}</div></div>`).join('');
   win.document.open();
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Badges · ${esc(g.name)}</title><style>

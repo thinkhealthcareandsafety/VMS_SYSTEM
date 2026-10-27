@@ -3,6 +3,7 @@ const config = require('../config');
 const { Material, ActionToken, Counter, Outbox, Host } = require('../models');
 const { siteDay, audit, sha256, cleanText, normalizeMobile } = require('./core');
 const telegram = require('./telegram');
+const { cardNo, CARD_RE } = require('./passes');
 const whatsapp = require('./whatsapp');
 const email = require('./email');
 
@@ -63,7 +64,9 @@ function readPass(b, direction) {
   };
   if (b.vehicle?.driverMobile && !vehicle.driverMobile) return { error: 'The driver’s mobile number is not valid' };
   const docs = { dc: cleanText(b.docs?.dc, 40), invoice: cleanText(b.docs?.invoice, 40), po: cleanText(b.docs?.po, 40), eway: cleanText(b.docs?.eway, 40) };
-  const out = { direction, kind, items, party, vehicle, docs, department: cleanText(b.department, 60), purpose: cleanText(b.purpose, 120), note: cleanText(b.note, 300) };
+  const card = cardNo(b.cardNo);
+  if (card && !CARD_RE.test(card)) return { error: 'Card number: letters and digits only, as printed on the card' };
+  const out = { direction, kind, items, party, vehicle, docs, ...(card ? { cardNo: card } : {}), department: cleanText(b.department, 60), purpose: cleanText(b.purpose, 120), note: cleanText(b.note, 300) };
   if (kind === 'returnable') {
     const day = String(b.returnBy || '');
     if (!DAY_RE.test(day) || day < siteDay()) return { error: 'Pick the date it must come back by' };

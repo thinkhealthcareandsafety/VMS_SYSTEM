@@ -107,7 +107,7 @@ async function send({ template, text, audience, allHosts }, user, gate) {
       kind: t.id, title: t.title, startedBy: user.id, startedByName: user.fullName, gateName: gate.name,
       people: visits.map((v) => ({
         visit: v._id, name: `${v.firstName} ${v.lastName}`.trim(), company: v.company || '', pass: v.dailyNumber, host: v.host?.fullName || '',
-        hostUnit: v.host?.unit || '', mobile: v.mobile || '', group: v.group ? groups.get(String(v.group)) || 'Event' : '',
+        hostUnit: v.host?.unit || '', mobile: v.mobile || '', group: v.group ? groups.get(String(v.group)) || 'Event' : '', card: v.card?.no || '',
       })),
     });
   }
@@ -140,7 +140,7 @@ function view(em, deliveries = {}) {
     id: String(em._id), status: em.status, kind: em.kind, title: em.title, startedAt: em.createdAt, startedBy: em.startedByName, gate: em.gateName,
     closedAt: em.closedAt || null, closedBy: em.closedByName || null,
     total: em.people.length, safe,
-    people: em.people.map((p) => ({ visitId: String(p.visit), name: p.name, company: p.company, pass: p.pass ?? null, host: p.host, hostUnit: p.hostUnit, mobile: p.mobile, group: p.group, safeAt: p.safeAt || null, safeBy: p.safeBy || null })),
+    people: em.people.map((p) => ({ visitId: String(p.visit), name: p.name, company: p.company, pass: p.pass ?? null, host: p.host, hostUnit: p.hostUnit, mobile: p.mobile, group: p.group, card: p.card || '', safeAt: p.safeAt || null, safeBy: p.safeBy || null })),
     messages: em.messages.map((m, i) => ({ ...m, delivery: deliveries[i] || {} })),
   };
 }

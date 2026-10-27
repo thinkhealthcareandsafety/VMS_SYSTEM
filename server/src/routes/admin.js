@@ -37,7 +37,8 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
   if (query.name) {
     const re = new RegExp(esc(cleanText(query.name, 100)), 'i');
     const digits = String(query.name).replace(/\D/g, '');
-    q.$or = [{ firstName: re }, { lastName: re }, { ref: re }, ...(digits.length >= 4 ? [{ mobile: new RegExp(esc(digits)) }] : [])];
+    const card = passes.cardNo(query.name);
+    q.$or = [{ firstName: re }, { lastName: re }, { ref: re }, ...(digits.length >= 4 ? [{ mobile: new RegExp(esc(digits)) }] : []), ...(passes.CARD_RE.test(card) ? [{ 'card.no': card }] : [])];
   }
   if (query.host) {
     const hosts = await Host.find({ fullName: new RegExp(esc(cleanText(query.host, 100)), 'i') }, '_id').lean();
@@ -53,6 +54,7 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
       id: String(v._id), ref: v.ref, name: `${v.firstName} ${v.lastName}`, mobile: v.mobile, email: v.email ?? null, company: v.company,
       purpose: v.purpose, host: v.host?.fullName, unit: v.host?.unit, status: v.status, gender: v.gender ?? null, faceMatchScore: v.faceMatchScore ?? null, idType: v.idType || 'aadhaar', idCheck: v.idCheck?.status ? v.idCheck : null, mobileVerified: v.mobileVerified ?? null,
       dailyNumber: v.dailyNumber ?? null, dailyDay: v.dailyDay ?? null, visitDay: v.visitDay,
+      card: v.card?.no ? { no: v.card.no, type: v.card.type || 'visitor' } : null,
       createdAt: v.createdAt, decidedAt: v.decidedAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason,
       hasIdImage: Boolean(v.idImagePath),
       validity: passes.validityLabel(v.validity), validUntil: v.validUntil ?? null, ...passes.entryExit(v),
@@ -86,7 +88,7 @@ const sheetCell = (v) => csvCell(/^[=+\-@\t\r]/.test(String(v ?? '')) ? `'${v}` 
 
 // Excel reads UTF-8 CSV correctly only with a BOM; CRLF keeps Excel and Notepad happy.
 function visitsSheet(docs) {
-  const header = ['Visitor ID', 'Date', 'Pass no', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Number checked', 'Company', 'Purpose', 'Host', 'Flat / dept',
+  const header = ['Visitor ID', 'Date', 'Pass no', 'Lanyard card', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Number checked', 'Company', 'Purpose', 'Host', 'Flat / dept',
     'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Entry gate', 'Let in by', 'Exit gate', 'Checked out by', 'Entries', 'Pass for', 'Pass valid till',
     'Force checkout reason', 'Face match %', 'Photo file'];
   const lines = docs.map((v) => {
@@ -94,7 +96,7 @@ function visitsSheet(docs) {
     const moves = passes.entryExit(v);
     const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : moves.exit ? new Date(moves.exit.at) : null;
     const mins = admitted && v.decidedAt && end ? Math.round((end - new Date(v.decidedAt)) / 60000) : '';
-    return [v.ref, v.visitDay, v.dailyNumber ?? '', v.firstName, v.lastName, exporter.GENDER_LABEL[v.gender] || '', sheetMobile(v.mobile), v.email, exporter.VERIFIED_LABEL[v.mobileVerified] || '', v.company, v.purpose, v.host?.fullName, v.host?.unit,
+    return [v.ref, v.visitDay, v.dailyNumber ?? '', v.card?.no ? `${passes.CARD_LABEL[v.card.type] || 'Visitor'} ${v.card.no}` : '', v.firstName, v.lastName, exporter.GENDER_LABEL[v.gender] || '', sheetMobile(v.mobile), v.email, exporter.VERIFIED_LABEL[v.mobileVerified] || '', v.company, v.purpose, v.host?.fullName, v.host?.unit,
       STATUS_LABEL[v.status] || v.status, localStamp(v.createdAt), admitted ? localStamp(v.decidedAt) : '', localStamp(v.checkedOutAt || moves.exit?.at),
       mins, moves.entry?.gate || '', moves.entry?.by || '', moves.exit?.gate || '', moves.exit?.by || '', moves.entries || '',
       v.validity ? passes.validityLabel(v.validity) : '', localStamp(v.validUntil), v.forceReason, v.faceMatchScore ?? '', v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
@@ -261,6 +263,7 @@ router.get('/search', requireRole('admin'), async (req, res) => {
   const visitOr = [{ firstName: re }, { lastName: re }, { ref: re }, { company: re }, ...(nameQ ? [nameQ] : [])];
   if (digits.length >= 4) visitOr.push({ mobile: new RegExp(`${esc(digits)}`) });
   if (/^\d{1,4}$/.test(q)) visitOr.push({ dailyDay: siteDay(), dailyNumber: Number(q) });
+  if (passes.CARD_RE.test(passes.cardNo(q))) visitOr.push({ 'card.no': passes.cardNo(q), status: { $in: ['pending', 'approved'] } }); // who has card 07 now
   const [visits, hosts, grps, staff] = await Promise.all([
     Visit.find({ $or: visitOr }).sort({ createdAt: -1 }).limit(8).populate('host', 'fullName unit').lean(),
     Host.find({ $or: [{ fullName: re }, { unit: re }, ...(digits.length >= 4 ? [{ mobile: new RegExp(esc(digits)) }] : [])] }).sort({ active: -1, fullName: 1 }).limit(5).lean(),

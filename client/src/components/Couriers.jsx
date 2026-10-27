@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, ArrowDownToLine, ArrowUpFromLine, BellRing, Check, CheckCircle2, Download, Lock, Mail, Package, Search, Send, ShieldAlert,
+  AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Barcode, BellRing, Check, CheckCircle2, Download, Lock, Mail, Package, Search, Send, ShieldAlert,
   Truck, Undo2, UserRound, X, XCircle,
 } from 'lucide-react';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import HostPicker from './HostPicker.jsx';
+import BarcodeScan, { carrierFromAwb } from './BarcodeScan.jsx';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
@@ -105,6 +106,7 @@ function ParcelForm({ direction, carriers, onClose, onDone }) {
   const [photos, setPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [scanning, setScanning] = useState(false);
   useEffect(() => {
     if (!open) return;
     setF({ carrier: '', awb: '', pieces: '1', type: direction === 'out' ? 'document' : 'parcel', sender: { name: '', company: '' }, person: { name: '', room: '', mobile: '' }, department: '', addressee: '', address: '', note: '' });
@@ -150,7 +152,15 @@ function ParcelForm({ direction, carriers, onClose, onDone }) {
             </>
           )}
           <div className="grid-2">
-            {!out && <label className="field"><span>AWB / tracking no. <span className="faint">· scan or type</span></span><input className="input mono" value={f.awb} onChange={(e) => set('awb', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} maxLength={40} autoComplete="off" /></label>}
+            {!out && (
+              <div className="field">
+                <span>AWB / tracking no. <span className="faint">· scan the label barcode, or type</span></span>
+                <div className="awb-row">
+                  <input className="input mono" value={f.awb} onChange={(e) => set('awb', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} maxLength={40} autoComplete="off" aria-label="AWB or tracking number" />
+                  <button type="button" className="btn" onClick={() => setScanning(true)}><Barcode />Scan</button>
+                </div>
+              </div>
+            )}
             <label className="field"><span>Pieces</span><input className="input num" type="number" min="1" max="500" value={f.pieces} onChange={(e) => set('pieces', e.target.value)} /></label>
           </div>
           <div className="field">
@@ -193,6 +203,11 @@ function ParcelForm({ direction, carriers, onClose, onDone }) {
           )}
           {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
         </div>
+        <BarcodeScan open={scanning} onClose={() => setScanning(false)} onResult={(text) => {
+          setScanning(false);
+          const awb = text.replace(/\s+/g, '').toUpperCase().slice(0, 40);
+          setF((x) => ({ ...x, awb, carrier: x.carrier || carrierFromAwb(awb) }));
+        }} />
         <div className="dialog-foot">
           {missing && <span className="faint foot-hint">Add {missing} to continue.</span>}
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -212,6 +227,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
   const [photos, setPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [scanning, setScanning] = useState(false);
   const load = useCallback(() => { if (id) api(`/api/parcels/${id}`).then(setP).catch((e) => toast(e.message, 'bad')); }, [id, toast]);
   useEffect(() => { setP(null); setMode(''); setErr(''); load(); }, [load]);
   useEffect(() => { if (id && liveTick) load(); }, [liveTick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -303,7 +319,12 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
                   <label className="field"><span>Picker’s name</span><input className="input" value={f.agent} onChange={set('agent')} maxLength={80} autoFocus /></label>
                   <label className="field"><span>Picker’s mobile <span className="faint">· optional</span></span><input className="input num" inputMode="numeric" value={f.mobile} onChange={set('mobile')} maxLength={15} /></label>
                   <label className="field"><span>Courier</span><select className="select" value={f.carrier} onChange={set('carrier')}><option value="">Choose</option>{CARRIERS.map((c) => <option key={c}>{c}</option>)}</select></label>
-                  <label className="field"><span>Tracking / docket / AWB no.</span><input className="input mono" value={f.awb} onChange={set('awb')} maxLength={40} /></label>
+                  <div className="field"><span>Tracking / docket / AWB no.</span>
+                    <div className="awb-row">
+                      <input className="input mono" value={f.awb} onChange={set('awb')} maxLength={40} aria-label="Tracking number" />
+                      <button type="button" className="btn" onClick={() => setScanning(true)}><Barcode />Scan</button>
+                    </div>
+                  </div>
                 </div>
                 <div className="field">
                   <span>Photo of the picker <span className="faint">· optional</span></span>
@@ -345,6 +366,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
           {p.status === 'booked' && <button className="btn btn-primary" onClick={() => start('dispatch')}><Truck />Courier took it</button>}
         </div>
       )}
+      <BarcodeScan open={scanning} onClose={() => setScanning(false)} onResult={(text) => { setScanning(false); setF((x) => ({ ...x, awb: text.replace(/\s+/g, '').toUpperCase().slice(0, 40) })); }} />
     </Modal>
   );
 }

@@ -3,24 +3,24 @@ import { AlertCircle, CheckCircle2, Info, Loader2 } from 'lucide-react';
 
 // The two houses this desk serves. Marks: Marriott's M and the St. Regis monogram, divided by a silver hairline,
 // with the house name beside them unless `name` is empty. `dark` uses the versions drawn for ink grounds.
-export function Logo({ name = 'Marquis & St. Regis', dark = false }) {
+export function Logo({ name = 'St. Regis & Marriott Marquis', dark = false }) {
   return (
     <span className={`cobrand${dark ? ' on-ink' : ''}`}>
-      <img src="/brand/marquis-mark.png" alt="Marriott Marquis" />
-      <span className="rule" aria-hidden="true" />
       <img className="sr" src={dark ? '/brand/stregis-mark-light.png' : '/brand/stregis-mark.png'} alt="St. Regis" />
+      <span className="rule" aria-hidden="true" />
+      <img src="/brand/marquis-mark.png" alt="Marriott Marquis" />
       {name && <span className="name"><strong>{name}</strong><small>New Delhi</small></span>}
     </span>
   );
 }
 
-// Both full logos, as the hotels draw them: for the sign-in panel and the pages hosts and guests open.
+// Both full logos, as the hotels draw them (St. Regis first, then Marriott Marquis): for the sign-in panel and the pages hosts and guests open.
 export function Lockup({ dark = false }) {
   return (
-    <span className="lockup" role="img" aria-label="Marriott Marquis New Delhi and St. Regis New Delhi">
-      <img className="marquis" src={dark ? '/brand/marquis-light.png' : '/brand/marquis.png'} alt="" />
-      <span className="rule" aria-hidden="true" />
+    <span className="lockup" role="img" aria-label="The St. Regis New Delhi and New Delhi Marriott Marquis">
       <img className="stregis" src={dark ? '/brand/stregis-light.png' : '/brand/stregis.png'} alt="" />
+      <span className="rule" aria-hidden="true" />
+      <img className="marquis" src={dark ? '/brand/marquis-light.png' : '/brand/marquis.png'} alt="" />
     </span>
   );
 }
@@ -48,7 +48,7 @@ export function PoweredBy({ dark = false, className = '' }) {
 
 // Each screen names itself in the browser tab.
 export function useTitle(title) {
-  useEffect(() => { document.title = title ? `${title} · Marquis & St. Regis` : 'Marquis & St. Regis · New Delhi'; }, [title]);
+  useEffect(() => { document.title = title ? `${title} · St. Regis & Marriott Marquis` : 'St. Regis & Marriott Marquis · New Delhi'; }, [title]);
 }
 
 export function initials(name = '') {

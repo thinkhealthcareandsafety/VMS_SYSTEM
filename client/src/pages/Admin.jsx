@@ -6,7 +6,7 @@ import {
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
   CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown, TimerReset,
 } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
+import { api, cardLabel, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
 import HostPicker from '../components/HostPicker.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
@@ -539,7 +539,7 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
   }, [data]);
 
   const term = q.trim().toLowerCase();
-  const rows = (data?.visits || []).filter((v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref} ${v.mobile}`.toLowerCase().includes(term));
+  const rows = (data?.visits || []).filter((v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref} ${v.mobile} card ${v.card?.no || ''}`.toLowerCase().includes(term));
   const over = (data?.visits || []).filter((v) => overstaying(v, data.staleAfterHours));
   // Arrived from the "still inside after the pass ended" alert: those people are ticked, ready to check out.
   const applied = useRef(null);
@@ -563,7 +563,7 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
       <div className="toolbar">
         <div className="input-group field wide">
           <Search />
-          <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, flat, mobile" aria-label="Search on premises" />
+          <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, pass number, card, flat, mobile" aria-label="Search on premises" />
         </div>
         <span className="muted num" style={{ alignSelf: 'center' }}>
           {data ? `${data.count} inside${data.groups?.length ? ` · ${data.groups.reduce((n, g) => n + g.inside, 0)} event guests` : ''}` : ''}
@@ -625,7 +625,7 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, onExtend, compact, 
                     <input type="checkbox" checked={on} onChange={() => onToggle(v.id)} aria-label={`Select ${v.firstName} ${v.lastName}`} />
                   </td>
                 )}
-                <td><span className="pass-chip">{passLabel(v)}</span></td>
+                <td><span className="pass-chip">{passLabel(v)}</span>{v.card && <div className="meta-line">{cardLabel(v.card)}</div>}</td>
                 <td>
                   <div className="person">
                     <Avatar src={photoUrl(v.id)} name={`${v.firstName} ${v.lastName}`} size={36} square />
@@ -812,7 +812,7 @@ function HistoryPage({ tick, openVisit, openExport, params }) {
                   </td>
                   <td className="mono">{r.ref}</td>
                   <td>{r.host}<div className="meta-line">{r.unit}</div></td>
-                  <td className="num">{fmtDate(r.createdAt)}{r.dailyNumber != null && <div className="meta-line">Pass {r.dailyNumber}</div>}</td>
+                  <td className="num">{fmtDate(r.createdAt)}{r.dailyNumber != null && <div className="meta-line">Pass {r.dailyNumber}{r.card ? ` · card ${r.card.no}` : ''}</div>}</td>
                   <td className="num">
                     {['approved', 'away', 'checked_out', 'force_checked_out'].includes(r.status) ? (
                       <>
@@ -875,6 +875,7 @@ const ACTIONS = {
   'visit.pass_expired': ['Pass ran out while outside', ''],
   'visit.auto_checked_out': ['Checked out automatically: event ended', ''],
   'visit.pass_extended': ['Pass extended', ''],
+  'visit.card_set': ['Lanyard card recorded', ''],
   'emergency.started': ['Emergency started, roll call opened', 'bad'],
   'emergency.message': ['Emergency message sent', 'warn'],
   'emergency.safe': ['Marked safe at the assembly point', 'ok'],
@@ -1031,6 +1032,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
               {admitted && <><dt>Let in</dt><dd className="num">{fmtDateTime(v.decidedAt)}</dd></>}
               {v.checkedOutAt && <><dt>Left</dt><dd className="num">{fmtDateTime(v.checkedOutAt)} · {fmtDuration(Math.round((new Date(v.checkedOutAt) - new Date(v.decidedAt)) / 60000))} inside</dd></>}
               {v.validUntil && <><dt>Pass</dt><dd>{v.validity} · valid till {fmtDateTime(v.validUntil)}</dd></>}
+              {v.card && <><dt>Lanyard card</dt><dd>{cardLabel(v.card)}</dd></>}
               {v.extensions?.length > 0 && <><dt>Extended</dt><dd>{v.extensions.map((x, i) => <div key={i}>{fmtDateTime(x.at)} by {x.by}: to {fmtDateTime(x.to)}{x.note ? ` · ${x.note}` : ''}</div>)}</dd></>}
               {v.overstay && <><dt>Overstay</dt><dd>{v.overstay.ackAt ? `Seen by ${v.overstay.ackBy} at ${fmtDateTime(v.overstay.ackAt)}${v.overstay.ackNote ? `: ${v.overstay.ackNote}` : ''}` : 'Not acknowledged'}{v.overstay.escalatedAt && <div className="tone-bad">Escalated {fmtDateTime(v.overstay.escalatedAt)}</div>}</dd></>}
               {v.forceReason && <><dt>Checkout reason</dt><dd>{v.forceReason}</dd></>}

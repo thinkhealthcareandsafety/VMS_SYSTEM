@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Camera as CameraIcon, CameraOff, CheckCircle2, Hash, LogIn, LogOut, RotateCcw, ScanLine, ShieldAlert, X, XCircle } from 'lucide-react';
-import { api, fmtUntil, passLabel } from '../api.js';
+import { api, cardLabel, fmtUntil, passLabel } from '../api.js';
 import { cue } from '../lib/notify.js';
 import { readQr } from '../lib/qr.js';
 import { Avatar, Modal, Spinner } from './ui.jsx';
@@ -81,7 +81,8 @@ export default function PassScanner({ open, onClose, onChanged }) {
     try {
       if (v.where === 'inside') {
         const r = await api(`/api/visits/${v.id}/checkout`, { method: 'POST' });
-        show({ result: 'out', ok: true, message: r.status === 'away' ? `They keep the pass: it is valid till ${fmtUntil(r.validUntil)}. Scan it again when they come back.` : 'Take the pass back.', visit: toCard(v), undo: { action: 'out' } });
+        const cardBack = r.card?.no ? ` Collect ${cardLabel(r.card).toLowerCase()}.` : '';
+        show({ result: 'out', ok: true, message: `${r.status === 'away' ? `They keep the pass: it is valid till ${fmtUntil(r.validUntil)}. Scan it again when they come back.` : 'Take the pass back.'}${cardBack}`, visit: toCard(v), undo: { action: 'out' } });
       } else {
         await api(`/api/visits/${v.id}/reenter`, { method: 'POST' });
         show({ result: 'in', ok: true, message: 'Let them in. Same pass, no new approval needed.', visit: toCard(v), undo: { action: 'in' } });

@@ -23,6 +23,7 @@ export function shrink(file) {
 // Photos being added to a form: thumbnails with a remove button, and one "add" tile until the limit.
 export function PhotoPicker({ photos, onChange, max = 3, addLabel = 'Add photo', onError, invalid = false }) {
   const fileRef = useRef(null);
+  const [zoom, setZoom] = useState(null);
   const add = async (files) => {
     const room = max - photos.length;
     const picked = [...files].slice(0, room);
@@ -34,10 +35,14 @@ export function PhotoPicker({ photos, onChange, max = 3, addLabel = 'Add photo',
   return (
     <div className="photo-strip" aria-invalid={invalid || undefined}>
       {photos.map((p, i) => (
-        <span key={i} className="photo-thumb"><img src={p} alt={`Photo ${i + 1}`} /><button type="button" onClick={() => onChange(photos.filter((_, j) => j !== i))} aria-label={`Remove photo ${i + 1}`}><X /></button></span>
+        <span key={i} className="photo-thumb">
+          <button type="button" className="photo-open" onClick={() => setZoom(p)} aria-label={`See photo ${i + 1} full size`}><img src={p} alt="" /></button>
+          <button type="button" onClick={() => onChange(photos.filter((_, j) => j !== i))} aria-label={`Remove photo ${i + 1}`}><X /></button>
+        </span>
       ))}
       {photos.length < max && <button type="button" className="photo-add" onClick={() => fileRef.current?.click()}><Camera />{addLabel}</button>}
       <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = ''; }} />
+      <ImageViewer open={Boolean(zoom)} onClose={() => setZoom(null)} src={zoom} alt="Photo" title="Photo" />
     </div>
   );
 }
