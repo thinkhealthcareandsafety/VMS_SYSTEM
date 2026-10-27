@@ -2115,3 +2115,29 @@ test('check-in options are set by the admin; the host is told when the visitor l
   } finally { Object.assign(config.whatsapp, saved); }
   await call('PATCH', '/api/admin/settings', { purposes: 'Delivery, Meeting, Interview, Service / repair, Guest', durations: '2h, 4h, 8h, today, 3d, 7d, 10d, 20d, 30d' }, admin);
 });
+
+test('admin can delete a host: refused while a visitor is here for them; kept for history once used, removed for good otherwise', async () => {
+  const { Host, Visit } = require('../src/models');
+  const add = async (fullName, mobile) => (await call('POST', '/api/admin/hosts', { fullName, unit: 'Z-1', mobile }, admin)).body.id;
+  const fresh = await add('Typo Host', '9700000201');
+  assert.equal((await call('DELETE', `/api/admin/hosts/${fresh}`, null, guard)).status, 403);
+  assert.equal((await call('DELETE', `/api/admin/hosts/${fresh}`, null, admin)).status, 200);
+  assert.equal(await Host.findById(fresh).lean(), null, 'never used: removed for good');
+
+  const used = await add('Busy Host', '9700000202');
+  const visit = await Visit.collection.insertOne({ host: new (require('mongoose').Types.ObjectId)(used), status: 'approved', firstName: 'X', lastName: 'Y' });
+  const refused = await call('DELETE', `/api/admin/hosts/${used}`, null, admin);
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /1 visitor is here to meet Busy Host/);
+  await Visit.collection.updateOne({ _id: visit.insertedId }, { $set: { status: 'checked_out' } });
+  assert.equal((await call('DELETE', `/api/admin/hosts/${used}`, null, admin)).status, 200);
+  const kept = await Host.findById(used).lean();
+  assert.ok(kept.removedAt, 'named in a visit: hidden, kept');
+  assert.equal(kept.active, false);
+  const list = (await call('GET', '/api/admin/hosts', null, admin)).body.rows;
+  assert.ok(!list.some((h) => h.id === used), 'gone from the list');
+  assert.ok(!(await call('GET', '/api/hosts?q=Busy', null, guard)).body.rows.length, 'gone from the guard picker');
+  assert.equal((await call('PATCH', `/api/admin/hosts/${used}`, { active: true }, admin)).status, 404, 'cannot be switched back on');
+  assert.equal((await call('DELETE', `/api/admin/hosts/${used}`, null, admin)).status, 404);
+  await Visit.collection.deleteOne({ _id: visit.insertedId });
+});

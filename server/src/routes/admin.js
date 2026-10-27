@@ -267,7 +267,7 @@ router.get('/search', requireRole('admin'), async (req, res) => {
   if (passes.CARD_RE.test(passes.cardNo(q))) visitOr.push({ 'card.no': passes.cardNo(q), status: { $in: ['pending', 'approved'] } }); // who has card 07 now
   const [visits, hosts, grps, staff] = await Promise.all([
     Visit.find({ $or: visitOr }).sort({ createdAt: -1 }).limit(8).populate('host', 'fullName unit').lean(),
-    Host.find({ $or: [{ fullName: re }, { unit: re }, ...(digits.length >= 4 ? [{ mobile: new RegExp(esc(digits)) }] : [])] }).sort({ active: -1, fullName: 1 }).limit(5).lean(),
+    Host.find({ removedAt: null, $or: [{ fullName: re }, { unit: re }, ...(digits.length >= 4 ? [{ mobile: new RegExp(esc(digits)) }] : [])] }).sort({ active: -1, fullName: 1 }).limit(5).lean(),
     Group.find({ name: re }).sort({ startDay: -1 }).limit(4).lean(),
     User.find({ $or: [{ fullName: re }, { username: re }] }).sort({ active: -1, fullName: 1 }).limit(4).lean(),
   ]);
@@ -291,7 +291,7 @@ const hostSchema = z.object({
 });
 
 router.get('/hosts', requireRole('admin'), async (req, res) => {
-  const hosts = await Host.find().sort({ fullName: 1 }).lean();
+  const hosts = await Host.find({ removedAt: null }).sort({ fullName: 1 }).lean();
   res.json({ rows: hosts.map((h) => ({ id: String(h._id), fullName: h.fullName, unit: h.unit, mobile: h.mobile, email: h.email, active: h.active, telegram: Boolean(h.telegramChatId) })) });
 });
 
@@ -332,10 +332,39 @@ router.patch('/hosts/:id', requireRole('admin'), async (req, res) => {
     if (email && !z.string().email().safeParse(email).success) return res.status(400).json({ error: 'Enter a valid email, or leave it empty' });
     if (email) allowed.email = email; else unset.email = 1;
   }
-  const host = await Host.findByIdAndUpdate(req.params.id, { $set: allowed, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { new: true });
+  const host = await Host.findOneAndUpdate({ _id: req.params.id, removedAt: null }, { $set: allowed, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { new: true });
   if (!host) return res.status(404).json({ error: 'Not found' });
   audit(req.user, 'host.updated', { entity: 'Host', entityId: host._id, details: allowed, ip: req.ip });
   res.json({ ok: true });
+});
+
+// Delete a host. Refused while someone is here to meet them, an event of theirs is still on, or a parcel waits for them.
+// Expected visitors for them are cancelled. A host named in past records is hidden and kept so history still shows the name;
+// one with no records at all is removed for good.
+router.delete('/hosts/:id', requireRole('admin'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const host = await Host.findOne({ _id: req.params.id, removedAt: null }).lean();
+  if (!host) return res.status(404).json({ error: 'Not found' });
+  const id = host._id;
+  const [inside, events, parcels] = await Promise.all([
+    Visit.countDocuments({ host: id, status: { $in: ['pending', 'approved', 'away'] } }),
+    Group.countDocuments({ host: id, status: 'active', endDay: { $gte: siteDay() } }),
+    Parcel.countDocuments({ host: id, status: 'received' }),
+  ]);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  if (inside) return res.status(409).json({ error: `${plural(inside, 'visitor is', 'visitors are')} here to meet ${host.fullName}. Check them out first.` });
+  if (events) return res.status(409).json({ error: `${host.fullName} runs ${plural(events, 'event', 'events')} that ${events === 1 ? 'is' : 'are'} still on. Cancel or move ${events === 1 ? 'it' : 'them'} first.` });
+  if (parcels) return res.status(409).json({ error: `${plural(parcels, 'parcel is', 'parcels are')} waiting for ${host.fullName}. Hand over or return ${parcels === 1 ? 'it' : 'them'} first.` });
+
+  const cancelled = await Invite.updateMany({ host: id, status: 'expected' }, { $set: { status: 'cancelled' } });
+  const used = await Promise.all([Visit.exists({ host: id }), Group.exists({ host: id }), Parcel.exists({ host: id }), Material.exists({ approver: id }), Invite.exists({ host: id })]);
+  if (used.some(Boolean)) {
+    await Host.updateOne({ _id: id }, { $set: { removedAt: new Date(), active: false }, $unset: { telegramChatId: 1, telegramLinkHash: 1, telegramLinkExpires: 1 } });
+  } else {
+    await Host.deleteOne({ _id: id });
+  }
+  audit(req.user, 'host.deleted', { entity: 'Host', entityId: id, details: { name: host.fullName, unit: host.unit, expectedCancelled: cancelled.modifiedCount }, ip: req.ip });
+  res.json({ ok: true, expectedCancelled: cancelled.modifiedCount });
 });
 
 // One-time link and QR for a host to connect Telegram. Valid 24 hours, works once.
@@ -373,7 +402,7 @@ router.post('/hosts/import', requireRole('admin'), async (req, res) => {
   if (rows.length > 5000) return res.status(400).json({ error: 'Import at most 5,000 hosts at a time' });
 
   const mobiles = rows.map((r) => normalizeMobile(r.mobile)).filter(Boolean);
-  const known = new Map((await Host.find({ mobile: { $in: mobiles } }).lean()).map((h) => [h.mobile, h]));
+  const known = new Map((await Host.find({ mobile: { $in: mobiles }, removedAt: null }).lean()).map((h) => [h.mobile, h]));
   const seen = new Set();
   const out = rows.map((r) => {
     const mobile = normalizeMobile(r.mobile);

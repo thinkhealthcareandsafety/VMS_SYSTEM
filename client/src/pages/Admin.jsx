@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, ExternalLink,
   Eye, FileSpreadsheet, FolderArchive, History, LayoutDashboard, LogIn, LogOut, MessageSquare, Plus, Printer,
   RotateCcw, ScrollText, Search, ShieldCheck, Upload, UserPlus, Users, X, XCircle, KeyRound, UserCog, Info, Send,
-  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown, TimerReset,
+  CalendarCheck, Ban, Settings as SettingsIcon, Save, Maximize2, PartyPopper, Siren, Package, Mail, Menu, CornerDownLeft, ChevronDown, TimerReset, Trash2,
 } from 'lucide-react';
 import { api, cardLabel, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel } from '../api.js';
 import QRCode from 'qrcode';
@@ -1417,12 +1417,23 @@ function AddHostDialog({ open, host, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const editing = Boolean(host);
+  const [sure, setSure] = useState(false);
   const disconnect = async () => {
     try { await api(`/api/admin/hosts/${host.id}`, { method: 'PATCH', body: { disconnectTelegram: true } }); toast(`${host.fullName} disconnected from Telegram.`); onDone(); onClose(); } catch (x) { setErr(x.message); }
   };
+  const remove = async () => {
+    if (!sure) { setSure(true); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api(`/api/admin/hosts/${host.id}`, { method: 'DELETE' });
+      toast(`${host.fullName} deleted.${r.expectedCancelled ? ` ${r.expectedCancelled} expected ${r.expectedCancelled === 1 ? 'visitor' : 'visitors'} cancelled.` : ''}`);
+      onDone();
+      onClose();
+    } catch (x) { setErr(x.message); setSure(false); } finally { setBusy(false); }
+  };
   useEffect(() => {
     if (!open) return;
-    setErr('');
+    setErr(''); setSure(false);
     setF(host ? { fullName: host.fullName, unit: host.unit, mobile: host.mobile.replace(/^\+91/, ''), email: host.email || '' } : blank);
   }, [open, host?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -1457,8 +1468,14 @@ function AddHostDialog({ open, host, onClose, onDone }) {
             </div>
           )}
           {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+          {editing && sure && <div className="alert alert-warn" role="alert"><AlertTriangle /><span className="grow">Press again to delete {host.fullName}. Past visits keep their name; expected visitors for them are cancelled. This cannot be undone.</span></div>}
         </div>
         <div className="dialog-foot">
+          {editing && (
+            <button type="button" className={`btn ${sure ? 'btn-danger' : 'btn-danger-outline'}`} style={{ marginRight: 'auto' }} disabled={busy} onClick={remove} onBlur={() => setSure(false)}>
+              <Trash2 />{sure ? `Yes, delete ${host.fullName.split(' ')[0]}` : 'Delete host'}
+            </button>
+          )}
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : editing ? <CheckCircle2 /> : <UserPlus />}{editing ? 'Save changes' : 'Add host'}</button>
         </div>

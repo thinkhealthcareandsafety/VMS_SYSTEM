@@ -37,6 +37,7 @@ const hostSchema = new Schema({
   mobile: { type: String, required: true, trim: true },    // E.164, e.g. +919876543210
   email: { type: String, trim: true, lowercase: true },
   active: { type: Boolean, default: true },
+  removedAt: { type: Date },                 // deleted by an admin but named in old records: hidden everywhere, kept for history
   telegramChatId: { type: String },          // set when the host taps their connect link; approvals then arrive in Telegram
   telegramLinkHash: { type: String },        // one-time connect code (hashed) and its expiry
   telegramLinkExpires: { type: Date },
