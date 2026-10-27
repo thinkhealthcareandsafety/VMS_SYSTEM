@@ -98,7 +98,12 @@ function Composer({ setup, active, preset, onSent }) {
   const pick = (t) => { setTpl(t); setText(t.text); setArmed(false); setErr(''); if (t.id === 'allclear') setAudience('both'); };
 
   const c = setup.counts;
-  const ch = Object.entries(setup.channels).filter(([, on]) => on).map(([k]) => CHANNEL[k]);
+  // SMS goes only for a type with an approved (DLT) template; your own words can never go by SMS in India.
+  const smsOn = tpl ? (setup.channels.smsKinds || []).includes(tpl.id) : setup.channels.sms;
+  const ch = [setup.channels.whatsapp && CHANNEL.whatsapp, smsOn && CHANNEL.sms, setup.channels.email && CHANNEL.email, setup.channels.telegram && CHANNEL.telegram].filter(Boolean);
+  const smsNote = smsOn ? '' : tpl?.id === 'custom'
+    ? ' Your own words cannot go by SMS (only approved SMS wording is allowed in India). Pick a template to also send SMS.'
+    : ' SMS for this emergency is not set up yet: visitors who have not messaged the hotel’s WhatsApp number may not get it.';
   const hosts = allHosts ? c.allHosts : c.theirHosts;
   const reach = (audience !== 'hosts' ? c.visitors : 0) + (audience !== 'visitors' ? hosts : 0);
   const send = async () => {
@@ -151,7 +156,7 @@ function Composer({ setup, active, preset, onSent }) {
             {!setup.assemblyPoint && tpl.text.includes('assembly point staff direct you to') && <div className="alert alert-warn"><AlertTriangle /><span className="grow">No assembly point is set. An admin can add it in Settings, or write it in the message above.</span></div>}
             {ch.length === 0
               ? <div className="alert alert-bad"><AlertTriangle /><span className="grow">No message channel is switched on, so nobody will receive this. Use the PA system and the printed list. The roll call still starts.</span></div>
-              : <div className="alert"><Send /><span className="grow">Goes by {ch.join(', ')} to {reach} {reach === 1 ? 'person' : 'people'}.{setup.channels.sms ? '' : ' SMS is off: visitors who have not messaged the hotel’s WhatsApp number may not get it.'}</span></div>}
+              : <div className="alert"><Send /><span className="grow">Goes by {ch.join(', ')} to {reach} {reach === 1 ? 'person' : 'people'}.{smsNote}</span></div>}
             {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
           </>
         )}

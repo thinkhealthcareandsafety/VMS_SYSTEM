@@ -2055,3 +2055,30 @@ test('licence: without one new entries pause but check-outs and emergencies work
     license.forget();
   }
 });
+
+test('emergency SMS: a type with an approved template goes by SMS with the site and assembly point; your own words do not', async () => {
+  const { Outbox, Emergency } = require('../src/models');
+  const config = require('../src/config');
+  const saved = { key: config.otp.authKey, alerts: { ...config.sms.msg91Alerts }, short: config.sms.alertSiteShort };
+  Object.assign(config.otp, { authKey: 'msg91-test-key' });
+  Object.assign(config.sms.msg91Alerts, { fire: 'TPL-FIRE' });
+  config.sms.alertSiteShort = 'St Regis Marriott Delhi';
+  try {
+    const setup = (await call('GET', '/api/emergency/setup', null, guard)).body;
+    assert.deepEqual(setup.channels.smsKinds, ['fire']);
+    const fire = await call('POST', '/api/emergency/send', { template: 'fire', audience: 'both', text: 'FIRE ALARM. Leave the building now by the nearest exit.' }, guard);
+    assert.equal(fire.status, 201, JSON.stringify(fire.body));
+    const sms = await Outbox.find({ emergency: fire.body.id, kind: 'sms' }).lean();
+    assert.ok(sms.length >= 2, 'visitors and hosts get the SMS');
+    assert.equal(sms[0].vars.kind, 'fire');
+    assert.equal(sms[0].vars.site, 'St Regis Marriott Delhi');
+    assert.equal(sms[0].vars.assembly, 'Main driveway, by the fountain');
+    const own = await call('POST', '/api/emergency/send', { template: 'custom', audience: 'both', text: 'Use the north staircase, the south one is closed.' }, guard);
+    assert.equal(await Outbox.countDocuments({ emergency: own.body.id, kind: 'sms', 'vars.n': own.body.messages.length - 1 }), 0, 'no SMS for free text');
+    await Emergency.updateMany({ status: 'active' }, { status: 'closed' });
+  } finally {
+    config.otp.authKey = saved.key;
+    Object.assign(config.sms.msg91Alerts, saved.alerts);
+    config.sms.alertSiteShort = saved.short;
+  }
+});

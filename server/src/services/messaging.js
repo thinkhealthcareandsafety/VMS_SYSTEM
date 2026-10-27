@@ -7,22 +7,24 @@ const config = require('../config');
 // console: logs the message (dev). http: POSTs to your gateway (MSG91 / Textlocal / Twilio / etc.).
 // India: SMS must use a TRAI DLT-registered template; the body must match the approved template text.
 async function sendSms(to, body, vars = {}) {
-  if (config.sms.driver === 'console') {
-    console.log(`[SMS -> ${to}] ${body}`);
-    return 'console';
-  }
-  if (config.sms.driver === 'msg91' && vars.alert) {
-    // An emergency message: its own DLT template, the whole text in one variable.
-    if (!config.otp.authKey || !config.sms.msg91AlertTemplateId) throw Object.assign(new Error('MSG91 emergency template is not set up'), { permanent: true });
+  // An emergency through MSG91: the approved template for its type, whatever the everyday SMS driver is.
+  if (vars.alert && config.sms.driver !== 'http') {
+    const tpl = config.sms.msg91Alerts[vars.kind];
+    if (!config.otp.authKey || !tpl) throw Object.assign(new Error(`No approved SMS template for the "${vars.kind}" emergency`), { permanent: true });
+    const [v1, v2] = config.sms.msg91AlertVars;
     const res = await fetch('https://control.msg91.com/api/v5/flow', {
       method: 'POST',
       headers: { authkey: config.otp.authKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ template_id: config.sms.msg91AlertTemplateId, short_url: '0', recipients: [{ mobiles: to.replace(/^\+/, ''), [config.sms.msg91AlertVar]: body }] }),
+      body: JSON.stringify({ template_id: tpl, short_url: '0', recipients: [{ mobiles: to.replace(/^\+/, ''), [v1]: String(vars.site || '').slice(0, 30), [v2]: String(vars.assembly || '').slice(0, 30) }] }),
       signal: AbortSignal.timeout(10000),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.type === 'error') throw new Error(`MSG91: ${json.message || res.status}`);
     return String(json.message || json.request_id || 'accepted');
+  }
+  if (config.sms.driver === 'console') {
+    console.log(`[SMS -> ${to}] ${body}`);
+    return 'console';
   }
   if (config.sms.driver === 'msg91') {
     // MSG91 Flow API: the approval text is a DLT-approved template; only its variables travel.
@@ -133,7 +135,8 @@ async function deliverZpl(zpl, label) {
   throw new Error(`Unknown PRINTER_MODE: ${mode}`);
 }
 
-// Emergency messages can go by SMS: a gateway that takes free text, or MSG91 with an emergency DLT template.
-const smsAlertsLive = () => config.sms.driver === 'http' || (config.sms.driver === 'msg91' && Boolean(config.otp.authKey && config.sms.msg91AlertTemplateId));
+// Emergency SMS: a gateway that takes free text sends every type; MSG91 sends the types with an approved template.
+const smsAlertKinds = () => (config.sms.driver === 'http' ? Object.keys(config.sms.msg91Alerts) : config.otp.authKey ? Object.keys(config.sms.msg91Alerts).filter((k) => config.sms.msg91Alerts[k]) : []);
+const smsAlertsLive = (kind) => (kind ? smsAlertKinds().includes(kind) : smsAlertKinds().length > 0);
 
-module.exports = { sendSms, sendOtp, otpLive, smsAlertsLive, buildStickerZpl, deliverZpl };
+module.exports = { sendSms, sendOtp, otpLive, smsAlertsLive, smsAlertKinds, buildStickerZpl, deliverZpl };

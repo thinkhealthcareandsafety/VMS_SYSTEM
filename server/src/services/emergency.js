@@ -3,7 +3,8 @@ const settings = require('./settings');
 const whatsapp = require('./whatsapp');
 const telegram = require('./telegram');
 const email = require('./email');
-const { smsAlertsLive } = require('./messaging');
+const { smsAlertsLive, smsAlertKinds } = require('./messaging');
+const config = require('../config');
 
 // Emergencies at the site: a fire, an evacuation, a drill. The first message starts one, with a roll call of
 // everyone inside at that moment; more messages can follow; "All clear" ends it. Every message goes out on every
@@ -53,14 +54,16 @@ async function audienceOf(visits, { allHosts = false } = {}) {
   return { visitorMobiles: [...visitorMobiles.keys()], visitorEmails, hosts };
 }
 
-const channels = () => ({ whatsapp: whatsapp.enabled(), sms: smsAlertsLive(), email: email.enabled(), telegram: telegram.enabled() });
+const channels = () => ({ whatsapp: whatsapp.enabled(), sms: smsAlertsLive(), smsKinds: smsAlertKinds(), email: email.enabled(), telegram: telegram.enabled() });
 
 // The line added for a host whose visitors are inside, so they can make sure each one gets out.
 const hostLine = (names) => (names.length ? `\n\nYour visitors inside: ${names.slice(0, 8).join(', ')}${names.length > 8 ? ` and ${names.length - 8} more` : ''}. Please make sure they reach safety.` : '');
 
 // Queues one message for everyone in the audience, on every channel that reaches them. Returns the counts.
-async function queue(em, n, text, audience, { visitors, allHosts, title }) {
-  const ch = channels();
+async function queue(em, n, text, audience, { visitors, allHosts, title, kind }) {
+  const ch = { ...channels(), sms: smsAlertsLive(kind) };
+  const s = await settings.get();
+  const smsVars = { ...{ plain: true, alert: true, n }, kind, site: config.sms.alertSiteShort || s.siteName, assembly: s.assemblyPoint || 'as staff direct' };
   const jobs = [];
   const base = { emergency: em._id, vars: { plain: true, alert: true, n } };
   const reach = await audienceOf(visitors, { allHosts });
@@ -71,7 +74,7 @@ async function queue(em, n, text, audience, { visitors, allHosts, title }) {
   if (audience !== 'hosts') {
     for (const to of reach.visitorMobiles) {
       if (ch.whatsapp) jobs.push({ ...base, kind: 'whatsapp', to, body: text });
-      if (ch.sms) jobs.push({ ...base, kind: 'sms', to, body: text });
+      if (ch.sms) jobs.push({ ...base, kind: 'sms', to, body: text, vars: smsVars });
     }
     if (ch.email) for (const to of reach.visitorEmails) jobs.push({ ...base, kind: 'email', to, body: text, vars: { ...base.vars, ...mail(text) } });
     visitorCount = reach.visitorMobiles.length;
@@ -81,7 +84,7 @@ async function queue(em, n, text, audience, { visitors, allHosts, title }) {
       const body = text + hostLine(names);
       let told = false;
       if (ch.whatsapp && host.mobile) { jobs.push({ ...base, kind: 'whatsapp', to: host.mobile, body }); told = true; }
-      if (ch.sms && host.mobile) { jobs.push({ ...base, kind: 'sms', to: host.mobile, body }); told = true; }
+      if (ch.sms && host.mobile) { jobs.push({ ...base, kind: 'sms', to: host.mobile, body, vars: smsVars }); told = true; }
       if (ch.telegram && host.telegramChatId) { jobs.push({ ...base, kind: 'telegram', to: String(host.telegramChatId), body }); told = true; }
       if (ch.email && host.email) { jobs.push({ ...base, kind: 'email', to: host.email, body, vars: { ...base.vars, ...mail(body) } }); told = true; }
       if (told) hostCount += 1;
@@ -125,7 +128,7 @@ async function send({ template, text, audience, allHosts }, user, gate) {
   const withMsg = await Emergency.findOneAndUpdate({ _id: em._id, status: 'active' }, { $push: { messages: msg } }, { new: true }).lean();
   if (!withMsg) return { error: 'This emergency has just ended. Send again to start a new one.' };
   const n = withMsg.messages.length - 1;
-  const counts = await queue(withMsg, n, clean, audience, { visitors: visits, allHosts: Boolean(allHosts), title: t.id === 'custom' ? 'Emergency' : t.title });
+  const counts = await queue(withMsg, n, clean, audience, { visitors: visits, allHosts: Boolean(allHosts), title: t.id === 'custom' ? 'Emergency' : t.title, kind: t.id });
   const closing = t.id === 'allclear' ? { status: 'closed', closedAt: new Date(), closedByName: user.fullName } : {};
   const final = await Emergency.findOneAndUpdate(
     { _id: em._id },

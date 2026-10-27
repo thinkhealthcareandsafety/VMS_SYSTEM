@@ -70,9 +70,14 @@ module.exports = {
     // MSG91_APPROVAL_VARS names mapped to [visitor name, company, approval link].
     msg91TemplateId: env.MSG91_APPROVAL_TEMPLATE_ID || '',
     msg91Vars: (env.MSG91_APPROVAL_VARS || 'var1,var2,var3').split(',').map((s) => s.trim()),
-    // msg91: emergency messages go through their own DLT template, whose one variable receives the message text.
-    msg91AlertTemplateId: env.MSG91_ALERT_TEMPLATE_ID || '',
-    msg91AlertVar: env.MSG91_ALERT_VAR || 'var1',
+    // msg91: one DLT template per emergency type (DLT allows no free text). Its two {#var#} receive the site's short
+    // name and the assembly point, 30 characters each. A type without a template is not sent by SMS.
+    msg91Alerts: {
+      fire: env.MSG91_ALERT_FIRE_ID || '', evacuate: env.MSG91_ALERT_EVACUATE_ID || '', gas: env.MSG91_ALERT_GAS_ID || '',
+      shelter: env.MSG91_ALERT_SHELTER_ID || '', drill: env.MSG91_ALERT_DRILL_ID || '', allclear: env.MSG91_ALERT_ALLCLEAR_ID || '',
+    },
+    msg91AlertVars: (env.MSG91_ALERT_VARS || 'var1,var2').split(',').map((s) => s.trim()),
+    alertSiteShort: env.ALERT_SITE_SHORT || '',   // e.g. "St Regis Marriott Delhi" (30 characters at most)
     httpUrl: env.SMS_HTTP_URL || '',
     httpAuth: env.SMS_HTTP_AUTH || '',     // full Authorization header value
     senderId: env.SMS_SENDER_ID || 'VMSITE',
