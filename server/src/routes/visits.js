@@ -16,6 +16,7 @@ const passes = require('../services/passes');
 const gate = require('../services/gate');
 const vault = require('../services/vault');
 const overstay = require('../services/overstay');
+const departure = require('../services/departure');
 const { requireLicense } = require('../services/license');
 const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
@@ -618,6 +619,7 @@ router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => 
   );
   if (!v) return res.status(409).json({ error: 'Visitor is not currently inside' });
   audit(req.user, keep ? 'visit.went_out' : 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name }, ip: req.ip });
+  await departure.tellHost(v, { at: now, gateName: gate.name }).catch((e) => console.error('[checkout] host message:', e.message));
   res.json({ ok: true, status: v.status, checkedOutAt: v.checkedOutAt, validUntil: v.validUntil, card: current.card?.no ? current.card : null });
 });
 

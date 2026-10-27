@@ -1342,7 +1342,6 @@ test('material: gate passes approved by the head (older API); the inward registe
   // The vendor leaves: the stamped invoice photographed, who received it, and what the hotel kept; the rest went back.
   const [veg] = dl.body.items;
   const checkout = (body) => call('POST', `/api/material/${dl.body.id}/checkout`, { receivedBy: { department: 'Kitchen', name: 'Chef Arjun' }, items: [{ item: veg.id, accepted: 50 }], photos: [jpeg()], note: 'Half the vegetables not fresh', ...body }, guard);
-  assert.match((await checkout({ photos: [] })).body.error, /photo of the invoice/);
   assert.match((await checkout({ receivedBy: {} })).body.error, /Who received/);
   assert.match((await checkout({ items: [{ item: veg.id, accepted: 101 }] })).body.error, /only 100 kg came in/);
   const left = await checkout({});
@@ -1438,16 +1437,16 @@ test('couriers: logged with photos, the recipient accepts or declines, handed ov
     assert.equal((await arrive({ hostId: hostIds.asha, awb: 'BD12345678' })).body.code, 'duplicate_awb');
 
     // Handover: the collector's name, mobile and a photo; then the recipient is told who took it.
-    const collect = (body) => call('POST', `/api/parcels/${p.body.id}/collect`, { collector: 'Ravi (assistant)', mobile: '9811122200', photos: [jpeg()], ...body }, guard);
+    const collect = (body) => call('POST', `/api/parcels/${p.body.id}/collect`, { collector: 'Ravi (assistant)', mobile: '9811122200', signature: jpeg(), ...body }, guard);
     assert.equal((await collect({ collector: '' })).status, 400, 'name needed');
     assert.match((await collect({ mobile: '' })).body.error, /mobile/);
-    assert.match((await collect({ photos: [] })).body.error, /photo/);
+    assert.match((await collect({ signature: undefined })).body.error, /sign/);
     const ok = await collect({});
     assert.equal(ok.body.status, 'collected');
     assert.equal(ok.body.handover.how, 'handover');
     assert.equal(ok.body.handover.mobile, '+919811122200');
     assert.equal(ok.body.handover.by, 'Gate Guard');
-    assert.equal(ok.body.handoverPhotos.length, 1);
+    assert.ok(ok.body.signature, 'the signature is kept');
     assert.equal(ok.body.acknowledgedVia, 'whatsapp');
     assert.ok(ok.body.ackSentAt);
     const ack = await Outbox.findOne({ parcel: p.body.id, 'vars.plain': true }).lean();
@@ -2081,4 +2080,38 @@ test('emergency SMS: a type with an approved template goes by SMS with the site 
     Object.assign(config.sms.msg91Alerts, saved.alerts);
     config.sms.alertSiteShort = saved.short;
   }
+});
+
+test('check-in options are set by the admin; the host is told when the visitor leaves, and not when a scan out is undone', async () => {
+  const { Outbox } = require('../src/models');
+  const config = require('../src/config');
+  assert.match((await call('PATCH', '/api/admin/settings', { durations: '2h, 99h' }, admin)).body.error, /99h/);
+  const set = await call('PATCH', '/api/admin/settings', { purposes: 'Meeting, Banquet, Vendor visit', durations: '1h, 6 hours, today, 15d', notifyCheckout: true }, admin);
+  assert.deepEqual(set.body.durations, ['1h', '6h', 'today', '15d']);
+  const me = (await call('GET', '/api/auth/me', null, guard)).body;
+  assert.deepEqual(me.checkin.purposes, ['Meeting', 'Banquet', 'Vendor visit']);
+  assert.deepEqual(me.checkin.durations.map((d) => d.label), ['1 hour', '6 hours', 'Today', '15 days']);
+  assert.equal(me.checkin.lanyardCards, false, 'lanyard card off by default');
+
+  const saved = { ...config.whatsapp };
+  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  try {
+    const r = await call('POST', '/api/visits', { firstName: 'Leaves', lastName: 'Soon', gender: 'male', mobile: '9700000951', company: 'LS', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), validity: '6h', purpose: 'Banquet' }, guard);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const { Visit } = require('../src/models');
+    await Visit.updateOne({ _id: r.body.id }, { status: 'approved', decidedAt: new Date(), validUntil: new Date(Date.now() + 6 * 3600e3), movements: [{ kind: 'in', at: new Date(Date.now() - 5 * 60e3), gateName: 'Main gate' }] });
+    // A scan out, then undone: the held-back message to the host is dropped.
+    const v = await Visit.findById(r.body.id).lean();
+    const scan = await call('POST', '/api/visits/scan', { code: v.passCode }, guard);
+    assert.equal(scan.body.result, 'out', JSON.stringify(scan.body));
+    assert.equal(await Outbox.countDocuments({ visit: r.body.id, 'vars.departure': true }), 1);
+    await call('POST', `/api/visits/${r.body.id}/undo-scan`, { action: 'out' }, guard);
+    assert.equal(await Outbox.countDocuments({ visit: r.body.id, 'vars.departure': true }), 0, 'undone scan: host not told');
+    // A real check-out: the host is told who left, when and where.
+    await call('POST', `/api/visits/${r.body.id}/checkout`, { final: true }, guard);
+    const msg = await Outbox.findOne({ visit: r.body.id, 'vars.departure': true }).lean();
+    assert.equal(msg.to, '+919000000001');
+    assert.match(msg.body, /Your visitor Leaves Soon \(LS\) has left: .*Main gate|Your visitor Leaves Soon \(LS\) has left/);
+  } finally { Object.assign(config.whatsapp, saved); }
+  await call('PATCH', '/api/admin/settings', { purposes: 'Delivery, Meeting, Interview, Service / repair, Guest', durations: '2h, 4h, 8h, today, 3d, 7d, 10d, 20d, 30d' }, admin);
 });

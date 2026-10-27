@@ -611,6 +611,25 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
     patch.fullIdCapture = b.fullIdCapture;
   }
   if (b.assemblyPoint !== undefined) patch.assemblyPoint = cleanText(b.assemblyPoint, 120);
+  // Check-in choices: the purpose buttons, and the pass lengths ("2h", "today", "15d"). Comma-separated or a list.
+  const list = (v) => (Array.isArray(v) ? v : String(v || '').split(',')).map((x) => cleanText(String(x), 30)).filter(Boolean);
+  if (b.purposes !== undefined) {
+    const p = [...new Set(list(b.purposes))];
+    if (!p.length || p.length > 12) return res.status(400).json({ error: 'List 1 to 12 purposes, separated by commas' });
+    patch.purposes = p;
+  }
+  if (b.durations !== undefined) {
+    const d = [...new Set(list(b.durations).map((x) => x.toLowerCase().replace(/\s+/g, '').replace(/^(\d+)(hrs?|hours?)$/, '$1h').replace(/^(\d+)days?$/, '$1d')))];
+    const bad = d.find((x) => !passes.ruleOf(x));
+    if (bad) return res.status(400).json({ error: `"${bad}" is not a pass length. Use hours like 6h (up to 72h), days like 15d (up to 90d), or today.` });
+    if (!d.length || d.length > 12) return res.status(400).json({ error: 'List 1 to 12 pass lengths, separated by commas' });
+    patch.durations = d;
+  }
+  for (const k of ['lanyardCards', 'notifyCheckout']) {
+    if (b[k] === undefined) continue;
+    if (typeof b[k] !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
+    patch[k] = b[k];
+  }
   // Who is told when a visitor overstays: mobile numbers (WhatsApp) and email addresses, in one list.
   if (b.escalateTo !== undefined) {
     const parts = String(Array.isArray(b.escalateTo) ? b.escalateTo.join(',') : b.escalateTo || '').split(/[\s,;]+/).filter(Boolean);
@@ -632,7 +651,7 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
   const before = await settings.get();
   const after = await settings.update(patch);
-  const show = (v) => (v && typeof v === 'object' ? [...(v.mobiles || []), ...(v.emails || [])].join(', ') || 'nobody' : v);
+  const show = (v) => (Array.isArray(v) ? v.join(', ') : v && typeof v === 'object' ? [...(v.mobiles || []), ...(v.emails || [])].join(', ') || 'nobody' : v);
   audit(req.user, 'settings.updated', { details: Object.fromEntries(Object.keys(patch).map((k) => [k, `${show(before[k])} → ${show(after[k])}`])), ip: req.ip });
   res.json(after);
 });

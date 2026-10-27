@@ -187,7 +187,7 @@ export default function Admin({ user, onLogout }) {
           {section === 'staff' && <StaffPage {...page} user={user} />}
           {section === 'expected' && <ExpectedPage {...page} />}
           {section === 'groups' && <GroupsPage {...page} />}
-          {section === 'material' && <MaterialBoard admin liveTick={tick} />}
+          {section === 'material' && <MaterialBoard admin liveTick={tick} lanyard={Boolean(user.checkin?.lanyardCards)} />}
           {section === 'couriers' && <CourierBoard admin liveTick={tick} />}
           {section === 'blocked' && <BlockedPage {...page} />}
           {section === 'settings' && <SettingsPage {...page} superAdmin={user.role === 'superadmin'} />}
@@ -2266,7 +2266,9 @@ function GatesManager() {
 }
 
 // The escalation contacts travel as { mobiles, emails } and are edited as one comma-separated line.
-const withContacts = (d) => ({ ...d, assemblyPoint: d.assemblyPoint || '', escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
+const withContacts = (d) => ({
+  ...d, assemblyPoint: d.assemblyPoint || '', purposes: (d.purposes || []).join(', '), durations: (d.durations || []).join(', '),
+  lanyardCards: Boolean(d.lanyardCards), notifyCheckout: d.notifyCheckout !== false, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
 
 function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
   const [s, setS] = useState(null);
@@ -2277,7 +2279,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     api('/api/admin/settings').then((raw) => {
       const d = withContacts(raw);
       setS(d);
-      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
+      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', purposes: d.purposes, durations: d.durations, lanyardCards: d.lanyardCards, notifyCheckout: d.notifyCheckout, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
     }).catch((e) => setErr(e.message));
   }, []);
 
@@ -2290,8 +2292,8 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     try {
       const d = withContacts(await api('/api/admin/settings', { method: 'PATCH', body: Object.fromEntries(changed.map((k) => [k, f[k]])) }));
       setS({ ...s, ...d });
-      setF((x) => ({ ...x, escalateTo: d.escalateTo }));
-      toast('Settings saved. Guard screens pick up name changes next time they open.');
+      setF((x) => ({ ...x, escalateTo: d.escalateTo, purposes: d.purposes, durations: d.durations }));
+      toast('Settings saved. Guard screens pick up the changes the next time they open or refresh.');
     } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
   const ch = s.channels || {};
@@ -2350,6 +2352,28 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
             {ch.otp ? <CheckCircle2 /> : <AlertTriangle />}
             <span className="grow">{ch.otp ? 'Text messages are on: visitors receive the code on their phone.' : 'Text messages are not switched on yet, so visitors would not receive the code. Keep this Off until GateSmartX support switches text messages on.'}</span>
           </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Check-in</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Purpose buttons</span>
+            <input className="input" value={f.purposes} onChange={(e) => setF({ ...f, purposes: e.target.value })} placeholder="Delivery, Meeting, Interview, Service / repair, Guest" />
+            <span className="hint">Separated by commas, up to 12. The guard can also pick “Other” and type one.</span>
+          </label>
+          <label className="field"><span>Pass lengths</span>
+            <input className="input" value={f.durations} onChange={(e) => setF({ ...f, durations: e.target.value })} placeholder="2h, 4h, 8h, today, 3d, 7d" />
+            <span className="hint">Hours like 6h (up to 72h), days like 15d (up to 90d), or today. “Pick a date” is always there too.</span>
+          </label>
+          <label className="checkbox" style={{ fontSize: 14 }}>
+            <input type="checkbox" checked={f.notifyCheckout} onChange={(e) => setF({ ...f, notifyCheckout: e.target.checked })} />
+            <span>Tell the host when their visitor leaves <span className="faint">(WhatsApp, email; SMS once its template is approved)</span></span>
+          </label>
+          <label className="checkbox" style={{ fontSize: 14 }}>
+            <input type="checkbox" checked={f.lanyardCards} onChange={(e) => setF({ ...f, lanyardCards: e.target.checked })} />
+            <span>Ask for the hotel’s lanyard card number at check-in</span>
+          </label>
         </div>
       </section>
 

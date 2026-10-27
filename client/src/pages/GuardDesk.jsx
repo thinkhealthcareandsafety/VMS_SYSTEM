@@ -39,9 +39,11 @@ const addDays = (ymd, n) => { const t = new Date(`${ymd}T00:00:00Z`); t.setUTCDa
 const dayLabel = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 // What the guard sees under the choices, before anyone approves.
 function validityPreview(v, day) {
-  if (VALIDITY_HOURS[v]) return `For ${VALIDITY_HOURS[v]} hours from when the host lets them in.`;
+  const hours = VALIDITY_HOURS[v] || Number(/^(\d+)h$/.exec(v || '')?.[1] || 0);
+  const days = VALIDITY_DAYS[v] || Number(/^(\d+)d$/.exec(v || '')?.[1] || 0);
+  if (hours) return `For ${hours} ${hours === 1 ? 'hour' : 'hours'} from when the host lets them in.`;
   if (v === 'today') return 'Until 11:59 pm today.';
-  if (VALIDITY_DAYS[v]) return `Until ${dayLabel(addDays(today(), VALIDITY_DAYS[v] - 1))}, 11:59 pm. They can leave and come back on the same pass.`;
+  if (days) return `Until ${dayLabel(addDays(today(), days - 1))}, 11:59 pm.${days > 1 ? ' They can leave and come back on the same pass.' : ''}`;
   if (v === 'date') return day ? `Until ${dayLabel(day)}, 11:59 pm.${day > today() ? ' They can leave and come back on the same pass.' : ''}` : 'Pick the last day of the pass.';
   return '';
 }
@@ -58,6 +60,12 @@ const ID_LABEL = Object.fromEntries(ID_TYPES);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
 const MOBILE_RE = /^[6-9]\d{9}$/;
+const INTL_RE = /^\d{6,14}$/; // a number abroad, without its country code
+// Country codes for visitors from abroad; India stays first and is the default.
+const COUNTRY_CODES = [['+91', 'India'], ['+971', 'UAE'], ['+44', 'UK'], ['+1', 'USA / Canada'], ['+65', 'Singapore'], ['+61', 'Australia'], ['+966', 'Saudi Arabia'],
+  ['+974', 'Qatar'], ['+968', 'Oman'], ['+965', 'Kuwait'], ['+973', 'Bahrain'], ['+977', 'Nepal'], ['+880', 'Bangladesh'], ['+94', 'Sri Lanka'], ['+60', 'Malaysia'],
+  ['+66', 'Thailand'], ['+62', 'Indonesia'], ['+86', 'China'], ['+81', 'Japan'], ['+82', 'South Korea'], ['+49', 'Germany'], ['+33', 'France'], ['+39', 'Italy'],
+  ['+34', 'Spain'], ['+31', 'Netherlands'], ['+41', 'Switzerland'], ['+353', 'Ireland'], ['+7', 'Russia'], ['+27', 'South Africa'], ['+64', 'New Zealand']];
 const PURPOSES = ['Delivery', 'Meeting', 'Interview', 'Service / repair', 'Guest'];
 const RESEND_AFTER = 30; // seconds; the server enforces the same gap
 
@@ -266,7 +274,7 @@ export default function GuardDesk({ user, onLogout }) {
       <EmergencyDialog open={sos} onClose={() => setSos(false)} active={emergency} onChanged={setEmergency} siteName={user.siteName} />
 
       {mode === 'material' ? (
-        <main className="guard-main"><MaterialBoard liveTick={liveTick} /></main>
+        <main className="guard-main"><MaterialBoard liveTick={liveTick} lanyard={Boolean(user.checkin?.lanyardCards)} /></main>
       ) : mode === 'couriers' ? (
         <main className="guard-main"><CourierBoard liveTick={liveTick} /></main>
       ) : (
@@ -286,12 +294,14 @@ export default function GuardDesk({ user, onLogout }) {
                 onReprint={() => act.reprint(open)}
                 onPrint={() => printPass(open)}
                 onCard={(v) => setOpen((cur) => (cur && cur.id === v.id ? { ...cur, card: v.card } : cur))}
+                lanyard={Boolean(user.checkin?.lanyardCards)}
               />
             ) : (
               <CheckInForm
                 liveTick={liveTick}
                 isAdmin={user.role === 'admin' || user.role === 'superadmin'}
                 keepFullId={Boolean(user.fullId)}
+                checkin={user.checkin}
                 onOpenActive={openVisit}
                 onSubmitted={(v) => {
                   setSentAt((m) => ({ ...m, [v.id]: Date.now() }));
@@ -374,7 +384,12 @@ function UserMenu({ user, onLogout, autoPrint, onToggleAutoPrint }) {
 }
 
 // ---------------------------------------------------------------- Check-in (single page)
-function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId }) {
+function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId, checkin }) {
+  // The admin's choices (Settings → Check-in): purpose buttons, pass lengths, and whether to ask for a lanyard card.
+  const purposes = checkin?.purposes?.length ? checkin.purposes : PURPOSES;
+  const lengths = [...(checkin?.durations?.length ? checkin.durations.map((d) => [d.key, d.label]) : VALIDITY.filter(([k]) => k !== 'date')), ['date', 'Pick a date']];
+  const defValidity = lengths.some(([k]) => k === '8h') ? '8h' : lengths[0][0];
+  const [otherPurpose, setOtherPurpose] = useState(false);
   const [form, setForm] = useState(store.load);
   const [host, setHost] = useState(null);
   const [photo, setPhoto] = useState(null);
@@ -459,7 +474,10 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
     setIdInfo((i) => ({ ...i, filled }));
   };
   const digits = form.mobile.replace(/\D/g, '');
-  const mobileOk = MOBILE_RE.test(digits);
+  const cc = form.cc || '+91';
+  const india = cc === '+91';
+  const mobileOk = india ? MOBILE_RE.test(digits) : INTL_RE.test(digits);
+  const fullMobile = india ? digits : `${cc}${digits}`; // what the server and the lookups get
 
   useEffect(() => {
     setReturning(null);
@@ -482,9 +500,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
         return next;
       });
     }
-    if (!MOBILE_RE.test(digits)) return undefined;
+    if (!mobileOk) return undefined;
     let live = true;
-    api(`/api/visits/lookup?mobile=${digits}`).then((r) => {
+    api(`/api/visits/lookup?mobile=${encodeURIComponent(fullMobile)}`).then((r) => {
       if (!live) return;
       setActive(r.active || null);
       setBlocked(r.blocked || null);
@@ -513,12 +531,15 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
       update(filled);
     }).catch(() => {});
     return () => { live = false; };
-  }, [digits]);
+  }, [digits, cc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The person's status can change while the guard types (host approves, someone checks them out).
   useEffect(() => {
-    const d = formRef.current.mobile.replace(/\D/g, '');
-    if (!liveTick || !MOBILE_RE.test(d)) return undefined;
+    const f = formRef.current;
+    const n = f.mobile.replace(/\D/g, '');
+    const intl = (f.cc || '+91') !== '+91';
+    if (!liveTick || !(intl ? INTL_RE.test(n) : MOBILE_RE.test(n))) return undefined;
+    const d = encodeURIComponent(intl ? `${f.cc}${n}` : n);
     let live = true;
     api(`/api/visits/lookup?mobile=${d}`).then((r) => { if (live) { setActive(r.active || null); setBlocked(r.blocked || null); } }).catch(() => {});
     return () => { live = false; };
@@ -535,7 +556,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
     ['visitor', form.company.trim().length > 0, 'company', 'company'],
     ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)', 'email'],
     ['host', Boolean(host), 'whom to meet', 'host'],
-    ['host', (form.validity || '8h') !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass', 'validUntilDay'],
+    ['host', (form.validity || defValidity) !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass', 'validUntilDay'],
     ['capture', Boolean(photo), 'photo', 'photo'],
     ['capture', Boolean(idImage), 'ID card', 'id'],
   ];
@@ -600,11 +621,11 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
       const res = await api('/api/visits', {
         method: 'POST',
         body: {
-          ...form, mobile: digits, hostId: host.id, photo, idImage, ...(keepFullId && idInfo?.full ? { idImageFull: idInfo.full } : {}),
+          ...form, mobile: fullMobile, hostId: host.id, photo, idImage, ...(keepFullId && idInfo?.full ? { idImageFull: idInfo.full } : {}),
           ...(verify === 'skipped' ? { otpSkip: true } : {}),
           ...(faces ? { faceMatch: faces.status, ...(faces.status === 'scored' ? { faceMatchScore: faces.score } : {}) } : {}), idMask: idInfo ? `${idInfo.method}${idInfo.manual ? '+manual' : ''}` : undefined, idType, ...(idType === 'other' && form.idTypeOther?.trim() ? { idTypeOther: form.idTypeOther.trim() } : {}),
           ...(idCheck ? { idCheck: { status: idCheck.status, source: idCheck.source, nameScore: idCheck.nameScore, gender: idCheck.gender, tamper: idCheck.tamper } } : {}), ...(invite && invite.host.id === host.id ? { inviteId: invite.id } : {}),
-          validity: form.validity || '8h', ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}),
+          validity: lengths.some(([k]) => k === form.validity) ? form.validity : defValidity, ...(form.validity === 'date' ? { validUntilDay: form.validUntilDay } : {}),
           ...(form.cardNo ? { cardNo: form.cardNo, cardType: form.cardType || 'visitor' } : {}) },
       });
       store.clear();
@@ -646,15 +667,26 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
         <div className="field">
           <span id="lbl-mobile">Mobile number</span>
           <div className="mobile-boxes" role="group" aria-labelledby="lbl-mobile">
-            <span className="mobile-cc">+91</span>
-            <DigitBoxes length={10} gapAfter={[4]} value={digits} clean={cleanMobile} label="Mobile number, 10 digits" autoFocus
-              invalid={(digits.length === 10 || tried) && !mobileOk}
-              onChange={(d) => update({ mobile: d })} />
+            <select className="mobile-cc cc-select" value={cc} onChange={(e) => update({ cc: e.target.value, mobile: '' })} aria-label="Country code">
+              {COUNTRY_CODES.map(([code, name]) => <option key={code} value={code}>{code} {name}</option>)}
+            </select>
+            {india
+              ? <DigitBoxes length={10} gapAfter={[4]} value={digits} clean={cleanMobile} label="Mobile number, 10 digits" autoFocus
+                  invalid={(digits.length === 10 || tried) && !mobileOk}
+                  onChange={(d) => update({ mobile: d })} />
+              : <input className="input num intl-mobile" inputMode="numeric" value={digits} autoFocus aria-label="Mobile number without the country code"
+                  aria-invalid={tried && !mobileOk} placeholder="Number without the country code"
+                  onChange={(e) => update({ mobile: e.target.value.replace(/\D/g, '').slice(0, 14) })} />}
           </div>
-          {digits.length === 10 && !mobileOk && <span className="hint err">Indian mobile numbers start with 6, 7, 8 or 9.</span>}
+          {india && digits.length === 10 && !mobileOk && <span className="hint err">Indian mobile numbers start with 6, 7, 8 or 9.</span>}
         </div>
+        {mobileOk && !form.firstName && !form.lastName && !idImage && (
+          <button type="button" className="btn btn-sm scan-id-cta" onClick={() => { setCam('aadhaar'); sec.capture.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+            <ScanFace />Scan the ID card: name and gender fill in by themselves
+          </button>
+        )}
         {mobileOk && otp.mode !== 'off' && !active && !blocked && !otp.verified && (
-          <MobileVerify mobile={digits} mode={otp.mode} canSkip={otp.mode === 'optional' || isAdmin} value={verify} onChange={setVerify} />
+          <MobileVerify mobile={fullMobile} mode={otp.mode} canSkip={otp.mode === 'optional' || isAdmin} value={verify} onChange={setVerify} />
         )}
         {active && active.status === 'away' && (
           <div className="alert alert-ok" role="alert">
@@ -722,10 +754,12 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
         <div className="field">
           <span>Purpose <span className="faint">· optional</span></span>
           <div className="chips" role="group" aria-label="Purpose">
-            {PURPOSES.map((p) => (
-              <button type="button" key={p} className="chip" aria-pressed={form.purpose === p} onClick={() => update({ purpose: form.purpose === p ? '' : p })}>{p}</button>
+            {purposes.map((p) => (
+              <button type="button" key={p} className="chip" aria-pressed={!otherPurpose && form.purpose === p} onClick={() => { setOtherPurpose(false); update({ purpose: form.purpose === p ? '' : p }); }}>{p}</button>
             ))}
+            <button type="button" className="chip" aria-pressed={otherPurpose} onClick={() => { setOtherPurpose(!otherPurpose); update({ purpose: '' }); }}>Other</button>
           </div>
+          {otherPurpose && <input className="input" value={form.purpose} onChange={(e) => update({ purpose: e.target.value })} placeholder="Type the purpose" maxLength={100} aria-label="Other purpose" autoFocus />}
         </div>
       </section>
 
@@ -735,8 +769,8 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
         <div className="field">
           <span id="lbl-validity">Pass valid for</span>
           <div className="chips" role="radiogroup" aria-labelledby="lbl-validity">
-            {VALIDITY.map(([key, label]) => (
-              <button type="button" role="radio" key={key} className="chip" aria-checked={(form.validity || '8h') === key} aria-pressed={(form.validity || '8h') === key}
+            {lengths.map(([key, label]) => (
+              <button type="button" role="radio" key={key} className="chip" aria-checked={(lengths.some(([k]) => k === form.validity) ? form.validity : defValidity) === key} aria-pressed={(lengths.some(([k]) => k === form.validity) ? form.validity : defValidity) === key}
                 onClick={() => update({ validity: key, ...(key === 'date' && !form.validUntilDay ? { validUntilDay: addDays(today(), 1) } : {}) })}>{label}</button>
             ))}
           </div>
@@ -746,9 +780,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
               aria-invalid={tried && !/^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || '')}
               onChange={(e) => update({ validUntilDay: e.target.value })} />
           )}
-          <span className="hint">{validityPreview(form.validity || '8h', form.validUntilDay)}</span>
+          <span className="hint">{validityPreview(lengths.some(([k]) => k === form.validity) ? form.validity : defValidity, form.validUntilDay)}</span>
         </div>
-        <div className="field">
+        {checkin?.lanyardCards && <div className="field">
           <span id="lbl-card">Hotel lanyard card <span className="faint">· the number on the card you hand over</span></span>
           <div className="card-entry">
             <div className="seg" role="radiogroup" aria-labelledby="lbl-card">
@@ -760,7 +794,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId 
               placeholder="e.g. 01" aria-label="Lanyard card number" autoComplete="off" />
           </div>
           <span className="hint">Printed on the pass slip that goes on the back of the card. Collect the card when they leave.</span>
-        </div>
+        </div>}
       </section>
 
       <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
@@ -916,7 +950,7 @@ function CardOnPass({ visit, onSaved }) {
   );
 }
 
-function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprint, onPrint, onCard }) {
+function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprint, onPrint, onCard, lanyard }) {
   useTick(1000);
   const name = `${visit.firstName} ${visit.lastName}`;
   const hostFirst = visit.host?.name?.split(' ')[0] || 'the host';
@@ -973,7 +1007,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
                 <div><small>Visitor ID</small><span className="mono">{visit.ref}</span></div>
               </div>
               {visit.validUntil && <div className="pass-valid"><Clock size={14} />Valid till <strong>{fmtUntil(visit.validUntil)}</strong></div>}
-              <CardOnPass visit={visit} onSaved={onCard} />
+              {(lanyard || visit.card) && <CardOnPass visit={visit} onSaved={onCard} />}
               {visit.passCode && (
                 <div className="pass-code">
                   <QrImage value={visit.passCode} />

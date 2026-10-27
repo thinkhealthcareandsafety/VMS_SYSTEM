@@ -26,7 +26,7 @@ export function StatusBadge({ m }) {
 }
 
 // ----------------------------------------------------------------------------- the register
-export default function MaterialBoard({ admin = false, liveTick = 0 }) {
+export default function MaterialBoard({ admin = false, liveTick = 0, lanyard = false }) {
   const toast = useToast();
   const [view, setView] = useState(admin ? 'today' : 'atgate');
   const [q, setQ] = useState('');
@@ -83,7 +83,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0 }) {
           ))}
         </ul>
       )}
-      <InwardForm open={adding} units={data?.units || UNITS} onClose={() => setAdding(false)}
+      <InwardForm open={adding} lanyard={lanyard} units={data?.units || UNITS} onClose={() => setAdding(false)}
         onDone={(m) => { setAdding(false); toast(`${m.number} recorded. When the vendor leaves, open it and press Check out vendor.`); load(); setOpenId(m.id); }} />
       <MaterialDetail id={openId} liveTick={liveTick} onClose={() => setOpenId(null)} onChanged={load} />
     </section>
@@ -97,7 +97,7 @@ const blank = () => ({
   department: '', vehicle: { number: '', driver: '' }, note: '', cardNo: '',
 });
 
-function InwardForm({ open, units, onClose, onDone }) {
+function InwardForm({ open, units, onClose, onDone, lanyard }) {
   const [f, setF] = useState(blank);
   const [docPhotos, setDocPhotos] = useState([]);
   const [photos, setPhotos] = useState([]);
@@ -166,7 +166,7 @@ function InwardForm({ open, units, onClose, onDone }) {
     <Modal open={open} onClose={onClose} className="dialog dialog-wide" label="Goods coming in">
       <form onSubmit={submit}>
         <div className="dialog-head">
-          <h2>Goods coming in</h2>
+          <h2>Vendor check-in: goods coming in</h2>
           <p>Photograph the invoice or challan first: the details fill in by themselves. No invoice? Type the supplier’s details.</p>
         </div>
         <div className="dialog-body">
@@ -213,9 +213,9 @@ function InwardForm({ open, units, onClose, onDone }) {
             <label className="field"><span>For department <span className="faint">· optional</span></span><input className="input" value={f.department} onChange={(e) => set('department', e.target.value)} placeholder="Kitchen, Engineering, Stores…" maxLength={60} /></label>
             <label className="field"><span>Vehicle no. <span className="faint">· optional</span></span><input className="input mono" value={f.vehicle.number} onChange={(e) => setIn('vehicle', 'number', e.target.value.toUpperCase())} placeholder="DL 1L AB 1234" maxLength={20} /></label>
           </div>
-          <label className="field" style={{ maxWidth: 260 }}><span>Vendor card no. <span className="faint">· the hotel lanyard card you hand over</span></span>
+          {lanyard && <label className="field" style={{ maxWidth: 260 }}><span>Vendor card no. <span className="faint">· the hotel lanyard card you hand over</span></span>
             <input className="input mono" value={f.cardNo} onChange={(e) => set('cardNo', e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 10))} placeholder="e.g. 01" autoComplete="off" />
-          </label>
+          </label>}
           <div className="field">
             <span>Photos of the goods <span className="faint">· optional, up to 3</span></span>
             <PhotoPicker photos={photos} onChange={setPhotos} max={3} onError={setErr} />
@@ -226,7 +226,7 @@ function InwardForm({ open, units, onClose, onDone }) {
         <div className="dialog-foot">
           {!ready && <span className="faint foot-hint">Enter the supplier and at least one item to record it.</span>}
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || !ready}>{busy ? <Spinner /> : <Check />}Record entry</button>
+          <button className="btn btn-primary" disabled={busy || !ready}>{busy ? <Spinner /> : <Check />}Check in vendor</button>
         </div>
       </form>
     </Modal>
@@ -325,7 +325,7 @@ function CheckoutForm({ m, onCancel, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const bad = m.items.some((i) => kept[i.id] === '' || Number(kept[i.id]) < 0 || Number(kept[i.id]) > i.qty);
-  const ready = !bad && photos.length > 0 && (by.department.trim() || by.name.trim());
+  const ready = !bad && (by.department.trim() || by.name.trim());
   const save = async () => {
     setBusy(true); setErr('');
     try {
@@ -337,7 +337,7 @@ function CheckoutForm({ m, onCancel, onDone }) {
       <h3 className="section-title">Check out vendor</h3>
       {m.cardNo && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Collect vendor card <strong>{m.cardNo}</strong> before they leave.</span></div>}
       <div className="field">
-        <span>Invoice as stamped by the hotel <span className="faint">· required</span></span>
+        <span>Invoice as stamped by the hotel <span className="faint">· optional</span></span>
         <PhotoPicker photos={photos} onChange={setPhotos} max={4} addLabel="Photo of stamped invoice" onError={setErr} />
       </div>
       <div className="field">
@@ -358,7 +358,7 @@ function CheckoutForm({ m, onCancel, onDone }) {
       </div>
       <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Remarks, e.g. 50 kg tomatoes rejected: not fresh" maxLength={300} />
       {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
-      {!ready && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>{!photos.length ? 'Take a photo of the stamped invoice to finish.' : bad ? 'An accepted quantity is more than came in.' : 'Enter who received it.'}</p>}
+      {!ready && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>{bad ? 'An accepted quantity is more than came in.' : 'Enter who received it.'}</p>}
       <div className="row-end">
         <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
         <button className="btn btn-primary" disabled={busy || !ready} onClick={save}>{busy ? <Spinner /> : <CheckCircle2 />}Check out vendor</button>

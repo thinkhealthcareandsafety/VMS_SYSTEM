@@ -50,6 +50,7 @@ function row(p) {
     movements: (p.movements || []).map((x) => ({ kind: x.kind, at: x.at, gate: x.gateName, by: x.byName })),
     photos: (p.photos || []).map((_, i) => `/api/parcels/${p._id}/photo/${i}`),
     handoverPhotos: (p.handoverPhotos || []).map((_, i) => `/api/parcels/${p._id}/handover/${i}`),
+    signature: p.signature ? `/api/parcels/${p._id}/signature/0` : null,
     voidReason: p.voidReason || '', createdAt: p.createdAt, createdBy: p.createdByName || '',
   };
 }
@@ -156,11 +157,11 @@ router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
   if (p) res.json(row(p.toObject()));
 });
 
-router.get('/:id/:set(photo|handover)/:n', requireRole('guard', 'admin'), async (req, res) => {
+router.get('/:id/:set(photo|handover|signature)/:n', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).end();
-  const field = PHOTO_SETS[req.params.set];
+  const field = PHOTO_SETS[req.params.set] || 'signature';
   const p = await Parcel.findById(req.params.id, field).lean();
-  const file = p?.[field]?.[Number(req.params.n)];
+  const file = field === 'signature' ? p?.signature : p?.[field]?.[Number(req.params.n)];
   if (!file) return res.status(404).end();
   res.type('jpeg').sendFile(path.resolve(file));
 });
@@ -212,15 +213,16 @@ router.post('/:id/collect', requireRole('guard', 'admin'), async (req, res) => {
   if (to.length < 2) return res.status(400).json({ error: 'Who is collecting it? Enter their name' });
   const mobile = normalizeMobile(b.mobile);
   if (!mobile) return res.status(400).json({ error: 'Enter the collector’s mobile number (10 digits)' });
-  if (!Array.isArray(b.photos) || !b.photos.length) return res.status(400).json({ error: 'Take a photo of the person collecting it' });
+  if (!b.signature) return res.status(400).json({ error: 'Ask the person collecting it to sign on the tablet' });
+  const sign = await savePhotos([b.signature], 1);
   const shots = await savePhotos(b.photos, 3);
-  if (shots.error) return res.status(400).json({ error: shots.error });
+  if (sign.error || shots.error) return res.status(400).json({ error: sign.error ? 'The signature could not be read. Ask them to sign again.' : shots.error });
   const now = new Date();
   const gate = await passes.gateOf(req.user.id);
   const doc = await Parcel.findOneAndUpdate(
     { _id: p._id, status: 'received' },
     {
-      status: 'collected', handoverPhotos: shots.files,
+      status: 'collected', signature: sign.files[0], ...(shots.files.length ? { handoverPhotos: shots.files } : {}),
       handover: { at: now, to, mobile, how: 'handover', reason: cleanText(b.note, 200), gateName: gate.name, by: req.user.id, byName: req.user.fullName },
     },
     { new: true },
@@ -281,13 +283,14 @@ router.post('/:id/dispatch', requireRole('guard', 'admin'), async (req, res) => 
   const awb = cleanText(b.awb, 40).replace(/\s+/g, '').toUpperCase() || p.awb;
   if (!awb) return res.status(400).json({ error: 'Enter the tracking (AWB / docket) number the picker gave' });
   const shots = await savePhotos(b.photos, 3);
-  if (shots.error) return res.status(400).json({ error: shots.error });
+  const sign = await savePhotos(b.signature ? [b.signature] : [], 1);
+  if (shots.error || sign.error) return res.status(400).json({ error: shots.error || 'The signature could not be read. Ask them to sign again.' });
   const now = new Date();
   const gate = await passes.gateOf(req.user.id);
   const doc = await Parcel.findOneAndUpdate(
     { _id: p._id, direction: 'out', status: 'booked' },
     {
-      status: 'dispatched', carrier, awb, ...(shots.files.length ? { handoverPhotos: shots.files } : {}),
+      status: 'dispatched', carrier, awb, ...(shots.files.length ? { handoverPhotos: shots.files } : {}), ...(sign.files.length ? { signature: sign.files[0] } : {}),
       handover: { at: now, to: agent, mobile, how: 'dispatch', reason: cleanText(b.note, 200), gateName: gate.name, by: req.user.id, byName: req.user.fullName },
       $push: { movements: passes.movement('out', gate, req.user, now) },
     },

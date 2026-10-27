@@ -6,6 +6,7 @@ import {
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import HostPicker from './HostPicker.jsx';
 import BarcodeScan, { carrierFromAwb } from './BarcodeScan.jsx';
+import SignaturePad from './Signature.jsx';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
@@ -225,6 +226,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
   const [mode, setMode] = useState(''); // handover | return | dispatch | void
   const [f, setF] = useState({});
   const [photos, setPhotos] = useState([]);
+  const [signature, setSignature] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -232,7 +234,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
   useEffect(() => { setP(null); setMode(''); setErr(''); load(); }, [load]);
   useEffect(() => { if (id && liveTick) load(); }, [liveTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const start = (m) => {
-    setMode(m); setErr(''); setPhotos([]);
+    setMode(m); setErr(''); setPhotos([]); setSignature(null);
     setF({ collector: '', mobile: '', note: '', reason: p?.response?.kind === 'declined' ? `Declined by ${p.response.by}` : '', agent: '', awb: '', carrier: p?.carrier || '' });
   };
 
@@ -251,7 +253,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const waiting = p?.status === 'received';
   const declined = waiting && p.response?.kind === 'declined';
-  const handoverReady = f.collector?.trim().length >= 2 && /^\+?[\d\s-]{10,15}$/.test(f.mobile || '') && photos.length > 0;
+  const handoverReady = f.collector?.trim().length >= 2 && /^\+?[\d\s-]{10,15}$/.test(f.mobile || '') && Boolean(signature);
 
   return (
     <Modal open={Boolean(id)} onClose={onClose} className="drawer" label="Parcel">
@@ -289,6 +291,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
               {p.voidReason && <><dt>Voided</dt><dd>{p.voidReason}</dd></>}
             </dl>
             <PhotoRow srcs={p.photos} title={p.number} label="Parcel photo" />
+            {p.signature && <div><h3 className="section-title">Signature</h3><img className="sign-saved" src={p.signature} alt={`Signature of ${p.handover?.to || 'the receiver'}`} /></div>}
             {p.handoverPhotos.length > 0 && <div><h3 className="section-title">{p.direction === 'out' ? 'Courier picker' : 'Handover'}</h3><PhotoRow srcs={p.handoverPhotos} title={p.number} label="Handover photo" /></div>}
 
             {mode === 'handover' && (
@@ -300,15 +303,19 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
                   <label className="field"><span>Their mobile</span><input className="input num" inputMode="numeric" value={f.mobile} onChange={set('mobile')} maxLength={15} /></label>
                 </div>
                 <div className="field">
-                  <span>Photo of the person taking it <span className="faint">· in place of a signature</span></span>
+                  <span>Signature of the person taking it</span>
+                  <SignaturePad value={signature} onChange={setSignature} label="Hand the tablet over: sign here with a finger" />
+                </div>
+                <div className="field">
+                  <span>Photo <span className="faint">· optional</span></span>
                   <PhotoPicker photos={photos} onChange={setPhotos} max={3} addLabel="Take photo" onError={setErr} />
                 </div>
                 <input className="input" value={f.note} onChange={set('note')} placeholder="Remarks, e.g. department or room it went to" maxLength={200} />
                 {err && <div className="alert alert-bad"><AlertTriangle /><span className="grow">{err}</span></div>}
-                {!handoverReady && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>Enter the name, a 10-digit mobile number and take a photo to hand it over.</p>}
+                {!handoverReady && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>Enter the name and mobile number, and have them sign, to hand it over.</p>}
                 <div className="row-end">
                   <button className="btn btn-ghost" onClick={() => setMode('')}>Cancel</button>
-                  <button className="btn btn-primary" disabled={busy || !handoverReady} onClick={() => post('collect', { collector: f.collector, mobile: f.mobile, photos, note: f.note })}>{busy ? <Spinner /> : <CheckCircle2 />}Hand over</button>
+                  <button className="btn btn-primary" disabled={busy || !handoverReady} onClick={() => post('collect', { collector: f.collector, mobile: f.mobile, signature, photos, note: f.note })}>{busy ? <Spinner /> : <CheckCircle2 />}Hand over</button>
                 </div>
               </div>
             )}
@@ -327,6 +334,10 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
                   </div>
                 </div>
                 <div className="field">
+                  <span>Signature of the courier picker <span className="faint">· optional</span></span>
+                  <SignaturePad value={signature} onChange={setSignature} label="Picker signs here with a finger" />
+                </div>
+                <div className="field">
                   <span>Photo of the picker <span className="faint">· optional</span></span>
                   <PhotoPicker photos={photos} onChange={setPhotos} max={3} addLabel="Take photo" onError={setErr} />
                 </div>
@@ -334,7 +345,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
                 {err && <div className="alert alert-bad"><AlertTriangle /><span className="grow">{err}</span></div>}
                 <div className="row-end">
                   <button className="btn btn-ghost" onClick={() => setMode('')}>Cancel</button>
-                  <button className="btn btn-primary" disabled={busy || f.agent.trim().length < 2 || !f.carrier || !f.awb.trim()} onClick={() => post('dispatch', { agent: f.agent, mobile: f.mobile || undefined, carrier: f.carrier, awb: f.awb, photos, note: f.note }, 'Dispatched.')}>{busy ? <Spinner /> : <Truck />}Dispatched</button>
+                  <button className="btn btn-primary" disabled={busy || f.agent.trim().length < 2 || !f.carrier || !f.awb.trim()} onClick={() => post('dispatch', { agent: f.agent, signature: signature || undefined, mobile: f.mobile || undefined, carrier: f.carrier, awb: f.awb, photos, note: f.note }, 'Dispatched.')}>{busy ? <Spinner /> : <Truck />}Dispatched</button>
                 </div>
               </div>
             )}

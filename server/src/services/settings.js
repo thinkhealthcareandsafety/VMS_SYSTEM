@@ -11,6 +11,10 @@ const defaults = () => ({
   fullIdCapture: true, // the full Aadhaar is kept, encrypted, for the Super Admin
   escalateTo: { mobiles: [], emails: [] }, // security / duty manager: told when a visitor overstays their pass by an hour
   assemblyPoint: '', // where people gather in an evacuation, e.g. "Main driveway, by the fountain"
+  purposes: ['Delivery', 'Meeting', 'Interview', 'Service / repair', 'Guest'],
+  durations: ['2h', '4h', '8h', 'today', '3d', '7d', '10d', '20d', '30d'],
+  lanyardCards: false,
+  notifyCheckout: true,
 });
 
 let cache = null;

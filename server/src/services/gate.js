@@ -2,6 +2,7 @@ const { Visit, Guest, Group, Block, Host } = require('../models');
 const config = require('../config');
 const { audit } = require('./core');
 const passes = require('./passes');
+const departure = require('./departure');
 const groups = require('./groups');
 
 // One scan at any gate does the right thing for whoever holds the pass:
@@ -45,6 +46,7 @@ async function checkOut(v, user, ip) {
   ).lean();
   if (!done) return reply('busy', 'Another gate just recorded this person. Scan again.', v);
   audit(user, keep ? 'visit.went_out' : 'visit.checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, gate: gate.name, via: 'scan' }, ip });
+  await departure.tellHost(done, { at: now, gateName: gate.name, delayMs: UNDO_MS + 5000 }).catch((e) => console.error('[scan] host message:', e.message));
   const ended = v.validUntil && new Date(v.validUntil) < now;
   // The hotel's lanyard card comes back at every exit, even on a pass that stays valid.
   const cardBack = v.card?.no ? ` Collect ${v.card.type === 'vendor' ? 'vendor' : 'visitor'} card ${v.card.no}.` : '';
@@ -145,6 +147,7 @@ async function undo(id, action, user, ip) {
     ).lean();
   }
   if (!done) return { status: 409, body: { error: 'Something changed meanwhile. Check the On premises list.' } };
+  if (action === 'out') await departure.forget(v._id);
   audit(user, 'visit.scan_undone', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, undone: action === 'out' ? 'exit' : 'entry' }, ip });
   return { status: 200, body: { ok: true, status: done.status, message: action === 'out' ? 'Undone: they are inside again.' : 'Undone: they are outside again.' } };
 }

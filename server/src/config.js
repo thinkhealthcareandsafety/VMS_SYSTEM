@@ -78,6 +78,8 @@ module.exports = {
     },
     msg91AlertVars: (env.MSG91_ALERT_VARS || 'var1,var2').split(',').map((s) => s.trim()),
     alertSiteShort: env.ALERT_SITE_SHORT || '',   // e.g. "St Regis Marriott Delhi" (30 characters at most)
+    // msg91: "your visitor left" to the host; {#var#} 1 = the visitor, 2 = time and gate (30 characters each)
+    msg91CheckoutTemplateId: env.MSG91_CHECKOUT_TEMPLATE_ID || '',
     httpUrl: env.SMS_HTTP_URL || '',
     httpAuth: env.SMS_HTTP_AUTH || '',     // full Authorization header value
     senderId: env.SMS_SENDER_ID || 'VMSITE',

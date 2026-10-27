@@ -7,6 +7,19 @@ const config = require('../config');
 // console: logs the message (dev). http: POSTs to your gateway (MSG91 / Textlocal / Twilio / etc.).
 // India: SMS must use a TRAI DLT-registered template; the body must match the approved template text.
 async function sendSms(to, body, vars = {}) {
+  // "Your visitor left" through MSG91: its own approved template, two short variables.
+  if (vars.checkout && config.sms.driver !== 'http') {
+    if (!config.otp.authKey || !config.sms.msg91CheckoutTemplateId) throw Object.assign(new Error('No approved SMS template for the checkout message'), { permanent: true });
+    const res = await fetch('https://control.msg91.com/api/v5/flow', {
+      method: 'POST',
+      headers: { authkey: config.otp.authKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ template_id: config.sms.msg91CheckoutTemplateId, short_url: '0', recipients: [{ mobiles: to.replace(/^\+/, ''), var1: String(vars.who || '').slice(0, 30), var2: String(vars.when || '').slice(0, 30) }] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.type === 'error') throw new Error(`MSG91: ${json.message || res.status}`);
+    return String(json.message || json.request_id || 'accepted');
+  }
   // An emergency through MSG91: the approved template for its type, whatever the everyday SMS driver is.
   if (vars.alert && config.sms.driver !== 'http') {
     const tpl = config.sms.msg91Alerts[vars.kind];

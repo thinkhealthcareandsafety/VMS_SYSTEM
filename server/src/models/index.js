@@ -156,6 +156,10 @@ const settingSchema = new Schema({
   idRetentionDays: { type: Number },          // masked Aadhaar images are deleted after this many days
   escalateTo: { mobiles: [String], emails: [String] }, // told when a visitor is still inside an hour after the pass ended
   assemblyPoint: { type: String, trim: true },
+  purposes: { type: [String], default: undefined },  // the purpose buttons at check-in, in order
+  durations: { type: [String], default: undefined }, // the pass lengths offered: "2h", "today", "10d"...
+  lanyardCards: { type: Boolean },              // ask for the hotel's lanyard card number at check-in
+  notifyCheckout: { type: Boolean },            // tell the host when their visitor leaves
   license: { type: String },                    // the GateSmartX licence key (services/license)
   licenseSeenAt: { type: Date },                // the latest time the server has seen: a clock turned back shows here  // where people gather in an evacuation; filled into the emergency messages
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in
@@ -288,6 +292,7 @@ const parcelSchema = new Schema({
   },
   movements: { type: [movementSchema], default: undefined },
   handoverPhotos: { type: [String], default: undefined },     // the person receiving it (in) or the courier picker (out)
+  signature: String,                                          // their signature, drawn on the tablet (a JPEG file)
   ackSentAt: Date,                                            // the recipient was told who collected it
   voidReason: String,
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },

@@ -264,7 +264,6 @@ router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => 
   if (!m) return;
   const c = material.readCheckout(m.toObject(), req.body);
   if (c.error) return res.status(m.status === 'received' ? 400 : 409).json({ error: c.error });
-  if (!Array.isArray(req.body?.photos) || !req.body.photos.length) return res.status(400).json({ error: 'Take a photo of the invoice as the hotel stamped it' });
   const shots = await savePhotos(req.body.photos, 4);
   if (shots.error) return res.status(400).json({ error: shots.error });
   const now = new Date();
@@ -273,7 +272,7 @@ router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => 
     { _id: m._id, status: 'received' },
     {
       status: 'checked_out', items: c.items, receivedBy: c.receivedBy, exitNote: c.note, takenBack: c.takenBack, checkedOutAt: now,
-      exitPhotos: shots.files, $push: { movements: passes.movement('out', gate, req.user, now) },
+      ...(shots.files.length ? { exitPhotos: shots.files } : {}), $push: { movements: passes.movement('out', gate, req.user, now) },
     },
     { new: true },
   ).populate('approver').lean();

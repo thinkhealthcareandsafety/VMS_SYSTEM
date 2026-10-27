@@ -18,6 +18,16 @@ const VALIDITY = {
   '30d': { label: '30 days', days: 30 },
 };
 const DEFAULT_VALIDITY = '8h';
+// Any number of hours (1 to 72) or days (1 to 90) the admin lists in Settings, beyond the fixed choices: "6h", "15d".
+function ruleOf(v) {
+  if (VALIDITY[v]) return VALIDITY[v];
+  const m = /^(\d{1,2})([hd])$/.exec(String(v || ''));
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (m[2] === 'h' && n >= 1 && n <= 72) return { label: `${n} ${n === 1 ? 'hour' : 'hours'}`, hours: n };
+  if (m[2] === 'd' && n >= 1 && n <= 90) return { label: `${n} ${n === 1 ? 'day' : 'days'}`, days: n };
+  return null;
+}
 const MAX_DAYS = 90; // the furthest date a pass can be issued until
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -45,7 +55,7 @@ function endOfSiteDay(ymd) {
 function parseValidity(b, now = new Date()) {
   const v = b?.validity;
   if (v === undefined || v === null || v === '') return { validity: DEFAULT_VALIDITY };
-  if (VALIDITY[v]) return { validity: v };
+  if (ruleOf(v)) return { validity: v };
   if (v === 'date') {
     const day = String(b.validUntilDay || '');
     const today = siteDay(now);
@@ -60,7 +70,7 @@ function parseValidity(b, now = new Date()) {
 function validUntil(validity, from = new Date()) {
   const v = validity || DEFAULT_VALIDITY;
   if (v.startsWith('date:')) return endOfSiteDay(v.slice(5));
-  const rule = VALIDITY[v] || VALIDITY[DEFAULT_VALIDITY];
+  const rule = ruleOf(v) || VALIDITY[DEFAULT_VALIDITY];
   if (rule.hours) return new Date(from.getTime() + rule.hours * 3600e3);
   return endOfSiteDay(addDays(siteDay(from), rule.days - 1));
 }
@@ -69,7 +79,7 @@ const shortDay = (ymd) => new Intl.DateTimeFormat('en-IN', { day: 'numeric', mon
 function validityLabel(validity) {
   const v = validity || DEFAULT_VALIDITY;
   if (v.startsWith('date:')) return `Until ${shortDay(v.slice(5))}`;
-  return VALIDITY[v]?.label || VALIDITY[DEFAULT_VALIDITY].label;
+  return ruleOf(v)?.label || VALIDITY[DEFAULT_VALIDITY].label;
 }
 
 // A multi-day pass (2 days or more, or until a later date) stays open when the holder leaves, so they can come
@@ -78,7 +88,7 @@ function staysOpen(validity, until, now = new Date()) {
   if (!until || new Date(until) <= now) return false;
   const v = validity || DEFAULT_VALIDITY;
   if (v.startsWith('date:')) return v.slice(5) > siteDay(now);
-  return (VALIDITY[v]?.days || 0) >= 2;
+  return (ruleOf(v)?.days || 0) >= 2;
 }
 
 // ---------- The hotel's lanyard cards ----------
@@ -148,7 +158,7 @@ function entryExit(v) {
 }
 
 module.exports = {
-  VALIDITY, DEFAULT_VALIDITY, MAX_DAYS, parseValidity, validUntil, validityLabel, staysOpen, endOfSiteDay, addDays, EXTEND, extendedUntil,
+  VALIDITY, DEFAULT_VALIDITY, MAX_DAYS, ruleOf, parseValidity, validUntil, validityLabel, staysOpen, endOfSiteDay, addDays, EXTEND, extendedUntil,
   cardNo, CARD_RE, CARD_LABEL,
   ensureDefaultGate, gateOf, movement, entryExit,
 };

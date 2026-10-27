@@ -34,9 +34,10 @@ router.post('/login', loginLimiter, async (req, res) => {
   await User.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
   setSessionCookie(res, signSession(user));
   audit({ username: user.username, role: user.role }, 'auth.login', { ip: req.ip });
-  const { siteName, fullIdCapture } = await settings.get();
+  const { siteName, fullIdCapture, purposes, durations, lanyardCards } = await settings.get();
+  const checkin = { purposes, durations: durations.map((k) => ({ key: k, label: passes.validityLabel(k) })), lanyardCards };
   const gate = await passes.gateOf(user._id);
-  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName, gateName: gate.name, fullId: Boolean(fullIdCapture) });
+  res.json({ id: String(user._id), username: user.username, fullName: user.fullName, role: user.role, siteName, gateName: gate.name, fullId: Boolean(fullIdCapture), checkin });
 });
 
 router.post('/logout', (req, res) => {
@@ -47,9 +48,10 @@ router.post('/logout', (req, res) => {
 router.get('/me', async (req, res) => {
   const user = await loadUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });
-  const { siteName, fullIdCapture } = await settings.get();
+  const { siteName, fullIdCapture, purposes, durations, lanyardCards } = await settings.get();
+  const checkin = { purposes, durations: durations.map((k) => ({ key: k, label: passes.validityLabel(k) })), lanyardCards };
   const gate = await passes.gateOf(user.id);
-  res.json({ ...user, siteName, gateName: gate.name, fullId: Boolean(fullIdCapture) });
+  res.json({ ...user, siteName, gateName: gate.name, fullId: Boolean(fullIdCapture), checkin });
 });
 
 // Change your own password. Signs out every other device; this one gets a fresh session.
