@@ -1064,28 +1064,35 @@ const PASS_CSS = `
 @page { size: 80mm auto; margin: 0; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: #fff; }
-body { width: 72mm; margin: 0 auto; padding: 4mm 0 8mm; color: #000; font: 10pt/1.3 -apple-system, "Segoe UI", Arial, sans-serif; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.logos { display: flex; align-items: center; justify-content: center; gap: 4mm; margin-bottom: 1mm; }
-.logos img { display: block; height: 11mm; width: auto; }
-.logos img + span { width: .25mm; height: 10mm; background: #000; }
-.logos img:first-child { height: 14mm; }
-.title { font-size: 9pt; letter-spacing: .22em; margin-top: 1mm; }
-.no { font-size: 64pt; font-weight: 700; line-height: 1; margin: 3mm 0 1mm; letter-spacing: -.03em; }
-.date { font-size: 10pt; margin-bottom: 3mm; }
-.photo { display: block; width: 30mm; height: 30mm; object-fit: cover; margin: 0 auto 3mm; filter: grayscale(1) contrast(1.15); border: .4mm solid #000; }
-.name { font-size: 15pt; font-weight: 700; line-height: 1.15; }
-.company { font-size: 10pt; margin-top: .5mm; }
-.rule { border-top: .35mm dashed #000; margin: 3mm 0; }
-.row { display: flex; justify-content: space-between; gap: 4mm; font-size: 10pt; text-align: left; padding: .6mm 0; }
+body { width: 72mm; margin: 0 auto; padding: 3mm 0 5mm; color: #000; font: 9pt/1.25 -apple-system, "Segoe UI", Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.logos { display: flex; align-items: center; justify-content: center; gap: 3.5mm; }
+.logos img { display: block; height: 8.5mm; width: auto; }
+.logos img:first-child { height: 11mm; }
+.logos span { width: .25mm; height: 8mm; background: #000; }
+.band { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.4mm 2.5mm; background: #000; color: #fff; }
+.band b { font-size: 10pt; letter-spacing: .24em; }
+.band span { font-size: 8pt; letter-spacing: .06em; }
+.id { display: grid; grid-template-columns: 23mm 1fr; gap: 3mm; margin-top: 3mm; align-items: start; }
+.photo { display: block; width: 23mm; height: 28mm; object-fit: cover; border: .4mm solid #000; filter: grayscale(1) contrast(1.12); }
+.nophoto { width: 23mm; height: 28mm; border: .4mm dashed #000; }
+.nums { display: flex; gap: 3mm; }
+.nums div { flex: 1; border: .4mm solid #000; padding: .6mm 1.5mm 1mm; }
+.nums small { display: block; font-size: 6.5pt; letter-spacing: .16em; }
+.nums strong { display: block; font-size: 20pt; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
+.name { font-size: 12.5pt; font-weight: 700; line-height: 1.15; margin-top: 2mm; word-break: break-word; }
+.company { font-size: 8.5pt; margin-top: .4mm; }
+.rows { margin-top: 2.5mm; border-top: .3mm solid #000; }
+.row { display: flex; justify-content: space-between; gap: 3mm; padding: 1mm 0; border-bottom: .2mm solid #999; font-size: 8.5pt; }
+.row span { color: #222; white-space: nowrap; }
 .row strong { text-align: right; font-weight: 600; }
-.foot { font-size: 8.5pt; }
-.cardno { display: inline-block; border: .6mm solid #000; padding: 1mm 4mm; margin: 0 0 3mm; font-size: 8pt; letter-spacing: .14em; }
-.cardno strong { display: block; font-size: 20pt; letter-spacing: .02em; line-height: 1.1; }
-.valid { border: .5mm solid #000; padding: 1.5mm 2mm; margin: 0 0 3mm; font-size: 9pt; letter-spacing: .06em; }
-.valid strong { display: block; font-size: 13pt; letter-spacing: 0; margin-top: .5mm; }
-.qr { display: block; width: 32mm; height: 32mm; margin: 0 auto 1mm; image-rendering: pixelated; }
-.code { font: 700 12pt ui-monospace, Consolas, monospace; letter-spacing: .1em; }
-.scan { font-size: 8pt; letter-spacing: .12em; margin-top: .5mm; }
+.valid { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.6mm 2.5mm; border: .6mm solid #000; }
+.valid small { font-size: 7pt; letter-spacing: .16em; }
+.valid strong { font-size: 11.5pt; }
+.scan { display: grid; grid-template-columns: 22mm 1fr; gap: 3mm; align-items: center; margin-top: 2.5mm; }
+.qr { display: block; width: 22mm; height: 22mm; image-rendering: pixelated; }
+.code { font: 700 11pt ui-monospace, Consolas, monospace; letter-spacing: .08em; }
+.scan p { margin: .8mm 0 0; font-size: 7.5pt; line-height: 1.3; }
+.foot { margin-top: 2.5mm; padding-top: 1.8mm; border-top: .3mm dashed #000; font-size: 7pt; line-height: 1.35; text-align: center; }
 `;
 const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -1114,25 +1121,34 @@ async function fetchPhoto(id) {
   } catch { return ''; }
 }
 
+// The pass slip: stuck on the back of the hotel's lanyard card. Compact, black and white for a thermal printer, and
+// laid out for a glance from a guard: face, pass and card numbers, whom they meet, until when, and the code to scan.
 function passHtml(visit, siteName, photo, qr) {
   const name = `${visit.firstName} ${visit.lastName}`;
+  const at = visit.entry?.at || visit.decidedAt;
+  const multiDay = visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
 <div class="logos"><img src="${location.origin}/brand/stregis-print.png" alt="St. Regis"><span></span><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"></div>
-<div class="title">${visit.card?.type === 'vendor' ? 'VENDOR' : 'VISITOR'} PASS</div>
-<div class="no">${escHtml(visit.dailyNumber)}</div>
-${visit.card?.no ? `<div class="cardno">LANYARD CARD<strong>${escHtml(visit.card.no)}</strong></div>` : ''}
-<div class="date">${escHtml(fmtDate(visit.decidedAt))} · ${escHtml(fmtTime(visit.decidedAt))}</div>
-${visit.validUntil ? `<div class="valid">VALID TILL<strong>${escHtml(fmtUntil(visit.validUntil))}</strong></div>` : ''}
-${photo ? `<img class="photo" src="${photo}" alt="">` : ''}
-<div class="name">${escHtml(name)}</div>
-<div class="company">${escHtml(visit.company)}</div>
-<div class="rule"></div>
-<div class="row"><span>Meeting</span><strong>${escHtml(visit.host?.name)}</strong></div>
-<div class="row"><span>Flat / dept</span><strong>${escHtml(visit.host?.unit)}</strong></div>
-<div class="row"><span>Visitor ID</span><strong>${escHtml(visit.ref)}</strong></div>
-<div class="rule"></div>
-${qr ? `<img class="qr" src="${qr}" alt=""><div class="code">${escHtml(showCode(visit.passCode))}</div><div class="scan">SCAN AT THE GATE</div><div class="rule"></div>` : ''}
-<div class="foot">${visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3 ? 'Show this pass at any gate each time you come in or go out.' : 'Wear this pass. Show it at the gate when you leave.'}</div>
+<div class="band"><b>${visit.card?.type === 'vendor' ? 'VENDOR' : 'VISITOR'} PASS</b><span>${escHtml(fmtDate(at).toUpperCase())}</span></div>
+<div class="id">
+  ${photo ? `<img class="photo" src="${photo}" alt="">` : '<div class="nophoto"></div>'}
+  <div>
+    <div class="nums">
+      <div><small>PASS</small><strong>${escHtml(visit.dailyNumber)}</strong></div>
+      ${visit.card?.no ? `<div><small>CARD</small><strong>${escHtml(visit.card.no)}</strong></div>` : ''}
+    </div>
+    <div class="name">${escHtml(name)}</div>
+    <div class="company">${escHtml(visit.company)}</div>
+  </div>
+</div>
+<div class="rows">
+  <div class="row"><span>Meeting</span><strong>${escHtml(visit.host?.name)}${visit.host?.unit ? ` · ${escHtml(visit.host.unit)}` : ''}</strong></div>
+  <div class="row"><span>In</span><strong>${escHtml(fmtTime(at))}${visit.entry?.gate ? ` · ${escHtml(visit.entry.gate)}` : ''}</strong></div>
+  <div class="row"><span>Visitor ID</span><strong>${escHtml(visit.ref)}</strong></div>
+</div>
+${visit.validUntil ? `<div class="valid"><small>VALID TILL</small><strong>${escHtml(fmtUntil(visit.validUntil))}</strong></div>` : ''}
+${qr ? `<div class="scan"><img class="qr" src="${qr}" alt=""><div><div class="code">${escHtml(showCode(visit.passCode))}</div><p>${multiDay ? 'Scan at any gate each time you go out or come back in.' : 'Scan at the gate when you leave.'}</p></div></div>` : ''}
+<div class="foot">Wear this pass where it can be seen. Return the lanyard card at the gate when you leave.<br>In an emergency, follow hotel staff to the assembly point.</div>
 </body></html>`;
 }
 

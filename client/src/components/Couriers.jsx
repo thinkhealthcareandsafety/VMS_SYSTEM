@@ -143,7 +143,7 @@ function ParcelForm({ direction, carriers, onClose, onDone }) {
             <>
               <div className="field">
                 <span>Photos <span className="faint">· the label and the parcel, up to 5</span></span>
-                <PhotoPicker photos={photos} onChange={setPhotos} max={5} addLabel="Add photo" onError={setErr} />
+                <PhotoPicker photos={photos} onChange={setPhotos} max={5} addLabel="Take photo" onError={setErr} />
               </div>
               <div className="field">
                 <span>Courier</span>
