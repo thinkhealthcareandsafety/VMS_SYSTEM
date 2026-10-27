@@ -450,7 +450,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
     })();
     return () => { live = false; };
   }, [photo, idImage, idInfo, photoFace]);
-  const sec = { visitor: useRef(null), host: useRef(null), capture: useRef(null) };
+  const sec = { visitor: useRef(null), capture: useRef(null), details: useRef(null), host: useRef(null) };
   const idType = form.idType || 'aadhaar';
   const idLabel = idType === 'other' ? (form.idTypeOther?.trim() || 'ID card') : ID_LABEL[idType];
   // The card read against what was typed: name and gender. Recomputed as the guard types.
@@ -549,16 +549,16 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
     ['visitor', mobileOk, 'mobile number', 'mobile'],
     ['visitor', !active, ''], // explained by the warning above the fields, not in the list
     ['visitor', !blocked, ''],
-    ['visitor', NAME_RE.test(form.firstName.trim()), 'first name', 'firstName'],
-    ['visitor', NAME_RE.test(form.lastName.trim()), 'last name', 'lastName'],
-    ['visitor', Boolean(form.gender), 'gender', 'gender'],
     ['visitor', otp.mode !== 'required' || Boolean(otp.verified) || verify === 'verified' || (isAdmin && verify === 'skipped'), 'verify the mobile number', 'otp'],
-    ['visitor', form.company.trim().length > 0, 'company', 'company'],
-    ['visitor', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)', 'email'],
-    ['host', Boolean(host), 'whom to meet', 'host'],
-    ['host', (form.validity || defValidity) !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass', 'validUntilDay'],
     ['capture', Boolean(photo), 'photo', 'photo'],
     ['capture', Boolean(idImage), 'ID card', 'id'],
+    ['details', NAME_RE.test(form.firstName.trim()), 'first name', 'firstName'],
+    ['details', NAME_RE.test(form.lastName.trim()), 'last name', 'lastName'],
+    ['details', Boolean(form.gender), 'gender', 'gender'],
+    ['details', form.company.trim().length > 0, 'company', 'company'],
+    ['details', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)', 'email'],
+    ['host', Boolean(host), 'whom to meet', 'host'],
+    ['host', (form.validity || defValidity) !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass', 'validUntilDay'],
   ];
   const missing = checks.filter(([, ok]) => !ok);
   const done = (s) => checks.every(([k, ok]) => k !== s || ok);
@@ -663,7 +663,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
       </div>
 
       <section className={flag('visitor')} ref={sec.visitor} aria-labelledby="sec-visitor">
-        <SectionHead id="sec-visitor" n={1} title="Visitor" done={done('visitor')} />
+        <SectionHead id="sec-visitor" n={1} title="Mobile number" done={done('visitor')} />
         <div className="field">
           <span id="lbl-mobile">Mobile number</span>
           <div className="mobile-boxes" role="group" aria-labelledby="lbl-mobile">
@@ -680,11 +680,6 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           </div>
           {india && digits.length === 10 && !mobileOk && <span className="hint err">Indian mobile numbers start with 6, 7, 8 or 9.</span>}
         </div>
-        {mobileOk && !form.firstName && !form.lastName && !idImage && (
-          <button type="button" className="btn btn-sm scan-id-cta" onClick={() => { setCam('aadhaar'); sec.capture.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-            <ScanFace />Scan the ID card: name and gender fill in by themselves
-          </button>
-        )}
         {mobileOk && otp.mode !== 'off' && !active && !blocked && !otp.verified && (
           <MobileVerify mobile={fullMobile} mode={otp.mode} canSkip={otp.mode === 'optional' || isAdmin} value={verify} onChange={setVerify} />
         )}
@@ -727,6 +722,41 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
             </span>
           </div>
         )}
+      </section>
+
+      <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
+        <SectionHead id="sec-capture" n={2} title="Photo and ID" done={done('capture')} />
+        <div className="capture-grid">
+          <div className="field">
+            <span>Live photo <span className="faint">· no mask or cap</span></span>
+            {photo || cam === 'face'
+              ? <Camera mode="face" captured={photo} onCapture={(p, how) => { setPhotoMirrored(Boolean(how?.mirrored)); setPhoto(p); setCam(idImage ? null : 'aadhaar'); }} onRetake={() => { setPhoto(null); setCam('face'); }} />
+              : <CamTile icon={UserRound} label="Take photo" onClick={() => setCam('face')} />}
+          </div>
+          <div className="field">
+            <span id="lbl-idtype">ID card <span className="faint">· {idType === 'aadhaar' ? 'first 8 digits blacked out' : 'front of the card'}</span></span>
+            <div className="chips id-types" role="radiogroup" aria-labelledby="lbl-idtype">
+              {ID_TYPES.map(([key, label]) => (
+                <button type="button" role="radio" aria-checked={idType === key} key={key} className="chip" aria-pressed={idType === key}
+                  onClick={() => { if (key === idType) return; update({ idType: key }); if (idImage) { setIdImage(null); setIdInfo(null); setCam('aadhaar'); } }}>{label}</button>
+              ))}
+            </div>
+            {idType === 'other' && (
+              <input className="input" placeholder="Which ID? e.g. company ID" aria-label="Which ID" maxLength={40}
+                value={form.idTypeOther || ''} onChange={(e) => update({ idTypeOther: e.target.value })} />
+            )}
+            {idImage || cam === 'aadhaar'
+              ? <Camera mode="aadhaar" idType={idType} idLabel={idLabel} key={idType} keepFull={keepFullId} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(fromCard(info)); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
+              : <CamTile icon={CreditCard} label={`Scan ${idLabel}`} onClick={() => setCam('aadhaar')} />}
+          </div>
+        </div>
+        <IdCheck check={idCheck} idLabel={idLabel} filled={nameFromCard} onUse={takeCardDetails} />
+        <FaceMatch match={match} />
+      </section>
+
+      <section className={flag('details')} ref={sec.details} aria-labelledby="sec-details">
+        <SectionHead id="sec-details" n={3} title="Visitor details" done={done('details')} />
+        {idImage && (form.firstName || form.lastName) && <p className="faint" style={{ margin: 0, fontSize: 13 }}>Filled in from the ID card where it could be read. Check and correct.</p>}
         <div className="grid-2">
           <label className="field"><span>First name</span><input className="input" data-field="firstName" aria-invalid={tried && !NAME_RE.test(form.firstName.trim())} value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
           <label className="field"><span>Last name</span><input className="input" data-field="lastName" aria-invalid={tried && !NAME_RE.test(form.lastName.trim())} value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
@@ -764,7 +794,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
       </section>
 
       <section className={flag('host')} ref={sec.host} aria-labelledby="sec-host">
-        <SectionHead id="sec-host" n={2} title="Whom to meet" done={done('host')} />
+        <SectionHead id="sec-host" n={4} title="Whom to meet" done={done('host')} />
         <HostPicker value={host} onChange={setHost} />
         <div className="field">
           <span id="lbl-validity">Pass valid for</span>
@@ -795,36 +825,6 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           </div>
           <span className="hint">Printed on the pass slip that goes on the back of the card. Collect the card when they leave.</span>
         </div>}
-      </section>
-
-      <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
-        <SectionHead id="sec-capture" n={3} title="Photo and ID" done={done('capture')} />
-        <div className="capture-grid">
-          <div className="field">
-            <span>Live photo <span className="faint">· no mask or cap</span></span>
-            {photo || cam === 'face'
-              ? <Camera mode="face" captured={photo} onCapture={(p, how) => { setPhotoMirrored(Boolean(how?.mirrored)); setPhoto(p); setCam(idImage ? null : 'aadhaar'); }} onRetake={() => { setPhoto(null); setCam('face'); }} />
-              : <CamTile icon={UserRound} label="Take photo" onClick={() => setCam('face')} />}
-          </div>
-          <div className="field">
-            <span id="lbl-idtype">ID card <span className="faint">· {idType === 'aadhaar' ? 'first 8 digits blacked out' : 'front of the card'}</span></span>
-            <div className="chips id-types" role="radiogroup" aria-labelledby="lbl-idtype">
-              {ID_TYPES.map(([key, label]) => (
-                <button type="button" role="radio" aria-checked={idType === key} key={key} className="chip" aria-pressed={idType === key}
-                  onClick={() => { if (key === idType) return; update({ idType: key }); if (idImage) { setIdImage(null); setIdInfo(null); setCam('aadhaar'); } }}>{label}</button>
-              ))}
-            </div>
-            {idType === 'other' && (
-              <input className="input" placeholder="Which ID? e.g. company ID" aria-label="Which ID" maxLength={40}
-                value={form.idTypeOther || ''} onChange={(e) => update({ idTypeOther: e.target.value })} />
-            )}
-            {idImage || cam === 'aadhaar'
-              ? <Camera mode="aadhaar" idType={idType} idLabel={idLabel} key={idType} keepFull={keepFullId} captured={idImage} info={idInfo} onCapture={(p, info) => { setIdImage(p); setIdInfo(fromCard(info)); setCam(null); }} onEdit={(p, how) => { setIdImage(p); setIdInfo((i) => ({ ...i, manual: Boolean(how?.manual) })); }} onRetake={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); }} />
-              : <CamTile icon={CreditCard} label={`Scan ${idLabel}`} onClick={() => setCam('aadhaar')} />}
-          </div>
-        </div>
-        <IdCheck check={idCheck} idLabel={idLabel} filled={nameFromCard} onUse={takeCardDetails} />
-        <FaceMatch match={match} />
       </section>
 
       {error && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{error}</span></div>}
