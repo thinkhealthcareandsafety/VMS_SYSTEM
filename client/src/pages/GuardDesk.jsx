@@ -14,6 +14,7 @@ import HostPicker from '../components/HostPicker.jsx';
 import Camera from '../components/Camera.jsx';
 import MobileVerify from '../components/MobileVerify.jsx';
 import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
+import CountryPicker from '../components/CountryPicker.jsx';
 import PassScanner from '../components/PassScanner.jsx';
 import GroupGate from '../components/GroupGate.jsx';
 import MaterialBoard from '../components/Material.jsx';
@@ -61,11 +62,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
 const MOBILE_RE = /^[6-9]\d{9}$/;
 const INTL_RE = /^\d{6,14}$/; // a number abroad, without its country code
-// Country codes for visitors from abroad; India stays first and is the default.
-const COUNTRY_CODES = [['+91', 'India'], ['+971', 'UAE'], ['+44', 'UK'], ['+1', 'USA / Canada'], ['+65', 'Singapore'], ['+61', 'Australia'], ['+966', 'Saudi Arabia'],
-  ['+974', 'Qatar'], ['+968', 'Oman'], ['+965', 'Kuwait'], ['+973', 'Bahrain'], ['+977', 'Nepal'], ['+880', 'Bangladesh'], ['+94', 'Sri Lanka'], ['+60', 'Malaysia'],
-  ['+66', 'Thailand'], ['+62', 'Indonesia'], ['+86', 'China'], ['+81', 'Japan'], ['+82', 'South Korea'], ['+49', 'Germany'], ['+33', 'France'], ['+39', 'Italy'],
-  ['+34', 'Spain'], ['+31', 'Netherlands'], ['+41', 'Switzerland'], ['+353', 'Ireland'], ['+7', 'Russia'], ['+27', 'South Africa'], ['+64', 'New Zealand']];
 const PURPOSES = ['Delivery', 'Meeting', 'Interview', 'Service / repair', 'Guest'];
 const RESEND_AFTER = 30; // seconds; the server enforces the same gap
 
@@ -667,9 +663,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
         <div className="field">
           <span id="lbl-mobile">Mobile number</span>
           <div className="mobile-boxes" role="group" aria-labelledby="lbl-mobile">
-            <select className="mobile-cc cc-select" value={cc} onChange={(e) => update({ cc: e.target.value, mobile: '' })} aria-label="Country code">
-              {COUNTRY_CODES.map(([code, name]) => <option key={code} value={code}>{code} {name}</option>)}
-            </select>
+            <CountryPicker value={form.country || 'IN'} onChange={(c) => update({ country: c.iso, cc: c.dial, mobile: '' })} />
             {india
               ? <DigitBoxes length={10} gapAfter={[4]} value={digits} clean={cleanMobile} label="Mobile number, 10 digits" autoFocus
                   invalid={(digits.length === 10 || tried) && !mobileOk}

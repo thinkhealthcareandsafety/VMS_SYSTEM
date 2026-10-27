@@ -1425,3 +1425,23 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
 .sign-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); font-size: 14px; pointer-events: none; }
 .sign-clear { position: absolute; top: 6px; right: 6px; }
 .sign-saved { display: block; max-width: 280px; width: 100%; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+/* Country picker for mobile numbers: searchable, every country. */
+.cp { position: relative; flex: none; }
+.cp-btn { height: 52px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--sunken); font: inherit; font-size: 16px; font-weight: 500; color: var(--text); cursor: pointer; }
+.cp-btn:hover, .cp-btn[aria-expanded='true'] { border-color: var(--ink); background: var(--surface); }
+.cp-btn svg { width: 16px; height: 16px; color: var(--text-3); }
+.cp-iso { display: inline-grid; place-items: center; min-width: 28px; height: 20px; padding: 0 4px; border-radius: 4px; background: var(--ink); color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
+.cp-pop { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: min(340px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); overflow: hidden; animation: pop 160ms var(--ease) both; }
+.cp-search { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.cp-search svg { width: 16px; height: 16px; color: var(--text-3); flex: none; }
+.cp-search input { flex: 1; min-width: 0; border: 0; outline: 0; font: inherit; font-size: 15px; background: none; }
+.cp-list { list-style: none; margin: 0; padding: 6px; max-height: 300px; overflow: auto; }
+.cp-list li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-size: 14.5px; }
+.cp-list li.is-at { background: var(--sunken); }
+.cp-list li[aria-selected='true'] { font-weight: 600; }
+.cp-list li.cp-sep { margin-bottom: 6px; box-shadow: 0 7px 0 -6px var(--border); }
+.cp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-code { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.cp-tick { width: 16px; height: 16px; color: var(--ok); }
+.cp-empty { color: var(--text-3); cursor: default; }
+@media (max-width: 480px) { .cp-btn { height: 46px; padding: 0 7px; font-size: 14px; } }
