@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowDownToLine, Check, CheckCircle2, Download, FileText, Loader2, LogIn, LogOut, Package, Plus, ScanText, Search, Trash2, Truck, X,
+  AlertTriangle, ArrowDownToLine, Printer, Check, CheckCircle2, Download, FileText, Loader2, LogIn, LogOut, Package, Plus, ScanText, Search, Trash2, Truck, X,
 } from 'lucide-react';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import { readInvoice, warmUpInvoiceReader } from '../lib/invoiceRead.js';
+import { printMaterialReceipt } from '../lib/materialReceipt.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
 // The material inward register. A vendor arrives: the guard photographs the invoice or challan (its details are read
@@ -307,9 +308,10 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
           </>
         )}
       </div>
-      {m && m.status === 'received' && m.kind === 'delivery' && !leaving && (
+      {m && !leaving && m.direction === 'in' && (
         <div className="drawer-foot">
-          <button className="btn btn-primary" onClick={() => setLeaving(true)}><LogOut />Check out vendor</button>
+          <button className="btn" onClick={() => printMaterialReceipt(m, { onError: (msg) => toast(msg, 'bad') })}><Printer />{m.status === 'checked_out' ? 'Print receipt' : 'Print entry slip'}</button>
+          {m.status === 'received' && m.kind === 'delivery' && <button className="btn btn-primary" onClick={() => setLeaving(true)}><LogOut />Check out vendor</button>}
         </div>
       )}
     </Modal>
