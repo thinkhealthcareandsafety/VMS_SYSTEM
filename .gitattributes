@@ -1,0 +1,4 @@
+# Scripts and configs run on the Linux mini PC: always LF line endings.
+*.sh text eol=lf
+deploy/* text eol=lf
+Dockerfile text eol=lf
