@@ -414,6 +414,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
   // The face engine follows a little later, so the two loads do not fight on a slow phone.
   useEffect(() => { const t = setTimeout(warmUpFaces, 3000); return () => clearTimeout(t); }, []);
   const formRef = useRef(form);
+  // Whether the guard typed the name / picked the gender for this visitor. The ID card overwrites anything else
+  // (a leftover draft, a returning visitor's old details), never what the guard entered.
+  const typed = useRef({ name: false, gender: false });
   formRef.current = form;
 
   // Live photo taken: find the face in it (on this device). The card's face is found when the card is scanned.
@@ -459,8 +462,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
   const fromCard = (info) => {
     const f = formRef.current;
     const patch = info.switched && info.idType ? { idType: info.idType } : {};
-    const filled = info.read?.name && !f.firstName.trim() && !f.lastName.trim() ? splitCardName(info.read.name) : null;
-    if (filled) Object.assign(patch, filled, info.read.gender && !f.gender ? { gender: info.read.gender } : {});
+    const filled = info.read?.name && (!typed.current.name || (!f.firstName.trim() && !f.lastName.trim())) ? splitCardName(info.read.name) : null;
+    if (filled) Object.assign(patch, filled);
+    if (info.read?.gender && (!typed.current.gender || !f.gender)) patch.gender = info.read.gender;
     if (Object.keys(patch).length) update(patch);
     return filled ? { ...info, filled } : info;
   };
@@ -559,6 +563,11 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
   const missing = checks.filter(([, ok]) => !ok);
   const done = (s) => checks.every(([k, ok]) => k !== s || ok);
   const nextUp = missing.find(([, , label]) => label);
+  // One step at a time: each section opens when the one before it is complete (the camera starts only then).
+  const open2 = done('visitor');
+  const open3 = open2 && done('capture');
+  const open4 = open3 && done('details');
+  const locked = (s, open) => `${flag(s)}${open ? '' : ' is-locked'}`;
 
   // Takes the guard to what is still needed: the section scrolls into view and the field gets the cursor.
   const goTo = ([section, , , field], { scroll = true } = {}) => {
@@ -583,6 +592,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
     store.clear();
     autofill.current = null;
     setForm(EMPTY); setHost(null); setPhoto(null); setIdImage(null); setIdInfo(null); setPhotoFace(null); setMatch(null); setVerify(null);
+    typed.current = { name: false, gender: false };
     setCam('face'); setTried(false); setError(''); setActive(null); setBlocked(null); setInvite(null); setShowEmail(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -718,8 +728,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
         )}
       </section>
 
-      <section className={flag('capture')} ref={sec.capture} aria-labelledby="sec-capture">
+      <section className={locked('capture', open2)} ref={sec.capture} aria-labelledby="sec-capture">
         <SectionHead id="sec-capture" n={2} title="Photo and ID" done={done('capture')} />
+        {!open2 ? <p className="sec-locked">Opens after the mobile number{otp.mode === 'required' ? ' is verified' : ''}.</p> : <>
         <div className="capture-grid">
           <div className="field">
             <span>Live photo <span className="faint">· no mask or cap</span></span>
@@ -746,20 +757,22 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
         </div>
         <IdCheck check={idCheck} idLabel={idLabel} filled={nameFromCard} onUse={takeCardDetails} />
         <FaceMatch match={match} />
+        </>}
       </section>
 
-      <section className={flag('details')} ref={sec.details} aria-labelledby="sec-details">
+      <section className={locked('details', open3)} ref={sec.details} aria-labelledby="sec-details">
         <SectionHead id="sec-details" n={3} title="Visitor details" done={done('details')} />
+        {!open3 ? <p className="sec-locked">Opens after the photo and ID. Name and gender fill in from the ID.</p> : <>
         {idImage && (form.firstName || form.lastName) && <p className="faint" style={{ margin: 0, fontSize: 13 }}>Filled in from the ID card where it could be read. Check and correct.</p>}
         <div className="grid-2">
-          <label className="field"><span>First name</span><input className="input" data-field="firstName" aria-invalid={tried && !NAME_RE.test(form.firstName.trim())} value={form.firstName} onChange={(e) => update({ firstName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
-          <label className="field"><span>Last name</span><input className="input" data-field="lastName" aria-invalid={tried && !NAME_RE.test(form.lastName.trim())} value={form.lastName} onChange={(e) => update({ lastName: e.target.value })} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
+          <label className="field"><span>First name</span><input className="input" data-field="firstName" aria-invalid={tried && !NAME_RE.test(form.firstName.trim())} value={form.firstName} onChange={(e) => { typed.current.name = true; update({ firstName: e.target.value }); }} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
+          <label className="field"><span>Last name</span><input className="input" data-field="lastName" aria-invalid={tried && !NAME_RE.test(form.lastName.trim())} value={form.lastName} onChange={(e) => { typed.current.name = true; update({ lastName: e.target.value }); }} autoComplete="off" autoCapitalize="words" maxLength={60} /></label>
         </div>
         <div className="field">
           <span id="lbl-gender">Gender</span>
           <div className="chips" role="radiogroup" aria-labelledby="lbl-gender" aria-invalid={tried && !form.gender}>
             {GENDERS.map(([key, label], i) => (
-              <button type="button" role="radio" data-field={i === 0 ? 'gender' : undefined} aria-checked={form.gender === key} key={key} className="chip" aria-pressed={form.gender === key} onClick={() => update({ gender: form.gender === key ? '' : key })}>{label}</button>
+              <button type="button" role="radio" data-field={i === 0 ? 'gender' : undefined} aria-checked={form.gender === key} key={key} className="chip" aria-pressed={form.gender === key} onClick={() => { typed.current.gender = true; update({ gender: form.gender === key ? '' : key }); }}>{label}</button>
             ))}
           </div>
         </div>
@@ -785,10 +798,12 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           </div>
           {otherPurpose && <input className="input" value={form.purpose} onChange={(e) => update({ purpose: e.target.value })} placeholder="Type the purpose" maxLength={100} aria-label="Other purpose" autoFocus />}
         </div>
+        </>}
       </section>
 
-      <section className={flag('host')} ref={sec.host} aria-labelledby="sec-host">
+      <section className={locked('host', open4)} ref={sec.host} aria-labelledby="sec-host">
         <SectionHead id="sec-host" n={4} title="Whom to meet" done={done('host')} />
+        {!open4 ? <p className="sec-locked">Opens after the visitor details.</p> : <>
         <HostPicker value={host} onChange={setHost} />
         <div className="field">
           <span id="lbl-validity">Pass valid for</span>
@@ -819,6 +834,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           </div>
           <span className="hint">Printed on the pass slip that goes on the back of the card. Collect the card when they leave.</span>
         </div>}
+        </>}
       </section>
 
       {error && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{error}</span></div>}

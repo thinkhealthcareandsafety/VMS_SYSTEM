@@ -202,14 +202,22 @@ function findNumbers(data) {
 
 // Grayscale, more contrast and a sensible size help OCR on phone photos.
 // Second look (only when the first finds nothing): larger and harder contrast, for blur and glare.
-function prepareForOcr(card, strong = false) {
+// glare: darker and harder, for a shiny laminated card under a light. rotate: degrees, for a card held at a slant
+// (those looks only read the name; their number positions are never used for masking).
+function prepareForOcr(card, strong = false, { glare = false, rotate = 0 } = {}) {
   const scale = Math.min(strong ? 2.2 : 2, (strong ? 2000 : 1600) / card.width);
   const c = document.createElement('canvas');
   c.width = Math.round(card.width * scale);
   c.height = Math.round(card.height * scale);
   const ctx = c.getContext('2d');
-  ctx.filter = strong ? 'grayscale(1) contrast(2.2) brightness(1.1)' : 'grayscale(1) contrast(1.35)';
-  ctx.drawImage(card, 0, 0, c.width, c.height);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.filter = glare ? 'grayscale(1) contrast(1.9) brightness(0.82)' : strong ? 'grayscale(1) contrast(2.2) brightness(1.1)' : 'grayscale(1) contrast(1.35)';
+  if (rotate) {
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate((rotate * Math.PI) / 180);
+    ctx.drawImage(card, -c.width / 2, -c.height / 2, c.width, c.height);
+  } else ctx.drawImage(card, 0, 0, c.width, c.height);
   return { canvas: c, scale };
 }
 
@@ -245,6 +253,10 @@ const LOOKS = [
   { strong: false, threshold: '0' },
   { strong: true, threshold: '1' },
   { strong: true, threshold: '0' },
+  // Only tried when the name is still unread: glare, then a slant either way.
+  { strong: true, threshold: '1', glare: true, nameOnly: true },
+  { strong: false, threshold: '1', rotate: -4, nameOnly: true },
+  { strong: false, threshold: '1', rotate: 4, nameOnly: true },
 ];
 
 // What the card says it is wins where it is clear. An Aadhaar is always masked, whatever was picked.
@@ -279,12 +291,18 @@ export async function maskCard(card, picked = 'aadhaar') {
     const until = Date.now() + 30000;
     for (const look of LOOKS) {
       if (Date.now() > until) break;
+      if (look.nameOnly && (fromQr || reads.some((r) => r.name))) continue;
       await worker.setParameters({ thresholding_method: look.threshold });
-      const { canvas, scale } = prepareForOcr(card, look.strong);
+      const { canvas, scale } = prepareForOcr(card, look.strong, look);
       const { data } = await withTimeout(worker.recognize(canvas, {}, { blocks: true }), 15000);
       const lines = wordsByLine(data);
       texts.push(...lines.flat().map((w) => w.text));
       reads.push(readPrinted(lines));
+      if (look.nameOnly) {
+        type = typeFor(picked, cardKind(texts, { aadhaarNumber, qr: Boolean(fromQr) }));
+        if (reads.some((r) => r.name)) break;
+        continue;
+      }
       const found = findNumbers(data);
       alreadyMasked = alreadyMasked || found.alreadyMasked;
       ocrLast4 = ocrLast4 || found.last4;

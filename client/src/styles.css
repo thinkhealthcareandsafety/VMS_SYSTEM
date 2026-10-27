@@ -1425,6 +1425,12 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
 .sign-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); font-size: 14px; pointer-events: none; }
 .sign-clear { position: absolute; top: 6px; right: 6px; }
 .sign-saved { display: block; max-width: 280px; width: 100%; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+/* Check-in, one step at a time: a step not yet reached is a quiet single line. */
+.checkin .card.is-locked { background: var(--surface-2); box-shadow: none; padding-top: 14px; padding-bottom: 14px; }
+.checkin .card.is-locked .sec-head h2 { color: var(--text-3); }
+.checkin .card.is-locked .sec-n { background: var(--sunken); color: var(--text-3); }
+.sec-locked { margin: 2px 0 0; font-size: 13.5px; color: var(--text-3); }
+
 /* Country picker for mobile numbers: searchable, every country. */
 .cp { position: relative; flex: none; }
 .cp-btn { height: 52px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--sunken); font: inherit; font-size: 16px; font-weight: 500; color: var(--text); cursor: pointer; }
