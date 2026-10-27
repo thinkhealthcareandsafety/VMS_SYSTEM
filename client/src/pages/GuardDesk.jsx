@@ -1069,14 +1069,16 @@ body { width: 72mm; margin: 0 auto; padding: 3mm 0 5mm; color: #000; font: 9pt/1
 .logos img { display: block; height: 8.5mm; width: auto; }
 .logos img:first-child { height: 11mm; }
 .logos span { width: .25mm; height: 8mm; background: #000; }
-.band { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.4mm 2.5mm; background: #000; color: #fff; }
+.band { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.4mm 2.5mm; background: #9c1c2e; color: #fff; }
 .band b { font-size: 10pt; letter-spacing: .24em; }
 .band span { font-size: 8pt; letter-spacing: .06em; }
 .id { display: grid; grid-template-columns: 23mm 1fr; gap: 3mm; margin-top: 3mm; align-items: start; }
-.photo { display: block; width: 23mm; height: 28mm; object-fit: cover; border: .4mm solid #000; filter: grayscale(1) contrast(1.12); }
+.photo { display: block; width: 23mm; height: 28mm; object-fit: cover; border: .4mm solid #000; }
 .nophoto { width: 23mm; height: 28mm; border: .4mm dashed #000; }
 .nums { display: flex; gap: 3mm; }
 .nums div { flex: 1; border: .4mm solid #000; padding: .6mm 1.5mm 1mm; }
+.nums div:first-child { border-color: #9c1c2e; }
+.nums div:first-child strong { color: #9c1c2e; }
 .nums small { display: block; font-size: 6.5pt; letter-spacing: .16em; }
 .nums strong { display: block; font-size: 20pt; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
 .name { font-size: 12.5pt; font-weight: 700; line-height: 1.15; margin-top: 2mm; word-break: break-word; }
@@ -1085,7 +1087,7 @@ body { width: 72mm; margin: 0 auto; padding: 3mm 0 5mm; color: #000; font: 9pt/1
 .row { display: flex; justify-content: space-between; gap: 3mm; padding: 1mm 0; border-bottom: .2mm solid #999; font-size: 8.5pt; }
 .row span { color: #222; white-space: nowrap; }
 .row strong { text-align: right; font-weight: 600; }
-.valid { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.6mm 2.5mm; border: .6mm solid #000; }
+.valid { display: flex; justify-content: space-between; align-items: center; margin-top: 2.5mm; padding: 1.6mm 2.5mm; border: .6mm solid #9c1c2e; }
 .valid small { font-size: 7pt; letter-spacing: .16em; }
 .valid strong { font-size: 11.5pt; }
 .scan { display: grid; grid-template-columns: 22mm 1fr; gap: 3mm; align-items: center; margin-top: 2.5mm; }
@@ -1121,14 +1123,14 @@ async function fetchPhoto(id) {
   } catch { return ''; }
 }
 
-// The pass slip: stuck on the back of the hotel's lanyard card. Compact, black and white for a thermal printer, and
+// The pass slip: stuck on the back of the hotel's lanyard card. Compact, in the hotels' colours (it still prints cleanly on a black-only slip printer), and
 // laid out for a glance from a guard: face, pass and card numbers, whom they meet, until when, and the code to scan.
 function passHtml(visit, siteName, photo, qr) {
   const name = `${visit.firstName} ${visit.lastName}`;
   const at = visit.entry?.at || visit.decidedAt;
   const multiDay = visit.validUntil && new Date(visit.validUntil) - new Date(visit.decidedAt || Date.now()) > 86400e3;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Visitor pass ${escHtml(visit.dailyNumber)}</title><style>${PASS_CSS}</style></head><body>
-<div class="logos"><img src="${location.origin}/brand/stregis-print.png" alt="St. Regis"><span></span><img src="${location.origin}/brand/marquis-print.png" alt="Marriott Marquis"></div>
+<div class="logos"><img src="${location.origin}/brand/stregis.png" alt="St. Regis"><span></span><img src="${location.origin}/brand/marquis.png" alt="Marriott Marquis"></div>
 <div class="band"><b>${visit.card?.type === 'vendor' ? 'VENDOR' : 'VISITOR'} PASS</b><span>${escHtml(fmtDate(at).toUpperCase())}</span></div>
 <div class="id">
   ${photo ? `<img class="photo" src="${photo}" alt="">` : '<div class="nophoto"></div>'}
