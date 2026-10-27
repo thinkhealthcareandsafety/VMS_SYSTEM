@@ -1399,3 +1399,7 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
 .awb-row { display: flex; gap: 8px; }
 .awb-row .input { flex: 1; min-width: 0; }
 .barcode-frame { width: 82%; aspect-ratio: 3 / 1; }
+/* Visit history: who let them in and out, at which gate. */
+.move-tag { display: inline-block; min-width: 28px; margin-right: 6px; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; text-align: center; letter-spacing: 0.04em; text-transform: uppercase; }
+.move-tag.in { background: var(--ok-soft); color: var(--ok); }
+.move-tag.out { background: var(--sunken); color: var(--text-2); }

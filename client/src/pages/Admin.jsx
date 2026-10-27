@@ -816,9 +816,13 @@ function HistoryPage({ tick, openVisit, openExport, params }) {
                   <td className="num">
                     {['approved', 'away', 'checked_out', 'force_checked_out'].includes(r.status) ? (
                       <>
-                        {fmtTime(r.decidedAt)}{r.entry?.gate && <span className="meta-line"> · {r.entry.gate}</span>}
+                        <div><span className="move-tag in">In</span>{fmtTime(r.entry?.at || r.decidedAt)}<span className="meta-line">{r.entry?.gate ? ` · ${r.entry.gate}` : ''}{r.entry?.by ? ` · ${r.entry.by}` : ''}</span></div>
                         <div className="meta-line">
-                          {r.status === 'approved' ? 'still inside' : r.exit ? `to ${fmtTime(r.exit.at)}${r.exit.gate ? ` · ${r.exit.gate}` : ''}` : r.checkedOutAt ? `to ${fmtTime(r.checkedOutAt)}` : ''}
+                          {r.status === 'approved'
+                            ? 'still inside'
+                            : r.exit
+                              ? <><span className="move-tag out">Out</span>{fmtTime(r.exit.at)}{r.exit.gate ? ` · ${r.exit.gate}` : ''}{r.exit.by ? ` · ${r.exit.by}` : ''}</>
+                              : r.checkedOutAt ? <><span className="move-tag out">Out</span>{fmtTime(r.checkedOutAt)}{r.forceReason ? ' · by admin' : ''}</> : ''}
                           {r.entries > 1 ? ` · ${r.entries} entries` : ''}
                         </div>
                       </>
