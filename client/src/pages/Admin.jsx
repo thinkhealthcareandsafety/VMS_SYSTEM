@@ -14,6 +14,7 @@ import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
 import { printEvacuation } from '../lib/evacuation.js';
 import { printDailyReport, REPORT_PARTS } from '../lib/dailyReport.js';
+import { DailyReportDialog } from '../components/DailyReport.jsx';
 import GroupsPage from './Groups.jsx';
 import MaterialBoard from '../components/Material.jsx';
 import CourierBoard from '../components/Couriers.jsx';
@@ -39,6 +40,7 @@ const NAV = [
   { group: 'Records', items: [
     { id: 'history', label: 'Visit history', icon: History },
     { id: 'audit', label: 'Audit log', icon: ScrollText },
+    { id: 'report', label: 'Daily report', icon: Printer, opens: true }, // A4 print of material, parcels in and out
   ] },
   { group: 'Setup', items: [
     { id: 'hosts', label: 'Hosts', icon: Building2 },
@@ -69,6 +71,7 @@ export default function Admin({ user, onLogout }) {
   const [params, setParams] = useSearchParams();
   const section = TITLES[params.get('s')] ? params.get('s') : 'overview';
   const [navOpen, setNavOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   // Something a page should do once it opens (find a host, open an event, start an import), sent from the search box.
   const [intent, setIntent] = useState(null);
@@ -135,11 +138,11 @@ export default function Admin({ user, onLogout }) {
         {NAV.map((g) => (
           <div key={g.group} style={{ display: 'contents' }}>
             <span className="group">{g.group}</span>
-            {g.items.map(({ id, label, icon: Icon, n, alert }) => {
+            {g.items.map(({ id, label, icon: Icon, n, alert, opens }) => {
               const count = stats && n ? n(stats) || 0 : 0;
               const red = count > 0 && alert?.(stats);
               return (
-                <button key={id} className="nav-item" aria-current={section === id || (id === 'settings' && section === 'messages') ? 'page' : undefined} onClick={() => go(id)}>
+                <button key={id} className="nav-item" aria-current={section === id || (id === 'settings' && section === 'messages') ? 'page' : undefined} onClick={() => (opens ? (setNavOpen(false), setReportOpen(true)) : go(id))}>
                   <Icon /><span className="grow">{label}</span>
                   {count > 0 && <span className={`n ${red ? 'alert-n' : ''}`}>{count}</span>}
                 </button>
@@ -197,6 +200,7 @@ export default function Admin({ user, onLogout }) {
 
       <QuickFind open={findOpen} onClose={() => setFindOpen(false)} go={go} openVisit={setVisitId} openExport={setExportOpts} stats={stats} toast={toast} />
       <VisitDrawer id={visitId} tick={tick} superAdmin={user.role === 'superadmin'} onClose={() => setVisitId(null)} onChanged={refresh} />
+      <DailyReportDialog open={reportOpen} onClose={() => setReportOpen(false)} />
       <ExportDialog opts={exportOpts} onClose={() => setExportOpts(null)} />
       <PasswordDialog open={pwOpen} onClose={() => setPwOpen(false)} />
     </div>
