@@ -103,7 +103,7 @@ async function issueApprovalLink(visit, host, visitorName, company) {
   const tg = config.approvalChannel !== 'sms' && telegram.enabled() && host.telegramChatId
     ? { kind: 'telegram', to: String(host.telegramChatId), body: `🚪 ${visitorName}${from} is at the gate to meet you.\nPass asked for: ${passes.validityLabel(visit.validity)}\n\nSee their photo and details: ${link}\nValid for ${config.approvalTtlMinutes} min.` }
     : null;
-  const sms = { kind: 'sms', to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, minutes: config.approvalTtlMinutes } };
+  const sms = { kind: 'sms', to: host.mobile, body, vars: { name: visitorName, company: /^(personal|self|none|na|n\/a|-)$/i.test(company) ? 'Personal' : company, link: smsLink, token: raw, minutes: config.approvalTtlMinutes } };
   // Email goes as well as the main channel, to every host with an address: free, and reaches people away from their phone.
   if (email.enabled() && host.email) {
     const mail = email.approvalEmail({
