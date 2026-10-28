@@ -12,7 +12,7 @@ const passes = require('../services/passes');
 const parcels = require('../services/parcels');
 const settings = require('../services/settings');
 const { requireLicense } = require('../services/license');
-const { siteDay, audit, cleanText, decodeJpeg, normalizeMobile } = require('../services/core');
+const { oneAtATime, siteDay, audit, cleanText, decodeJpeg, normalizeMobile } = require('../services/core');
 
 // Couriers at the gate: parcels coming in for someone, and parcels going out with a courier.
 const router = express.Router();
@@ -167,7 +167,8 @@ router.get('/:id/:set(photo|handover|signature)/:n', requireRole('guard', 'admin
 });
 
 // A parcel arrives (in), or a department hands one over to be sent (out).
-router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res) => {
+router.post('/', requireRole('guard', 'admin'), requireLicense, (req, res) => oneAtATime(`awb:${String(req.body?.awb || '').trim().toUpperCase() || Math.random()}`, () => logParcel(req, res)));
+async function logParcel(req, res) {
   const b = req.body || {};
   const direction = b.direction === 'out' ? 'out' : b.direction === 'in' ? 'in' : null;
   if (!direction) return res.status(400).json({ error: 'Is the parcel coming in or going out?' });
@@ -200,7 +201,7 @@ router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res)
   audit(req.user, direction === 'in' ? 'parcel.received' : 'parcel.booked', { entity: 'Parcel', entityId: p._id, details: { number: p.number, carrier: p.carrier, awb: p.awb, for: parcels.forWhom(p, host), gate: gate.name }, ip: req.ip });
   const via = direction === 'in' ? await parcels.requestResponse(p, host) : null;
   res.status(201).json({ ...row((await Parcel.findById(p._id).populate('host').lean())), notifiedVia: via });
-});
+}
 
 // Handing a parcel over at the desk: the name and mobile number of whoever takes it, and a photo of them taking it
 // (it stands in for the signature in the paper register). The recipient is then told who took it.

@@ -353,6 +353,8 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .cam-spacer { width: 44px; }
 .cam-msg { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 10px; padding: 24px; text-align: center; color: #e9ecf1; }
 .cam-msg svg { width: 28px; height: 28px; color: #a6aebb; }
+.cam-msg-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.cam-msg-actions svg { width: 16px; height: 16px; color: inherit; }
 .face-guide { position: absolute; left: 50%; top: 44%; width: 46%; aspect-ratio: 3 / 4; transform: translate(-50%, -50%); border-radius: 50%; border: 2px dashed rgba(255, 255, 255, 0.55); pointer-events: none; }
 .card-guide { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 12px; box-shadow: 0 0 0 9999px rgba(11, 13, 16, 0.5); pointer-events: none; }
 .card-guide i { position: absolute; width: 26px; height: 26px; border: 3px solid #fff; }
@@ -461,6 +463,9 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .outcome-actions { display: grid; gap: 10px; justify-items: center; width: 100%; max-width: 360px; }
 .outcome-actions > .btn { width: 100%; }
 .outcome-actions .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.outcome-actions > .phone-yes, .outcome > div > .phone-yes { width: 100%; display: grid; gap: 8px; text-align: left; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
+.phone-yes .row { justify-content: flex-start; }
+.phone-yes .hint { margin: 0; }
 
 /* One-time secret (new staff password) */
 .secret { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 14px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--border); }

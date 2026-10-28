@@ -7,14 +7,21 @@
 #   backup      every night at 02:00: the database and new photos to the backup drive, one year kept
 name: vms
 
+# Each service keeps at most 50 MB of logs, so a year of running never fills the disk.
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+
 services:
   mongo:
+    logging: *logs
     image: mongo:7.0
     restart: unless-stopped
     volumes:
       - ${DATA_DIR:-/srv/vms/data}/mongo:/data/db
 
   app:
+    logging: *logs
     build: { context: .., dockerfile: Dockerfile }
     restart: unless-stopped
     env_file: .env
@@ -25,13 +32,16 @@ services:
       COOKIE_SECURE: "true"
       LAN_ONLY: "true"
       LICENSE_REQUIRED: "true"
-      PRINTER_MODE: "off"
+      PRINTER_MODE: ${PRINTER_MODE:-off}
+      BACKUP_STATUS_FILE: /backup/status.json
       TZ: Asia/Kolkata
     volumes:
       - ${DATA_DIR:-/srv/vms/data}/uploads:/data/uploads
+      - ${BACKUP_DIR:-/mnt/vms-backup}:/backup:ro   # read only: the console shows when the last backup ran
     depends_on: [mongo]
 
   caddy:
+    logging: *logs
     build: { context: ., dockerfile: Dockerfile.caddy }
     restart: unless-stopped
     ports: ["80:80", "443:443"]
@@ -44,6 +54,7 @@ services:
     depends_on: [app]
 
   cloudflared:
+    logging: *logs
     image: cloudflare/cloudflared:2024.12.2
     profiles: [tunnel]   # only when TUNNEL_TOKEN is set (install.sh)
     restart: unless-stopped
@@ -51,6 +62,7 @@ services:
     depends_on: [app]
 
   backup:
+    logging: *logs
     image: mongo:7.0
     restart: unless-stopped
     environment: { TZ: Asia/Kolkata }

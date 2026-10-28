@@ -70,4 +70,15 @@ function passwordProblem(pw) {
   return null;
 }
 
-module.exports = { siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };
+// Runs the work for one key (a mobile number, an AWB) one at a time, so a double tap or two gates at once cannot
+// make the same entry twice. The system runs as one process on the site PC, so a lock in memory is enough.
+const queues = new Map();
+function oneAtATime(key, work) {
+  const run = (queues.get(key) || Promise.resolve()).then(work, work);
+  const settled = run.then(() => {}, () => {});
+  queues.set(key, settled);
+  settled.then(() => { if (queues.get(key) === settled) queues.delete(key); });
+  return run;
+}
+
+module.exports = { oneAtATime, siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };

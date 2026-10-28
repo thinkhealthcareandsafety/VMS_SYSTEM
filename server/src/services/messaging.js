@@ -102,27 +102,29 @@ async function sendOtp(to, code) {
 // Builds ZPL (Zebra-compatible; most WiFi/LAN label printers accept it on TCP 9100).
 const ascii = (s, max) => String(s || '').replace(/[^\x20-\x7E]/g, '').replace(/[\^~]/g, ' ').slice(0, max);
 
+// The pass on the hotel's 1.5 x 2.5 inch label (305 x 508 dots at 203 dpi), for a network printer the site PC prints to.
 function buildStickerZpl(visit, hostUnit, hostName, timeStr, dateStr, validTill = '') {
+  const code = visit.passCode ? ascii(visit.passCode, 8) : '';
   return [
     '^XA',
-    '^PW400^LL600',
-    '^CF0,30',
-    '^FO20,20^A0N,30,30^FDVISITOR PASS^FS',
-    '^FO20,60^GB360,2,2^FS',
-    `^FO20,80^A0N,150,150^FD${visit.dailyNumber}^FS`,
-    `^FO220,90^A0N,34,34^FD${ascii(visit.firstName + ' ' + visit.lastName, 16)}^FS`,
-    `^FO220,135^A0N,26,26^FDTO: ${ascii(hostUnit, 14)}^FS`,
-    `^FO220,170^A0N,24,24^FD${ascii(hostName, 18)}^FS`,
-    `^FO220,205^A0N,22,22^FD${ascii(visit.company, 18)}^FS`,
-    `^FO20,270^A0N,24,24^FD${dateStr}  ${timeStr}^FS`,
-    ...(validTill ? [`^FO20,302^A0N,24,24^FDVALID TILL ${ascii(validTill, 24)}^FS`] : []),
+    '^PW305^LL508^LH0,0',
+    '^FO15,12^A0N,26,26^FDVISITOR PASS^FS',
+    `^FO190,16^A0N,20,20^FD${ascii(dateStr, 10)}^FS`,
+    '^FO15,44^GB275,3,3^FS',
+    '^FO15,56^A0N,20,20^FDPASS^FS',
+    `^FO15,78^A0N,96,96^FD${visit.dailyNumber}^FS`,
+    `^FO15,182^A0N,30,30^FB275,2,0,L^FD${ascii(`${visit.firstName} ${visit.lastName}`, 40)}^FS`,
+    `^FO15,248^A0N,22,22^FB275,1,0,L^FD${ascii(visit.company, 30)}^FS`,
+    `^FO15,278^A0N,22,22^FB275,2,0,L^FDMeeting: ${ascii(hostName, 24)}, ${ascii(hostUnit, 14)}^FS`,
+    `^FO15,330^A0N,22,22^FDIn: ${ascii(timeStr, 10)}^FS`,
+    ...(validTill ? [`^FO15,356^A0N,24,24^FB275,1,0,L^FDVALID TILL ${ascii(validTill, 22)}^FS`] : []),
     // The pass code as a QR: scanned at any gate to let the holder out, or back in on a multi-day pass.
-    ...(visit.passCode ? [
-      `^FO20,335^BQN,2,6^FDQA,${ascii(visit.passCode, 8)}^FS`,
-      `^FO210,370^A0N,30,30^FD${ascii(`${visit.passCode.slice(0, 4)}-${visit.passCode.slice(4)}`, 9)}^FS`,
-      `^FO210,410^A0N,22,22^FD${ascii(visit.ref, 20)}^FS`,
-      '^FO210,445^A0N,20,20^FDSCAN AT ANY GATE^FS',
-    ] : [`^FO20,340^BCN,110,Y,N,N^FD${ascii(visit.ref, 20)}^FS`]),
+    ...(code ? [
+      `^FO10,384^BQN,2,4^FDQA,${code}^FS`,
+      `^FO130,402^A0N,28,28^FD${code.slice(0, 4)}-${code.slice(4)}^FS`,
+      `^FO130,438^A0N,20,20^FD${ascii(visit.ref, 14)}^FS`,
+      '^FO130,464^A0N,18,18^FDSCAN AT ANY GATE^FS',
+    ] : [`^FO15,392^BCN,80,Y,N,N^FD${ascii(visit.ref, 20)}^FS`]),
     '^XZ',
   ].join('\n');
 }

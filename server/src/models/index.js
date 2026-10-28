@@ -90,6 +90,8 @@ const visitSchema = new Schema({
   faceMatchStatus: { type: String, enum: ['scored', 'no_card_face', 'no_photo_face', 'unavailable'] },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   decidedAt: { type: Date },
+  // Let in by the guard after the host said yes on the phone (no reply to the message): who, and what the guard noted.
+  phoneApproval: { type: { _id: false, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String, note: String }, default: undefined },
   checkedInAt: { type: Date },
   checkedOutAt: { type: Date },
   checkedOutBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -117,6 +119,7 @@ visitSchema.index({ mobile: 1, status: 1 }); // duplicate check-in guard
 visitSchema.index({ status: 1, validUntil: 1 }); // passes that expire while the holder is away
 visitSchema.index({ passCode: 1 }, { unique: true, sparse: true });
 visitSchema.index({ 'card.no': 1, status: 1 }, { partialFilterExpression: { 'card.no': { $exists: true } } }); // who holds card 07 now
+visitSchema.index({ createdAt: -1 }); // visit history, newest first, over a year of visits
 
 const approvalTokenSchema = new Schema({
   visit: { type: Schema.Types.ObjectId, ref: 'Visit', required: true, index: true },

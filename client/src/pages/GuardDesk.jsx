@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
-  AlertTriangle, ArrowDown, BadgeCheck, Bell, ChevronRight, Plus, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
+  AlertTriangle, ArrowDown, Phone, BadgeCheck, Bell, ChevronRight, Plus, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
   Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, TimerReset, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, cardLabel, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
@@ -214,6 +214,12 @@ export default function GuardDesk({ user, onLogout }) {
         if (openRef.current?.id === v.id) setOpen(null);
       } catch (e) { toast(e.message, 'bad'); }
     },
+    phoneYes: async (v, note) => {
+      await api(`/api/visits/${v.id}/approve-by-phone`, { method: 'POST', body: { note } });
+      toast(`${v.firstName} ${v.lastName} let in: ${v.host?.name} said yes on the phone.`);
+      refreshQueue();
+      refreshOpen(v.id);
+    },
     reprint: async (v) => {
       try { await api(`/api/visits/${v.id}/reprint`, { method: 'POST' }); toast('Sticker sent to the printer.'); refreshOpen(v.id); } catch (e) { toast(e.message, 'bad'); }
     },
@@ -286,6 +292,7 @@ export default function GuardDesk({ user, onLogout }) {
                 whatsapp={whatsapp[open.id]}
                 onNext={closeOpen}
                 onResend={() => act.resend(open)}
+                onPhoneYes={(note) => act.phoneYes(open, note)}
                 onCancel={() => act.cancel(open)}
                 onReprint={() => act.reprint(open)}
                 onPrint={() => printPass(open)}
@@ -960,7 +967,7 @@ function CardOnPass({ visit, onSaved }) {
   );
 }
 
-function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprint, onPrint, onCard, lanyard }) {
+function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onPhoneYes, onCancel, onReprint, onPrint, onCard, lanyard }) {
   useTick(1000);
   const name = `${visit.firstName} ${visit.lastName}`;
   const hostFirst = visit.host?.name?.split(' ')[0] || 'the host';
@@ -994,6 +1001,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
               <button className="btn" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>
               <button className="btn btn-ghost" onClick={onCancel}><X />Cancel visit</button>
             </div>
+            <PhoneYes visit={visit} onConfirm={onPhoneYes} />
           </div>
         </>
       )}
@@ -1038,7 +1046,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
             </div>
           </div>
           <p className="lead">
-            {visit.expected ? `Expected by ${visit.host?.name}` : `Approved by ${visit.host?.name}`}
+            {visit.expected ? `Expected by ${visit.host?.name}` : visit.phoneApproval ? `Approved on the phone: ${visit.phoneApproval.note}` : `Approved by ${visit.host?.name}`}
           </p>
           <button className="btn btn-primary btn-xl btn-block" style={{ maxWidth: 340 }} onClick={onNext}><UserPlus />Next visitor</button>
         </>
@@ -1058,6 +1066,7 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
           <div><h1>No reply from {hostFirst}</h1><p className="lead" style={{ margin: '6px auto 0' }}>Call {hostFirst}, or send the request again. If {visit.firstName} has left, cancel the visit.</p></div>
           <div style={{ display: 'grid', gap: 8, width: '100%', maxWidth: 340 }}>
             <button className="btn btn-primary btn-xl" onClick={onResend} disabled={wait > 0}><RotateCcw />{wait > 0 ? `Resend in ${wait}s` : 'Resend request'}</button>
+            <PhoneYes visit={visit} onConfirm={onPhoneYes} />
             <button className="btn" onClick={onCancel}><X />Visitor left: cancel visit</button>
             <button className="btn btn-ghost" onClick={onNext}>Back to check-in</button>
           </div>
@@ -1080,6 +1089,36 @@ function Outcome({ visit, sentAt, whatsapp, onNext, onResend, onCancel, onReprin
         </>
       )}
     </div>
+  );
+}
+
+// No reply to the message, but the guard called and the host said yes: let the visitor in, noting who said so.
+function PhoneYes({ visit, onConfirm }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const host = visit.host?.name || 'the host';
+  if (!open) {
+    return <button className="btn" onClick={() => { setNote(`${host}, on the phone`); setErr(''); setOpen(true); }}><Phone />{host.split(' ')[0]} said yes on the phone</button>;
+  }
+  const go = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr('');
+    try { await onConfirm(note.trim()); } catch (x) { setErr(x.message); setBusy(false); }
+  };
+  return (
+    <form className="phone-yes" onSubmit={go}>
+      <label className="field"><span>Who said yes, and how?</span>
+        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={120} autoFocus />
+      </label>
+      <p className="hint">Only after you spoke to {host} yourself. Your name is recorded with this.</p>
+      {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
+      <div className="row">
+        <button className="btn btn-primary" disabled={busy || note.trim().length < 3}>{busy ? <Spinner /> : <CheckCircle2 />}Let {visit.firstName} in</button>
+        <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)}>Back</button>
+      </div>
+    </form>
   );
 }
 

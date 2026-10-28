@@ -55,7 +55,12 @@ if [ -n "${TUNNEL_TOKEN:-}" ]; then keep COMPOSE_PROFILES tunnel; else keep COMP
 say "5/6 Data and backup folders"
 mkdir -p "$DATA_DIR"/{mongo,uploads,caddy} "$BACKUP_DIR"
 chown -R 1000:1000 "$DATA_DIR/uploads"
-mountpoint -q "$BACKUP_DIR" || echo "Warning: $BACKUP_DIR is not a separate drive yet. Mount the backup SSD there (docs/ONSITE.md, step 4)."
+if mountpoint -q "$BACKUP_DIR"; then
+  touch "$BACKUP_DIR/.vms-backup-drive"
+elif [ ! -f "$BACKUP_DIR/.vms-backup-drive" ]; then
+  echo "Warning: $BACKUP_DIR is not a separate drive, so nightly backups will not run. Mount the backup SSD there (docs/ONSITE.md, step 4)."
+  echo "         For a trial on one disk only: sudo touch $BACKUP_DIR/.vms-backup-drive"
+fi
 
 say "6/6 Building and starting (the first time takes 5 to 10 minutes)"
 docker compose up -d --build

@@ -306,6 +306,11 @@ function Attention({ stats, go }) {
   if (stats.smsFailed || stats.printFailed) {
     items.push({ tone: 'bad', icon: AlertTriangle, to: ['messages'], text: `${[stats.smsFailed && plural(stats.smsFailed, 'message', 'messages'), stats.printFailed && plural(stats.printFailed, 'sticker print', 'sticker prints')].filter(Boolean).join(' and ')} failed`, hint: 'Check the settings or the printer, then retry' });
   }
+  const bk = stats.backup;
+  if (bk && ['failed', 'stale'].includes(bk.state)) {
+    items.push({ tone: 'bad', icon: AlertTriangle, to: ['settings'], text: bk.state === 'failed' ? `Last backup failed: ${bk.error}` : `No backup since ${bk.at ? fmtDateTime(bk.at) : 'the system started'}`, hint: 'Check the backup drive is plugged in to the server PC, then call GateSmartX' });
+  }
+  if (stats.disk?.low) items.push({ tone: 'bad', icon: AlertTriangle, to: ['settings'], text: `The server PC has only ${stats.disk.freeGb} GB of space left`, hint: 'Call GateSmartX before it fills up: new photos cannot be saved on a full disk' });
   if (stats.idMismatchToday) items.push({ tone: 'bad', icon: ShieldCheck, to: ['history', { idCheck: 'mismatch' }], text: `${plural(stats.idMismatchToday, 'visitor', 'visitors')} today with an ID that does not match the name or gender typed`, hint: 'Look at the card and the photo' });
   if (stats.overstayEscalated) items.push({ tone: 'bad', icon: Siren, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.overstayEscalated, 'visitor is', 'visitors are')} still inside more than an hour after the pass ended`, hint: 'Escalated: the host and your escalation contacts were told. Check them out or extend the pass.' });
   if (stats.staleInside > stats.overstayEscalated) items.push({ tone: 'warn', icon: Clock, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.staleInside - stats.overstayEscalated, 'visitor is', 'visitors are')} still inside after the pass ended`, hint: 'The guard may have missed the exit. Select them and check them out together, or extend the pass.' });

@@ -19,7 +19,7 @@ module.exports = {
   approvalTtlMinutes: Number(env.APPROVAL_TTL_MINUTES || 10),
   maxInsideHours: Number(env.MAX_INSIDE_HOURS || 10),
   idImageRetentionHours: Number(env.ID_IMAGE_RETENTION_HOURS || 24),
-  worker: { intervalMs: 3000, maxAttempts: 5 },
+  worker: { intervalMs: 3000, maxAttempts: 10 }, // retries back off to once a minute: about 5 minutes of internet trouble before a message counts as failed
   printer: {
     mode: env.PRINTER_MODE || 'file',      // tcp | file | off
     host: env.PRINTER_HOST || '',

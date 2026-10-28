@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CameraOff, CheckCircle2, Maximize2, RefreshCcw, SwitchCamera } from 'lucide-react';
+import { AlertTriangle, Camera as CameraIcon, CameraOff, CheckCircle2, Maximize2, RefreshCcw, SwitchCamera } from 'lucide-react';
 import { CARD_ASPECT, GUIDE_WIDTH, grabCard, maskCard, paintBoxes } from '../lib/aadhaarMask.js';
 import { describeCard } from '../lib/faceMatch.js';
 import { Spinner } from './ui.jsx';
@@ -16,6 +16,8 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [facing, setFacing] = useState('environment');
+  const [attempt, setAttempt] = useState(0);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     if (captured) return undefined;
@@ -47,29 +49,30 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
       cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [captured, facing]);
+  }, [captured, facing, attempt]);
+
+  // A card on a canvas, from the live camera or the tablet's own camera app: masked here, then handed back.
+  const fromCard = async (card) => {
+    setBusy(true);
+    try {
+      // The face on the card is read on this device from a copy, while the number is being hidden. The descriptor stays in memory.
+      const copy = document.createElement('canvas');
+      copy.width = card.width;
+      copy.height = card.height;
+      copy.getContext('2d').drawImage(card, 0, 0);
+      const full = keepFull ? copy.toDataURL('image/jpeg', 0.82) : undefined;
+      const face = describeCard(copy).catch(() => 'unavailable');
+      const result = await maskCard(card, idType);
+      onCapture(result.dataUrl, { ...result, face: await face, ...(full && result.idType === 'aadhaar' ? { full } : {}) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const snap = async () => {
     const video = videoRef.current;
     if (!video?.videoWidth || busy) return;
-    if (mode === 'aadhaar') {
-      setBusy(true);
-      try {
-        const card = grabCard(video, boxRef.current);
-        // The face on the card is read on this device from a copy, while the number is being hidden. The descriptor stays in memory.
-        const copy = document.createElement('canvas');
-        copy.width = card.width;
-        copy.height = card.height;
-        copy.getContext('2d').drawImage(card, 0, 0);
-        const full = keepFull ? copy.toDataURL('image/jpeg', 0.82) : undefined;
-        const face = describeCard(copy).catch(() => 'unavailable');
-        const result = await maskCard(card, idType);
-        onCapture(result.dataUrl, { ...result, face: await face, ...(full && result.idType === 'aadhaar' ? { full } : {}) });
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
+    if (mode === 'aadhaar') { await fromCard(grabCard(video, boxRef.current)); return; }
     const canvas = document.createElement('canvas');
     const w = Math.min(720, video.videoWidth);
     canvas.width = w;
@@ -78,6 +81,29 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
     if (facing === 'user') { ctx.translate(w, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     onCapture(canvas.toDataURL('image/jpeg', 0.82), { mirrored: facing === 'user' });
+  };
+
+  // When the live camera will not start: a photo from the tablet's own camera app goes through the same steps.
+  const fromFile = async (file) => {
+    if (!file) return;
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    try {
+      img.src = url;
+      await img.decode();
+      const max = mode === 'aadhaar' ? 1600 : 720;
+      const scale = Math.min(1, max / img.naturalWidth);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      if (mode === 'aadhaar') await fromCard(canvas);
+      else onCapture(canvas.toDataURL('image/jpeg', 0.82), { mirrored: false });
+    } catch {
+      setError('That photo could not be read. Take it again.');
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   };
 
   if (captured) {
@@ -108,6 +134,11 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
         <div className="cam-msg" role="alert">
           <CameraOff />
           <p>{error}</p>
+          <div className="cam-msg-actions">
+            <button type="button" className="btn btn-sm" onClick={() => setAttempt((n) => n + 1)}><RefreshCcw />Try again</button>
+            <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}><CameraIcon />Use the camera app</button>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" capture={mode === 'face' ? 'user' : 'environment'} hidden onChange={(e) => { fromFile(e.target.files[0]); e.target.value = ''; }} />
         </div>
       )}
       {!error && !busy && (

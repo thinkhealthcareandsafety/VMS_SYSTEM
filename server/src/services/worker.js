@@ -113,8 +113,12 @@ async function closeEndedGroups() {
   }
 }
 
-// DPDP data minimisation: masked ID images are deleted after the retention window.
-async function purgeIdImages() {
+// DPDP data minimisation: masked ID images are deleted after the retention window. Once an hour is plenty, and keeps
+// the site PC from searching a year of visits every few seconds.
+let lastPurge = 0;
+async function purgeIdImages({ force = false } = {}) {
+  if (!force && Date.now() - lastPurge < 3600e3) return;
+  lastPurge = Date.now();
   const { idRetentionDays } = await settings.get();
   const cutoff = new Date(Date.now() - idRetentionDays * 86400e3);
   const due = await Visit.find({

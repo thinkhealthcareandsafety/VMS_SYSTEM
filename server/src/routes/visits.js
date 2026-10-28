@@ -18,7 +18,8 @@ const vault = require('../services/vault');
 const overstay = require('../services/overstay');
 const departure = require('../services/departure');
 const { requireLicense } = require('../services/license');
-const { siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
+const { approveByPhone } = require('../services/decision');
+const { oneAtATime, siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
@@ -65,6 +66,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
   ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), hasFullId: Boolean(v.idFullPath), idMaskMethod: v.idMaskMethod, idType: v.idType || 'aadhaar', idLabel: idLabelOf(v), idCheck: v.idCheck?.status ? v.idCheck : null, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
   decidedAt: v.decidedAt,
+  phoneApproval: v.phoneApproval ? { byName: v.phoneApproval.byName, note: v.phoneApproval.note } : null,
   checkedOutAt: v.checkedOutAt,
   validity: passes.validityLabel(v.validity),
   validUntil: v.validUntil ?? null,
@@ -248,7 +250,8 @@ router.post('/otp/verify', requireRole('guard', 'admin'), async (req, res) => {
 });
 
 // Guard check-in: captures visitor, masked Aadhaar, host, and sends approval SMS.
-router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res) => {
+router.post('/', requireRole('guard', 'admin'), requireLicense, (req, res) => oneAtATime(`visit:${normalizeMobile(req.body?.mobile) || ''}`, () => checkIn(req, res)));
+async function checkIn(req, res) {
   const b = req.body || {};
   const firstName = tidyName(cleanText(b.firstName, 60));
   const lastName = tidyName(cleanText(b.lastName, 60));
@@ -359,7 +362,7 @@ router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res)
     console.error('check-in failed', err);
     res.status(500).json({ error: 'Could not register visitor. Please retry.' });
   }
-});
+}
 
 // One scan at any gate: in, out, or a plain reason why not. See services/gate.js.
 router.post('/scan', requireRole('guard', 'admin'), async (req, res) => {
@@ -555,6 +558,13 @@ router.get('/:id/id-image-full', requireRole('superadmin'), async (req, res) => 
 });
 
 // Re-sends the approval SMS (host missed it, or link expired).
+// No reply to the message, but the host said yes on the phone: the guard lets the visitor in and notes who said so.
+router.post('/:id/approve-by-phone', requireRole('guard', 'admin'), async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const { status, body } = await approveByPhone(req.params.id, req.user, req.body?.note, req.ip);
+  res.status(status).json(body);
+});
+
 router.post('/:id/resend', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
   const v = await Visit.findById(req.params.id).populate('host');

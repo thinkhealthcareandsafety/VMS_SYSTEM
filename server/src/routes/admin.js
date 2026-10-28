@@ -18,6 +18,7 @@ const settings = require('../services/settings');
 const sheets = require('../services/sheets');
 const overstay = require('../services/overstay');
 const license = require('../services/license');
+const health = require('../services/health');
 const { siteDay, audit, normalizeMobile, cleanText, tidyName, passwordProblem, sha256 } = require('../services/core');
 
 const router = express.Router();
@@ -215,6 +216,7 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
     // So the console can say plainly when SMS are only logged, or no sticker printer is connected.
     smsLive: config.sms.driver !== 'console', telegramOn: telegram.enabled(), emailOn: email.enabled(), printerOn: config.printer.mode !== 'off',
     expectedToday: await Invite.countDocuments({ day: today, status: 'expected' }),
+    backup: health.backup(), disk: health.disk(),
     ...(await gateWork(today)),
   });
 });

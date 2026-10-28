@@ -666,10 +666,10 @@ test('settings: site and gate names reach sign-in and the approval page; Aadhaar
 
   // 10 days old: kept under 90-day retention, deleted under 7-day retention.
   await Visit.collection.updateOne({ _id: new mongoose.Types.ObjectId(v.body.id) }, { $set: { createdAt: new Date(Date.now() - 10 * 86400e3) } });
-  await purgeIdImages();
+  await purgeIdImages({ force: true });
   assert.ok((await Visit.findById(v.body.id).lean()).idImagePath, 'kept for 90 days');
   await call('PATCH', '/api/admin/settings', { idRetentionDays: 7 }, admin);
-  await purgeIdImages();
+  await purgeIdImages({ force: true });
   const after = await Visit.findById(v.body.id).lean();
   assert.equal(after.idImagePath, undefined);
   assert.ok(after.idImagePurgedAt, 'deleted after 7 days');
@@ -1016,7 +1016,7 @@ test('super admin: full Aadhaar is stored encrypted, shown only to a Super Admin
 
   // Retention deletes the full card with the masked one.
   await Visit.collection.updateOne({ _id: new mongoose.Types.ObjectId(v.body.id) }, { $set: { createdAt: new Date(Date.now() - 400 * 86400e3) } });
-  await purgeIdImages();
+  await purgeIdImages({ force: true });
   assert.equal(fsp.existsSync(doc.idFullPath), false);
   assert.equal((await Visit.findById(v.body.id).lean()).idFullPath, undefined);
   assert.equal((await fetch(`${base}/api/visits/${v.body.id}/id-image-full`, { headers: { Cookie: chief } })).status, 404);
@@ -2153,4 +2153,54 @@ test('daily report: the day\'s material received, parcels in and parcels out, fo
   assert.equal((await call('GET', '/api/reports/daily', null, guard)).status, 403);
   assert.equal((await call('GET', '/api/reports/daily?day=2999-01-01', null, admin)).status, 400);
   assert.deepEqual((await call('GET', '/api/reports/daily?day=2020-01-01', null, admin)).body.material, []);
+});
+
+test('a double tap on Send for approval makes one visit, not two', async () => {
+  const { Visit } = require('../src/models');
+  const mobile = '9700000391';
+  const rs = await Promise.all([1, 2, 3].map(() => checkIn('rahul', hostIds.asha, mobile)));
+  const made = rs.filter((r) => r.status === 201).length;
+  assert.equal(made, 1, `statuses ${rs.map((r) => r.status).join(',')}`);
+  assert.equal(await Visit.countDocuments({ mobile: '+919700000391' }), 1);
+});
+
+test('two gates logging the same AWB at once make one parcel', async () => {
+  const body = { direction: 'in', carrier: 'Blue Dart', awb: 'RACE12345', pieces: 1, type: 'parcel', hostId: hostIds.asha, photos: [jpeg()] };
+  const rs = await Promise.all([1, 2].map(() => call('POST', '/api/parcels', body, guard)));
+  assert.deepEqual(rs.map((r) => r.status).sort(), [201, 409]);
+});
+
+test('the console warns when last night\'s backup failed or is missing, and says nothing when it ran', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const file = path.join(require('node:os').tmpdir(), `vms-backup-status-${process.pid}.json`);
+  const stats = async () => (await call('GET', '/api/admin/stats', null, admin)).body;
+  try {
+    assert.equal((await stats()).backup.state, 'off', 'no backup service: nothing to say');
+    process.env.BACKUP_STATUS_FILE = file;
+    fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), ok: true, error: '' }));
+    assert.equal((await stats()).backup.state, 'ok');
+    fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), ok: false, error: 'The backup drive is not connected' }));
+    const failed = (await stats()).backup;
+    assert.equal(failed.state, 'failed');
+    assert.match(failed.error, /not connected/);
+    fs.writeFileSync(file, JSON.stringify({ at: new Date(Date.now() - 40 * 3600e3).toISOString(), ok: true, error: '' }));
+    assert.equal((await stats()).backup.state, 'stale');
+    assert.equal(typeof (await stats()).disk.freeGb, 'number');
+  } finally { delete process.env.BACKUP_STATUS_FILE; fs.rmSync(file, { force: true }); }
+});
+
+test('no reply from the host: the guard lets the visitor in after the host said yes on the phone, and it is recorded', async () => {
+  const r = await checkIn('Phoney', hostIds.asha, '9700000392');
+  assert.equal(r.status, 201);
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/approve-by-phone`, { note: '' }, guard)).status, 400, 'must say who said yes');
+  const ok = await call('POST', `/api/visits/${r.body.id}/approve-by-phone`, { note: 'Asha Verma, on her mobile' }, guard);
+  assert.equal(ok.status, 200);
+  assert.ok(ok.body.dailyNumber > 0, 'a pass number is issued');
+  const { Visit, Audit } = require('../src/models');
+  const v = await Visit.findById(r.body.id).lean();
+  assert.equal(v.status, 'approved');
+  assert.equal(v.phoneApproval.note, 'Asha Verma, on her mobile');
+  assert.ok(await Audit.exists({ action: 'visit.approved_by_phone', entityId: v._id }));
+  assert.equal((await call('POST', `/api/visits/${r.body.id}/approve-by-phone`, { note: 'again' }, guard)).status, 409, 'once only');
 });
