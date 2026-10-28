@@ -251,7 +251,8 @@ const materialSchema = new Schema({
   movements: { type: [movementSchema], default: undefined },
   photos: { type: [String], default: undefined },     // the material
   docPhotos: { type: [String], default: undefined },  // invoice / challan as it arrived
-  exitPhotos: { type: [String], default: undefined }, // invoice as stamped by the hotel, at the vendor's checkout
+  exitPhotos: { type: [String], default: undefined }, // invoice as stamped by the hotel (older entries; now a signature)
+  signature: String,                                  // the receiving person's signature at the vendor's checkout (a JPEG file)
   receivedBy: { name: { type: String, default: '' }, department: { type: String, default: '' } },
   cardNo: { type: String },                           // the hotel's vendor lanyard card given at the gate, collected at checkout
   exitNote: String,

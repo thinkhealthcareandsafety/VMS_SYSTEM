@@ -14,6 +14,8 @@ export const REPORT_PARTS = [
   { key: 'parcelsOut', label: 'Parcels out' },
 ];
 
+const signature = (p) => (p.signature ? `<img class="sig" src="${location.origin}${p.signature}" alt="">` : '');
+
 function materialTable(rows) {
   const body = rows.map((m, i) => {
     const goods = m.items.map((it) => {
@@ -27,13 +29,12 @@ function materialTable(rows) {
     const out = m.out?.at || m.checkedOutAt;
     return `<tr><td class="n">${i + 1}</td><td class="no">${esc(m.number)}</td><td>${at(m.in?.at || m.createdAt)}${sub(m.in?.gate)}</td>
 <td><strong>${esc(party)}</strong>${sub(contact)}${m.vehicle?.number ? sub(`Vehicle ${m.vehicle.number}`) : ''}</td><td>${goods}</td><td>${docs}</td>
-<td>${esc(recv)}</td><td>${out ? at(out) : '<i>Inside</i>'}</td><td>${esc(m.in?.by || m.createdBy)}${m.out?.by && m.out.by !== (m.in?.by || m.createdBy) ? sub(`out: ${m.out.by}`) : ''}</td><td>${esc(m.statusLabel)}${m.note || m.exitNote ? sub([m.note, m.exitNote].filter(Boolean).join(' · ')) : ''}</td></tr>`;
+<td>${esc(recv)}</td><td class="sigc">${signature(m)}</td><td>${out ? at(out) : '<i>Inside</i>'}</td><td>${esc(m.in?.by || m.createdBy)}${m.out?.by && m.out.by !== (m.in?.by || m.createdBy) ? sub(`out: ${m.out.by}`) : ''}</td><td>${esc(m.statusLabel)}${m.note || m.exitNote ? sub([m.note, m.exitNote].filter(Boolean).join(' · ')) : ''}</td></tr>`;
   }).join('');
-  return `<table><thead><tr><th class="n">#</th><th>Entry</th><th>In</th><th>Supplier</th><th>Goods and quantity</th><th>Invoice / challan</th><th>For / received by</th><th>Out</th><th>Guard</th><th>Status</th></tr></thead><tbody>${body}</tbody></table>`;
+  return `<table><thead><tr><th class="n">#</th><th>Entry</th><th>In</th><th>Supplier</th><th>Goods and quantity</th><th>Invoice / challan</th><th>For / received by</th><th>Signature</th><th>Out</th><th>Guard</th><th>Status</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
 const recipient = (p) => (p.recipient?.kind === 'host' ? [p.recipient.name, p.recipient.unit] : [p.recipient?.name, p.recipient?.room]);
-const signature = (p) => (p.signature ? `<img class="sig" src="${location.origin}${p.signature}" alt="">` : '');
 
 function parcelsInTable(rows) {
   const body = rows.map((p, i) => {

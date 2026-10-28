@@ -5,12 +5,13 @@ import {
 import { DailyReportDialog } from './DailyReport.jsx';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
+import SignaturePad from './Signature.jsx';
 import { readInvoice, warmUpInvoiceReader } from '../lib/invoiceRead.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
 // The material inward register. A vendor arrives: the guard photographs the invoice or challan (its details are read
 // on the device and checked by the guard), or types the supplier in when there is none. When the vendor leaves, the
-// guard photographs the invoice as the hotel stamped it and records what was accepted; the rest went back with them.
+// guard records what was accepted and who received it, and that person signs on the tablet; the rest went back with them.
 // Outward gate passes are not handled here: the hotel's own gate pass system does that.
 const UNITS = ['nos', 'pcs', 'box', 'carton', 'set', 'pair', 'kg', 'g', 'litre', 'ml', 'metre', 'roll', 'bag', 'drum', 'bundle', 'packet'];
 const VIEWS = [['atgate', 'Vendor inside'], ['today', 'Today'], ['short', 'Part taken back'], ['nodocs', 'No invoice or challan'], ['inward', 'All entries']];
@@ -257,7 +258,7 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
         {!m ? <div className="skeleton" style={{ height: 200, borderRadius: 12 }} /> : (
           <>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><StatusBadge m={m} /></div>
-            {m.status === 'received' && !leaving && <div className="alert"><LogOut /><span className="grow">When the vendor leaves, press <strong>Check out vendor</strong>: photograph the invoice as the hotel stamped it and enter what was accepted.</span></div>}
+            {m.status === 'received' && !leaving && <div className="alert"><LogOut /><span className="grow">When the vendor leaves, press <strong>Check out vendor</strong>: enter what was accepted and who received it, and ask them to sign on the tablet.</span></div>}
 
             <table className="table items-table">
               <thead><tr><th>Item no.</th><th>Goods</th><th className="r">Came in</th>{done && <th className="r">Accepted</th>}{done && <th className="r">Taken back</th>}</tr></thead>
@@ -291,6 +292,7 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
             </dl>
 
             {m.docPhotos.length > 0 && <div><h3 className="section-title"><FileText size={15} /> Invoice / challan as it came</h3><PhotoRow srcs={m.docPhotos} title={m.number} label="Invoice" /></div>}
+            {m.signature && <div><h3 className="section-title">Signature of {m.receivedBy?.name || 'the receiver'}</h3><img className="sign-saved" src={m.signature} alt={`Signature of ${m.receivedBy?.name || 'the receiver'}`} /></div>}
             {m.exitPhotos.length > 0 && <div><h3 className="section-title"><FileText size={15} /> Invoice as stamped by the hotel</h3><PhotoRow srcs={m.exitPhotos} title={m.number} label="Stamped invoice" /></div>}
             {m.photos.length > 0 && <div><h3 className="section-title"><Package size={15} /> Goods</h3><PhotoRow srcs={m.photos} title={m.number} label="Goods" /></div>}
             {m.movements.length > 0 && (
@@ -320,30 +322,26 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
   );
 }
 
-// The vendor leaves: what the hotel accepted (the rest goes back), who received it, and the stamped invoice.
+// The vendor leaves: what the hotel accepted (the rest goes back), who received it, and their signature on the tablet.
 function CheckoutForm({ m, onCancel, onDone }) {
   const [kept, setKept] = useState(() => Object.fromEntries(m.items.map((i) => [i.id, String(i.qty)])));
   const [by, setBy] = useState({ department: m.department || '', name: '' });
-  const [photos, setPhotos] = useState([]);
+  const [signature, setSignature] = useState(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const bad = m.items.some((i) => kept[i.id] === '' || Number(kept[i.id]) < 0 || Number(kept[i.id]) > i.qty);
-  const ready = !bad && (by.department.trim() || by.name.trim());
+  const ready = !bad && (by.department.trim() || by.name.trim()) && signature;
   const save = async () => {
     setBusy(true); setErr('');
     try {
-      onDone(await api(`/api/material/${m.id}/checkout`, { method: 'POST', body: { receivedBy: by, items: m.items.map((i) => ({ item: i.id, accepted: Number(kept[i.id]) })), photos, note } }));
+      onDone(await api(`/api/material/${m.id}/checkout`, { method: 'POST', body: { receivedBy: by, items: m.items.map((i) => ({ item: i.id, accepted: Number(kept[i.id]) })), signature, note } }));
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   return (
     <div className="return-form">
       <h3 className="section-title">Check out vendor</h3>
       {m.cardNo && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Collect vendor card <strong>{m.cardNo}</strong> before they leave.</span></div>}
-      <div className="field">
-        <span>Invoice as stamped by the hotel <span className="faint">· optional</span></span>
-        <PhotoPicker photos={photos} onChange={setPhotos} max={4} addLabel="Photo of stamped invoice" onError={setErr} />
-      </div>
       <div className="field">
         <span>Accepted by the hotel <span className="faint">· the rest goes back with the vendor</span></span>
         {m.items.map((i) => {
@@ -360,9 +358,13 @@ function CheckoutForm({ m, onCancel, onDone }) {
         <label className="field"><span>Received by (department)</span><input className="input" value={by.department} onChange={(e) => setBy({ ...by, department: e.target.value })} maxLength={60} /></label>
         <label className="field"><span>Received by (name)</span><input className="input" value={by.name} onChange={(e) => setBy({ ...by, name: e.target.value })} maxLength={80} /></label>
       </div>
+      <div className="field">
+        <span>Signature of the person receiving the goods</span>
+        <SignaturePad value={signature} onChange={setSignature} label="Hand the tablet over: sign here with a finger" />
+      </div>
       <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Remarks, e.g. 50 kg tomatoes rejected: not fresh" maxLength={300} />
       {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
-      {!ready && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>{bad ? 'An accepted quantity is more than came in.' : 'Enter who received it.'}</p>}
+      {!ready && !err && <p className="faint" style={{ fontSize: 13, margin: 0 }}>{bad ? 'An accepted quantity is more than came in.' : !(by.department.trim() || by.name.trim()) ? 'Enter who received it.' : 'Ask them to sign on the tablet.'}</p>}
       <div className="row-end">
         <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
         <button className="btn btn-primary" disabled={busy || !ready} onClick={save}>{busy ? <Spinner /> : <CheckCircle2 />}Check out vendor</button>

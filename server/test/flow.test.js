@@ -1339,17 +1339,19 @@ test('material: gate passes approved by the head (older API); the inward registe
   assert.equal((await fetch(`${base}${dl.body.docPhotos[1]}`, { headers: { Cookie: guard } })).status, 200);
   assert.ok((await call('GET', '/api/material?view=atgate', null, guard)).body.rows.some((r) => r.id === dl.body.id), 'vendor inside until checked out');
 
-  // The vendor leaves: the stamped invoice photographed, who received it, and what the hotel kept; the rest went back.
+  // The vendor leaves: who received it signs on the tablet, and what the hotel kept; the rest went back.
   const [veg] = dl.body.items;
-  const checkout = (body) => call('POST', `/api/material/${dl.body.id}/checkout`, { receivedBy: { department: 'Kitchen', name: 'Chef Arjun' }, items: [{ item: veg.id, accepted: 50 }], photos: [jpeg()], note: 'Half the vegetables not fresh', ...body }, guard);
+  const checkout = (body) => call('POST', `/api/material/${dl.body.id}/checkout`, { receivedBy: { department: 'Kitchen', name: 'Chef Arjun' }, items: [{ item: veg.id, accepted: 50 }], signature: jpeg(), note: 'Half the vegetables not fresh', ...body }, guard);
   assert.match((await checkout({ receivedBy: {} })).body.error, /Who received/);
   assert.match((await checkout({ items: [{ item: veg.id, accepted: 101 }] })).body.error, /only 100 kg came in/);
+  assert.match((await checkout({ signature: undefined })).body.error, /sign on the tablet/);
   const left = await checkout({});
   assert.equal(left.status, 200, JSON.stringify(left.body));
   assert.equal(left.body.status, 'checked_out');
   assert.equal(left.body.takenBack, true);
   assert.deepEqual(left.body.items.map((i) => i.acceptedQty), [50, 30], 'an item not listed was kept in full');
-  assert.equal(left.body.exitPhotos.length, 1);
+  assert.match(left.body.signature, /\/signature\/0$/);
+  assert.equal((await fetch(base + left.body.signature, { headers: { Cookie: guard } })).status, 200, 'the signature can be seen');
   assert.equal(left.body.receivedBy.name, 'Chef Arjun');
   assert.equal(left.body.out.by, 'Gate Guard');
   assert.equal((await checkout({})).status, 409, 'only once');

@@ -20,7 +20,7 @@ const router = express.Router();
 const isId = (v) => mongoose.isValidObjectId(v);
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_PHOTO = 2 * 1024 * 1024;
-const PHOTO_SETS = { photo: 'photos', doc: 'docPhotos', exit: 'exitPhotos' };
+const PHOTO_SETS = { photo: 'photos', doc: 'docPhotos', exit: 'exitPhotos', signature: 'signature' };
 
 // Data URLs -> saved JPEG files, or { error } naming what to retake.
 async function savePhotos(list, max) {
@@ -55,6 +55,7 @@ function row(m, admin) {
     photos: (m.photos || []).map((_, i) => `/api/material/${m._id}/photo/${i}`),
     docPhotos: (m.docPhotos || []).map((_, i) => `/api/material/${m._id}/doc/${i}`),
     exitPhotos: (m.exitPhotos || []).map((_, i) => `/api/material/${m._id}/exit/${i}`),
+    signature: m.signature ? `/api/material/${m._id}/signature/0` : null,
     receivedBy: m.receivedBy?.name || m.receivedBy?.department ? m.receivedBy : null, exitNote: m.exitNote || '',
     checkedOutAt: m.checkedOutAt || null, takenBack: Boolean(m.takenBack), cardNo: m.cardNo || null,
     createdAt: m.createdAt, createdBy: m.createdByName || '',
@@ -155,11 +156,11 @@ router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
   if (m) res.json(row(m.toObject(), isAdmin(req.user)));
 });
 
-router.get('/:id/:set(photo|doc|exit)/:n', requireRole('guard', 'admin'), async (req, res) => {
+router.get('/:id/:set(photo|doc|exit|signature)/:n', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).end();
   const field = PHOTO_SETS[req.params.set];
   const m = await Material.findById(req.params.id, field).lean();
-  const file = m?.[field]?.[Number(req.params.n)];
+  const file = field === 'signature' ? m?.signature : m?.[field]?.[Number(req.params.n)];
   if (!file) return res.status(404).end();
   res.type('jpeg').sendFile(path.resolve(file));
 });
@@ -264,15 +265,16 @@ router.post('/:id/checkout', requireRole('guard', 'admin'), async (req, res) => 
   if (!m) return;
   const c = material.readCheckout(m.toObject(), req.body);
   if (c.error) return res.status(m.status === 'received' ? 400 : 409).json({ error: c.error });
-  const shots = await savePhotos(req.body.photos, 4);
-  if (shots.error) return res.status(400).json({ error: shots.error });
+  if (!req.body.signature) return res.status(400).json({ error: 'Ask the person receiving the goods to sign on the tablet' });
+  const sign = await savePhotos([req.body.signature], 1);
+  if (sign.error) return res.status(400).json({ error: 'The signature could not be read. Ask them to sign again.' });
   const now = new Date();
   const gate = await passes.gateOf(req.user.id);
   const doc = await Material.findOneAndUpdate(
     { _id: m._id, status: 'received' },
     {
       status: 'checked_out', items: c.items, receivedBy: c.receivedBy, exitNote: c.note, takenBack: c.takenBack, checkedOutAt: now,
-      ...(shots.files.length ? { exitPhotos: shots.files } : {}), $push: { movements: passes.movement('out', gate, req.user, now) },
+      signature: sign.files[0], $push: { movements: passes.movement('out', gate, req.user, now) },
     },
     { new: true },
   ).populate('approver').lean();
