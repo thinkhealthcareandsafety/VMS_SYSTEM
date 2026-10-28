@@ -37,14 +37,15 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       LAN_HOST: ${LAN_HOST}
-      CF_API_TOKEN: ${CF_API_TOKEN}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
       - ${DATA_DIR:-/srv/vms/data}/caddy:/data
     depends_on: [app]
 
   cloudflared:
     image: cloudflare/cloudflared:2024.12.2
+    profiles: [tunnel]   # only when TUNNEL_TOKEN is set (install.sh)
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
     depends_on: [app]

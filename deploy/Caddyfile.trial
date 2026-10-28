@@ -1,0 +1,7 @@
+# Trial without Cloudflare: the address is this PC's IP (LAN_HOST=192.168.x.x) and Caddy makes its own certificate.
+# Tablets show a warning once (Advanced -> Proceed). For a clean padlock, install /srv/vms/data/caddy/caddy/pki/authorities/local/root.crt on each tablet.
+{$LAN_HOST} {
+	tls internal
+	encode gzip
+	reverse_proxy app:4000
+}

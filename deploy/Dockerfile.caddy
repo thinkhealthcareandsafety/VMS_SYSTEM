@@ -1,7 +1,8 @@
 # Caddy with the Cloudflare DNS plugin: it proves the domain through Cloudflare's API, so the mini PC gets a real
 # certificate without being reachable from the internet.
-FROM caddy:2.8.4-builder AS builder
-RUN xcaddy build --with github.com/caddy-dns/cloudflare
+# Versions pinned: an unpinned plugin follows the newest Caddy and stops building against an older one.
+FROM caddy:2.10.0-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/cloudflare@v0.2.1
 
-FROM caddy:2.8.4
+FROM caddy:2.10.0
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

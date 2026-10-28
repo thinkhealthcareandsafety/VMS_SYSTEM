@@ -38,14 +38,19 @@ if [ ! -f .env ]; then
   sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
   sed -i "s|^ID_ENCRYPTION_KEY=.*|ID_ENCRYPTION_KEY=$(openssl rand -hex 32)|" .env
   chmod 600 .env
-  echo "Created deploy/.env with fresh secrets. Fill CF_API_TOKEN, TUNNEL_TOKEN and LAN_HOST, then run this again:"
+  echo "Created deploy/.env with fresh secrets. Fill LAN_HOST (and CF_API_TOKEN, TUNNEL_TOKEN for the hotel), then run this again:"
   echo "  nano deploy/.env"
   exit 0
 fi
 set -a; . ./.env; set +a
-for v in LAN_HOST CF_API_TOKEN TUNNEL_TOKEN JWT_SECRET ID_ENCRYPTION_KEY; do
+for v in LAN_HOST JWT_SECRET ID_ENCRYPTION_KEY; do
   [ -n "${!v:-}" ] || { echo "deploy/.env: $v is empty. Fill it in (nano deploy/.env) and run again."; exit 1; }
 done
+# Without a Cloudflare token: trial mode, own certificate on the PC's IP. Without a tunnel: nothing reaches it from outside.
+# Written into .env, so every later docker compose command (updates, restarts) keeps the same choice.
+keep() { grep -q "^$1=" .env && sed -i "s|^$1=.*|$1=$2|" .env || echo "$1=$2" >> .env; }
+if [ -n "${CF_API_TOKEN:-}" ]; then keep CADDYFILE Caddyfile; else keep CADDYFILE Caddyfile.trial; echo "Trial mode: no CF_API_TOKEN, this PC makes its own certificate for https://$LAN_HOST"; fi
+if [ -n "${TUNNEL_TOKEN:-}" ]; then keep COMPOSE_PROFILES tunnel; else keep COMPOSE_PROFILES ""; echo "No TUNNEL_TOKEN: hosts' links open only on this network"; fi
 
 say "5/6 Data and backup folders"
 mkdir -p "$DATA_DIR"/{mongo,uploads,caddy} "$BACKUP_DIR"
