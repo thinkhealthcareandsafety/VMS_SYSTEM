@@ -312,8 +312,7 @@ function Attention({ stats, go }) {
   }
   if (stats.disk?.low) items.push({ tone: 'bad', icon: AlertTriangle, to: ['settings'], text: `The server PC has only ${stats.disk.freeGb} GB of space left`, hint: 'Call GateSmartX before it fills up: new photos cannot be saved on a full disk' });
   if (stats.idMismatchToday) items.push({ tone: 'bad', icon: ShieldCheck, to: ['history', { idCheck: 'mismatch' }], text: `${plural(stats.idMismatchToday, 'visitor', 'visitors')} today with an ID that does not match the name or gender typed`, hint: 'Look at the card and the photo' });
-  if (stats.overstayEscalated) items.push({ tone: 'bad', icon: Siren, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.overstayEscalated, 'visitor is', 'visitors are')} still inside more than an hour after the pass ended`, hint: 'Escalated: the host and your escalation contacts were told. Check them out or extend the pass.' });
-  if (stats.staleInside > stats.overstayEscalated) items.push({ tone: 'warn', icon: Clock, to: ['inside', {}, { action: 'overstay' }], text: `${plural(stats.staleInside - stats.overstayEscalated, 'visitor is', 'visitors are')} still inside after the pass ended`, hint: 'The guard may have missed the exit. Select them and check them out together, or extend the pass.' });
+  // People past their pass are not repeated here: the red bar at the top of every page lists them, with the actions.
   if (stats.parcelsDeclined) items.push({ tone: 'warn', icon: Mail, to: ['couriers'], text: `${plural(stats.parcelsDeclined, 'parcel was', 'parcels were')} declined by the recipient`, hint: 'Return it to the courier' });
   if (stats.parcelsOld) items.push({ tone: 'warn', icon: Mail, to: ['couriers'], text: `${plural(stats.parcelsOld, 'parcel has', 'parcels have')} waited more than 3 days`, hint: 'Call the recipient or return it' });
   if (!items.length) return null;
@@ -531,7 +530,7 @@ function useWidth() {
 // Past the pass, or (passes from before validity existed) inside longer than the site allows.
 const overstaying = (v, staleAfter) => v.passExpired || (!v.validUntil && minutesSince(v.lastIn?.at || v.decidedAt) >= staleAfter * 60);
 
-function InsidePage({ tick, openVisit, refresh, toast, intent }) {
+function InsidePage({ tick, openVisit, refresh, toast, intent, stats }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [force, setForce] = useState(null);
@@ -588,7 +587,7 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
           {data.count ? 'Try a pass number or flat.' : 'Approved visitors appear here until they check out.'}
         </Empty>
       ) : (
-        <InsideTable rows={rows} staleAfter={data.staleAfterHours} openVisit={openVisit} onForce={setForce} onExtend={setExtending} picked={picked} onToggle={toggle} allPicked={allShown} onToggleAll={toggleAll} />
+        <InsideTable rows={rows} staleAfter={data.staleAfterHours} openVisit={openVisit} printerOn={Boolean(stats?.printerOn)} onForce={setForce} onExtend={setExtending} picked={picked} onToggle={toggle} allPicked={allShown} onToggleAll={toggleAll} />
       )}
       {picked.size > 0 && (
         <div className="pick-bar" role="region" aria-label="Selected visitors">
@@ -604,7 +603,8 @@ function InsidePage({ tick, openVisit, refresh, toast, intent }) {
   );
 }
 
-function InsideTable({ rows, staleAfter, openVisit, onForce, onExtend, compact, picked, onToggle, allPicked, onToggleAll }) {
+// The sticker button shows only with a network sticker printer: passes are otherwise printed at the gate.
+function InsideTable({ rows, staleAfter, openVisit, printerOn = false, onForce, onExtend, compact, picked, onToggle, allPicked, onToggleAll }) {
   const selectable = Boolean(onToggle) && !compact;
   const toast = useToast();
   const reprint = async (e, v) => {
@@ -617,7 +617,7 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, onExtend, compact, 
         <thead>
           <tr>
             {selectable && <th className="pick-col"><input type="checkbox" checked={allPicked} onChange={onToggleAll} aria-label="Select everyone shown" /></th>}
-            <th>Pass</th><th>Visitor</th><th>Meeting</th><th>Let in</th><th>Inside for</th><th>Pass valid till</th>
+            <th>Pass</th><th>Visitor</th><th>Meeting</th><th>In since</th><th>Pass valid till</th>
             {!compact && <th className="r"><span className="sr-only">Actions</span></th>}
           </tr>
         </thead>
@@ -641,10 +641,10 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, onExtend, compact, 
                     <div><div className="name">{v.firstName} {v.lastName}</div><div className="meta">{v.company} · <span className="mono">{v.ref}</span></div></div>
                   </div>
                 </td>
-                <td>{v.host?.name}<div className="meta-line">{v.host?.unit}</div></td>
-                <td className="num">{fmtTime(since)}{v.lastIn?.gate && <div className="meta-line">{v.lastIn.gate}{v.lastIn.by ? ` · ${v.lastIn.by}` : ''}</div>}</td>
+                <td className="nowrap">{v.host?.name}<div className="meta-line">{v.host?.unit}</div></td>
                 <td className="num">
-                  <span className={isLong ? 'row-flag' : ''}>{fmtDuration(mins)}</span>
+                  {fmtTime(since)} · <span className={isLong ? 'row-flag' : ''}>{fmtDuration(mins)}</span>
+                  {v.lastIn?.gate && <div className="meta-line" title={v.lastIn.by ? `Let in by ${v.lastIn.by}` : undefined}>{v.lastIn.gate}</div>}
                   {isLong && <div><span className="badge badge-warn">Long stay</span></div>}
                 </td>
                 <td className="num">
@@ -654,9 +654,9 @@ function InsideTable({ rows, staleAfter, openVisit, onForce, onExtend, compact, 
                   {v.passExpired && v.overstay?.ackAt && <div className="meta-line">Seen by {v.overstay.ackBy}{v.overstay.ackNote ? `: ${v.overstay.ackNote}` : ''}</div>}
                 </td>
                 {!compact && (
-                  <td>
+                  <td className="nowrap">
                     <div className="actions">
-                      <button className="btn btn-sm btn-icon" onClick={(e) => reprint(e, v)} aria-label={`Reprint sticker ${v.dailyNumber}`} title="Reprint sticker"><Printer /></button>
+                      {printerOn && <button className="btn btn-sm btn-icon" onClick={(e) => reprint(e, v)} aria-label={`Reprint sticker ${v.dailyNumber}`} title="Reprint sticker"><Printer /></button>}
                       {onExtend && v.validUntil && !v.groupId && <button className="btn btn-sm btn-icon" onClick={(e) => { e.stopPropagation(); onExtend(v); }} aria-label={`Extend ${v.firstName}’s pass`} title="Extend the pass"><TimerReset /></button>}
                       <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onForce(v); }}><LogOut />Check out</button>
                     </div>
@@ -766,7 +766,7 @@ function HistoryPage({ tick, openVisit, openExport, params }) {
 
   return (
     <section className="panel">
-      <div className="toolbar">
+      <div className="toolbar filter-grid" style={{ '--cols': gates.length > 1 ? 5 : 4 }}>
         <div className="field wide">
           <span className="label">Visitor</span>
           <div className="input-group"><Search /><input className="input" type="search" value={f.name} onChange={set('name')} placeholder="Name, visitor ID or mobile" /></div>
@@ -942,6 +942,22 @@ const ACTIONS = {
   'user.updated': ['Staff account changed', ''],
   'user.password_reset': ['Staff password reset', 'warn'],
   'auth.login_failed': ['Failed sign-in attempt', 'bad'],
+  'visit.approved_by_phone': ['Let in by the guard: host said yes on the phone', 'ok'],
+  'visit.scan_undone': ['Scan taken back (by mistake)', ''],
+  'host.deleted': ['Host deleted', 'warn'],
+  'report.daily': ['Printed the daily report', ''],
+  'material.requested': ['Gate pass requested', ''],
+  'material.approved': ['Gate pass approved', 'ok'],
+  'material.rejected': ['Gate pass declined', 'bad'],
+  'material.cancelled': ['Material entry cancelled', 'warn'],
+  'material.handed_over': ['Goods handed to the department', ''],
+  'material.let_out': ['Tools taken back out', ''],
+  'material.returned': ['Goods came back', ''],
+  'material.resent': ['Approval request sent again', ''],
+  'group.guest_updated': ['Guest details changed', ''],
+  'group.self_registered': ['Guest added themselves by the event link', ''],
+  'group.join_refused': ['Event link refused a guest', 'warn'],
+  'group.list_downloaded': ['Downloaded an event guest list', ''],
 };
 const VERIFIED_LABEL = { otp: 'Verified by OTP', expected: 'Expected visitor, number from the host', returning: 'Verified earlier (within 90 days)', skipped: 'Not verified (skipped by the guard)' };
 const GENDER_LABEL = { male: 'Male', female: 'Female', other: 'Other' };
@@ -1050,7 +1066,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
               {v.extensions?.length > 0 && <><dt>Extended</dt><dd>{v.extensions.map((x, i) => <div key={i}>{fmtDateTime(x.at)} by {x.by}: to {fmtDateTime(x.to)}{x.note ? ` · ${x.note}` : ''}</div>)}</dd></>}
               {v.overstay && <><dt>Overstay</dt><dd>{v.overstay.ackAt ? `Seen by ${v.overstay.ackBy} at ${fmtDateTime(v.overstay.ackAt)}${v.overstay.ackNote ? `: ${v.overstay.ackNote}` : ''}` : 'Not acknowledged'}{v.overstay.escalatedAt && <div className="tone-bad">Escalated {fmtDateTime(v.overstay.escalatedAt)}</div>}</dd></>}
               {v.forceReason && <><dt>Checkout reason</dt><dd>{v.forceReason}</dd></>}
-              {v.printStatus && <><dt>Sticker</dt><dd>{v.printStatus === 'off' ? 'No printer connected' : v.printStatus === 'sent' ? 'Printed' : v.printStatus === 'failed' ? `Failed${v.printError ? `: ${v.printError}` : ''}` : 'In the print queue'}</dd></>}
+              {v.printStatus && v.printStatus !== 'off' && <><dt>Sticker</dt><dd>{v.printStatus === 'off' ? 'No printer connected' : v.printStatus === 'sent' ? 'Printed' : v.printStatus === 'failed' ? `Failed${v.printError ? `: ${v.printError}` : ''}` : 'In the print queue'}</dd></>}
             </dl>
 
             {v.movements?.length > 0 && (
@@ -1146,7 +1162,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
         <div className="drawer-foot">
           {['pending', 'expired'].includes(v.status) && <button className="btn btn-ghost" onClick={() => act('cancel', 'Visit cancelled. The host’s link no longer works.')}><X />Cancel visit</button>}
           {['pending', 'expired'].includes(v.status) && <button className="btn" onClick={() => act('resend', 'New request sent to the host.')}><RotateCcw />Resend request</button>}
-          {admitted && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
+          {admitted && v.printStatus && v.printStatus !== 'off' && <button className="btn" onClick={() => act('reprint', 'Sticker sent to the printer.')}><Printer />Reprint sticker</button>}
           <button className="btn btn-ghost" onClick={() => setBlocking({ mobile: v.mobile, name: `${v.firstName} ${v.lastName}` })}><Ban />Block</button>
           {['approved', 'away'].includes(v.status) && v.validUntil && !v.groupId && <button className="btn" onClick={() => setExtending(v)}><TimerReset />Extend pass</button>}
           {['approved', 'away'].includes(v.status) && <button className="btn" onClick={() => setForce(v)}><LogOut />{v.status === 'away' ? 'End pass' : 'Check out'}</button>}
@@ -1246,11 +1262,15 @@ function MessagesPage({ tick, stats }) {
 
 // ================================================================= Audit log
 const AUDIT_FILTERS = [
-  { id: '', label: 'All' }, { id: 'visit.', label: 'Visits' }, { id: 'force', label: 'Force checkouts' },
-  { id: 'id_image', label: 'Aadhaar views' }, { id: 'export', label: 'Downloads' }, { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' }, { id: 'block', label: 'Blocked' }, { id: 'invite.', label: 'Expected' }, { id: 'settings', label: 'Settings' },
+  { id: '', label: 'All' }, { id: 'visit.', label: 'Visits' }, { id: 'material.', label: 'Material' }, { id: 'parcel.', label: 'Couriers' }, { id: 'group.', label: 'Events' },
+  { id: 'emergency.', label: 'Emergency' }, { id: 'force', label: 'Force checkouts' }, { id: 'id_image', label: 'Aadhaar views' }, { id: 'export|exported|report.', label: 'Downloads and reports' },
+  { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' }, { id: 'block', label: 'Blocked' }, { id: 'invite.', label: 'Expected' }, { id: 'settings|license|gate.', label: 'Settings' },
 ];
-const ROLE_LABEL = { admin: 'Administrator', guard: 'Guard' };
-const DETAIL_KEYS = { dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', updated: 'updated', errors: 'not added', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors', count: 'how many' };
+const ROLE_LABEL = { superadmin: 'Super Admin', admin: 'Administrator', guard: 'Guard' };
+const DETAIL_KEYS = { parcelsIn: 'parcels in', parcelsOut: 'parcels out', expectedCancelled: 'expected visitors cancelled', takenBack: 'part taken back', receivedBy: 'received by', aadhaarImages: 'Aadhaar images', dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', updated: 'updated', errors: 'not added', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors', count: 'how many' };
+// Details in plain words: yes / no, and lists or objects as "a, b" rather than code.
+const plainValue = (v) => (v === true ? 'yes' : v === false ? 'no' : Array.isArray(v) ? v.join(', ')
+  : typeof v === 'object' ? Object.entries(v).map(([k, x]) => `${k} ${plainValue(x)}`).join(', ') : String(v));
 function AuditPage({ tick, openVisit }) {
   const [filter, setFilter] = useState('');
   const [q, setQ] = useState('');
@@ -1280,7 +1300,7 @@ function AuditPage({ tick, openVisit }) {
     const d = { ...(r.details || {}) };
     delete d.ref;
     return Object.entries(d).filter(([, v]) => v !== undefined && v !== '' && v !== null)
-      .map(([k, v]) => `${DETAIL_KEYS[k] || k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+      .map(([k, v]) => `${DETAIL_KEYS[k] || k.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${plainValue(v)}`).join(' · ');
   };
 
   return (
@@ -1291,7 +1311,7 @@ function AuditPage({ tick, openVisit }) {
         </div>
         <div className="input-group field wide">
           <Search />
-          <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Person, visitor ID, mobile or reason" aria-label="Search the audit log" />
+          <input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Person, visitor ID, mobile, entry or parcel no., reason" aria-label="Search the audit log" />
         </div>
       </div>
       {!rows ? <ListSkeleton /> : rows.length === 0 ? <Empty icon={ScrollText} title="No entries">{term ? 'Nothing matches that search.' : 'Nothing recorded for this filter yet.'}</Empty> : (

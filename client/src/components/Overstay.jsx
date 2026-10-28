@@ -83,6 +83,10 @@ const SNOOZE_MS = 2 * 60e3;
 const ACK_NOTES = ['Calling the host', 'Going to check', 'Host says they are still in the meeting'];
 const seenKey = (r) => `${r.id}:${r.escalatedAt ? 'e' : 'o'}`;
 
+// Kept for the whole browser tab, not per page: moving between console pages must not open the pop-up again for
+// people already shown. A new overstay or an escalation still opens it, with the sound.
+const SEEN = new Set();
+
 export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
   const toast = useToast();
   useTick(30000);
@@ -93,7 +97,7 @@ export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
   const [confirmOut, setConfirmOut] = useState(null);
   const [busy, setBusy] = useState(null);
   const snoozed = useRef(0);
-  const seen = useRef(new Set());   // what has already opened the pop-up (and played the sound) on this screen
+  const seen = useRef(SEEN);        // what has already opened the pop-up (and played the sound) on this screen
 
   const load = useCallback(() => api('/api/visits/overstays').then(setData).catch(() => {}), []);
   useEffect(() => { load(); }, [load, liveTick]);

@@ -1149,33 +1149,35 @@ const PASS_CSS = `
 html, body { margin: 0; background: #fff; }
 body { width: 38.1mm; height: 63.5mm; overflow: hidden; padding: 1.8mm 2mm 1.6mm; color: #000; font: 6pt/1.2 -apple-system, "Segoe UI", Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; display: flex; flex-direction: column; }
 .logos { display: flex; align-items: center; justify-content: center; gap: 1.6mm; }
-.logos img { display: block; height: 3.6mm; width: auto; }
-.logos img:first-child { height: 4.6mm; }
-.logos span { width: .2mm; height: 3.6mm; background: #000; }
-.band { display: flex; justify-content: space-between; align-items: center; margin-top: 1.2mm; padding: .5mm 1.2mm; background: #9c1c2e; color: #fff; }
+.logos img { display: block; height: 3.2mm; width: auto; }
+.logos img:first-child { height: 4.1mm; }
+.logos span { width: .2mm; height: 3.2mm; background: #000; }
+body > * { flex: none; }
+.band { display: flex; justify-content: space-between; align-items: center; margin-top: .9mm; padding: .5mm 1.2mm; background: #9c1c2e; color: #fff; }
 .band b { font-size: 6pt; letter-spacing: .14em; }
 .band span { font-size: 5.5pt; }
-.id { display: grid; grid-template-columns: 12.5mm 1fr; gap: 1.6mm; margin-top: 1.3mm; align-items: start; }
-.photo { display: block; width: 12.5mm; height: 15mm; object-fit: cover; border: .3mm solid #000; }
-.nophoto { width: 12.5mm; height: 15mm; border: .3mm dashed #000; }
+.id { display: grid; grid-template-columns: 11.5mm 1fr; gap: 1.6mm; margin-top: 1.1mm; align-items: start; }
+.photo { display: block; width: 11.5mm; height: 13.8mm; object-fit: cover; border: .3mm solid #000; }
+.nophoto { width: 11.5mm; height: 13.8mm; border: .3mm dashed #000; }
 .nums { display: flex; flex-direction: column; gap: .8mm; }
 .nums div { border: .3mm solid #000; padding: .2mm 1mm .4mm; }
 .nums div:first-child { border-color: #9c1c2e; }
 .nums div:first-child strong { color: #9c1c2e; }
 .nums small { display: block; font-size: 4.5pt; letter-spacing: .14em; }
-.nums strong { display: block; font-size: 12pt; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
+.nums strong { display: block; font-size: 11pt; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
 .nums div + div strong { font-size: 8pt; }
-.name { font-size: 7.5pt; font-weight: 700; line-height: 1.12; margin-top: 1.1mm; max-height: 2.24em; overflow: hidden; word-break: break-word; }
+.name { font-size: 7.5pt; font-weight: 700; line-height: 1.12; margin-top: .8mm; max-height: 2.24em; overflow: hidden; word-break: break-word; }
 .company { font-size: 5.5pt; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rows { margin-top: .8mm; border-top: .2mm solid #000; }
 .row { display: flex; gap: 1mm; padding: .35mm 0; border-bottom: .15mm solid #999; font-size: 5.5pt; }
-.row span { color: #333; flex: none; width: 8.5mm; }
+.row span { color: #333; flex: none; width: 10.5mm; }
 .row strong { font-weight: 600; line-height: 1.3; max-height: 2.6em; overflow: hidden; word-break: break-word; }
 .scan { display: grid; grid-template-columns: 13mm 1fr; gap: 1.6mm; align-items: center; margin-top: auto; }
 .qr { display: block; width: 13mm; height: 13mm; image-rendering: pixelated; }
 .valid { border: .4mm solid #9c1c2e; padding: .4mm .9mm .5mm; }
 .valid small { display: block; font-size: 4.5pt; letter-spacing: .14em; }
-.valid strong { display: block; font-size: 6.5pt; line-height: 1.15; }
+.valid strong { display: block; font-size: 6pt; line-height: 1.15; white-space: nowrap; }
+.vid { font-family: ui-monospace, Consolas, monospace; letter-spacing: .03em; }
 .code { margin-top: .8mm; font: 700 6pt ui-monospace, Consolas, monospace; letter-spacing: .04em; }
 `;
 const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1225,6 +1227,7 @@ ${visit.company ? `<div class="company">${escHtml(visit.company)}</div>` : ''}
 <div class="rows">
   <div class="row"><span>Meeting</span><strong>${escHtml(visit.host?.name)}${visit.host?.unit ? ` · ${escHtml(visit.host.unit)}` : ''}</strong></div>
   <div class="row"><span>In</span><strong>${escHtml(fmtTime(at))}${visit.entry?.gate ? ` · ${escHtml(visit.entry.gate)}` : ''}</strong></div>
+  <div class="row"><span>Visitor ID</span><strong class="vid">${escHtml(visit.ref)}</strong></div>
 </div>
 <div class="scan">
   ${qr ? `<img class="qr" src="${qr}" alt="">` : '<span></span>'}

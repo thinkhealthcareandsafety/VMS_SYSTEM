@@ -285,11 +285,12 @@ router.get('/outbox', requireRole('admin'), async (req, res) => {
 // Newest first, 100 at a time (`before` = the last id shown). `q` finds a person, a visitor ID or a word in the details.
 router.get('/audit', requireRole('admin'), async (req, res) => {
   const filter = {};
-  if (req.query.action) filter.action = new RegExp(esc(cleanText(req.query.action, 60)));
+  // A filter is one or more parts of an action name, separated by |, e.g. "export|report." for every download and report.
+  if (req.query.action) filter.action = new RegExp(cleanText(req.query.action, 80).split('|').filter(Boolean).map(esc).join('|'));
   const q = cleanText(req.query.q, 60);
   if (q) {
     const re = new RegExp(esc(q), 'i');
-    filter.$or = [{ actor: re }, { 'details.ref': re }, { 'details.name': re }, { 'details.username': re }, { 'details.mobile': re }, { 'details.reason': re }, { 'details.guest': re }, { 'details.host': re }];
+    filter.$or = [{ actor: re }, { 'details.ref': re }, { 'details.name': re }, { 'details.username': re }, { 'details.mobile': re }, { 'details.reason': re }, { 'details.guest': re }, { 'details.host': re }, { 'details.number': re }, { 'details.awb': re }, { 'details.gate': re }];
   }
   if (mongoose.isValidObjectId(req.query.before)) filter._id = { $lt: new mongoose.Types.ObjectId(String(req.query.before)) };
   const rows = await Audit.find(filter).sort({ _id: -1 }).limit(101).lean();
