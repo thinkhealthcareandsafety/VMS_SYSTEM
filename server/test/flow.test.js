@@ -2216,3 +2216,28 @@ test('a counter behind the records (data moved or partly restored) catches up in
   const p = await call('POST', '/api/parcels', { direction: 'in', carrier: 'DTDC', awb: 'BEHIND1', pieces: 1, type: 'parcel', hostId: hostIds.asha, photos: [jpeg()] }, guard);
   assert.equal(p.status, 201, JSON.stringify(p.body));
 });
+
+test('on leaving: the host is emailed (also when security checks them out) and the visitor gets a thank-you email', async () => {
+  const config = require('../src/config');
+  const { Outbox, Host, Visit } = require('../src/models');
+  const saved = { ...config.email };
+  Object.assign(config.email, { driver: 'smtp', from: 'desk@example.com', smtp: { ...saved.smtp, host: '127.0.0.1', port: 9, user: 'u', pass: 'p' } });
+  try {
+    assert.ok(require('../src/services/email').enabled());
+    await Host.updateOne({ _id: hostIds.asha }, { email: 'asha@example.com' });
+    const r = await call('POST', '/api/visits', { firstName: 'Thanks', lastName: 'Visitor', gender: 'male', mobile: '9700000394', email: 'guest@example.com', company: 'Acme', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg() }, guard);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await call('POST', `/api/visits/${r.body.id}/approve-by-phone`, { note: 'Asha on the phone' }, guard);
+    assert.equal((await call('POST', `/api/visits/${r.body.id}/force-checkout`, { reason: 'Left without scanning' }, admin)).status, 200);
+    const mails = await Outbox.find({ visit: r.body.id, kind: 'email', 'vars.departure': true }).lean();
+    assert.ok(mails.some((m) => m.to === 'asha@example.com' && /has left/.test(m.vars.subject)), 'host told even when security checks them out');
+    assert.ok(mails.some((m) => m.to === 'guest@example.com' && /Thank you for visiting/.test(m.vars.subject)), 'visitor thanked');
+    await call('PATCH', '/api/admin/settings', { thankVisitor: false }, admin);
+    const r2 = await call('POST', '/api/visits', { firstName: 'Nothanks', lastName: 'Visitor', gender: 'male', mobile: '9700000395', email: 'guest2@example.com', company: 'Acme', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg() }, guard);
+    await call('POST', `/api/visits/${r2.body.id}/approve-by-phone`, { note: 'Asha on the phone' }, guard);
+    await call('POST', `/api/visits/${r2.body.id}/checkout`, { final: true }, guard);
+    assert.ok(!(await Outbox.exists({ visit: r2.body.id, to: 'guest2@example.com' })), 'switch off: no thank-you');
+    await call('PATCH', '/api/admin/settings', { thankVisitor: true }, admin);
+    await Visit.deleteMany({ mobile: { $in: ['+919700000394', '+919700000395'] } });
+  } finally { Object.assign(config.email, saved); }
+});

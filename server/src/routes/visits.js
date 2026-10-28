@@ -690,6 +690,7 @@ router.post('/:id/force-checkout', requireRole('admin'), async (req, res) => {
   );
   if (!v) return res.status(409).json({ error: 'Visitor is not currently inside or holding a pass' });
   audit(req.user, 'visit.force_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, reason }, ip: req.ip });
+  await departure.tellHost(v, { at: v.checkedOutAt, by: 'security' }).catch((e) => console.error('[checkout] host message:', e.message));
   res.json({ ok: true, status: v.status });
 });
 
@@ -703,12 +704,14 @@ router.post('/force-checkout', requireRole('admin'), async (req, res) => {
   const due = await Visit.find({ _id: { $in: ids }, status: { $in: ['approved', 'away'] } }, '_id ref').lean();
   let done = 0;
   for (const v of due) {
-    const r = await Visit.updateOne(
+    const out = await Visit.findOneAndUpdate(
       { _id: v._id, status: { $in: ['approved', 'away'] } },
       { status: 'force_checked_out', checkedOutAt: now, checkedOutBy: req.user.id, forceReason: reason },
+      { new: true },
     );
-    if (r.modifiedCount) {
+    if (out) {
       done += 1;
+      await departure.tellHost(out, { at: now, by: 'security' }).catch((e) => console.error('[checkout] host message:', e.message));
       audit(req.user, 'visit.force_checked_out', { entity: 'Visit', entityId: v._id, details: { ref: v.ref, reason, bulk: true }, ip: req.ip });
     }
   }

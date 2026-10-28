@@ -62,4 +62,19 @@ function approvalEmail({ headline, rows, link, button, valid, note = 'You will s
   return { html, text };
 }
 
-module.exports = { enabled, send, approvalEmail };
+// A notice with nothing to press: the host's "your visitor left", the visitor's thank-you.
+function noticeEmail({ headline, rows = [], note = '' }) {
+  const list = rows.filter(([, v]) => v).map(([k, v]) => `<tr><td style="padding:6px 16px 6px 0;color:#6b6b6b;font-size:14px;white-space:nowrap">${esc(k)}</td><td style="padding:6px 0;color:#151515;font-size:14px;font-weight:600">${esc(v)}</td></tr>`).join('');
+  const html = `<!doctype html><html><body style="margin:0;background:#f3f3f1;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f3f1;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:1px solid #e2e2de;border-radius:14px">
+<tr><td style="padding:24px 28px 0"><span style="display:inline-block;border:1.5px solid #9c1c2e;color:#9c1c2e;font-size:11px;font-weight:700;letter-spacing:.14em;padding:4px 9px">${esc(c.fromName.toUpperCase())}</span></td></tr>
+<tr><td style="padding:18px 28px 6px;color:#151515;font-size:20px;line-height:1.35;font-weight:700">${esc(headline)}</td></tr>
+${list ? `<tr><td style="padding:6px 28px 4px"><table role="presentation" cellpadding="0" cellspacing="0">${list}</table></td></tr>` : ''}
+${note ? `<tr><td style="padding:10px 28px 26px;color:#6b6b6b;font-size:14px;line-height:1.5">${esc(note)}</td></tr>` : '<tr><td style="padding:0 0 22px"></td></tr>'}
+</table></td></tr></table></body></html>`;
+  const text = `${headline}\n\n${rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n')}${note ? `\n\n${note}` : ''}`;
+  return { html, text };
+}
+
+module.exports = { enabled, send, approvalEmail, noticeEmail };

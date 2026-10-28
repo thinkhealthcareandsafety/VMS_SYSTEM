@@ -15,6 +15,7 @@ const defaults = () => ({
   durations: ['2h', '4h', '8h', 'today', '3d', '7d', '10d', '20d', '30d'],
   lanyardCards: false,
   notifyCheckout: true,
+  thankVisitor: true, // a thank-you when the visitor leaves: email always (free), SMS once its template is approved
 });
 
 let cache = null;

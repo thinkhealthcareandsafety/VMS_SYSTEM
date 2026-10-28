@@ -700,7 +700,7 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
     if (!d.length || d.length > 12) return res.status(400).json({ error: 'List 1 to 12 pass lengths, separated by commas' });
     patch.durations = d;
   }
-  for (const k of ['lanyardCards', 'notifyCheckout']) {
+  for (const k of ['lanyardCards', 'notifyCheckout', 'thankVisitor']) {
     if (b[k] === undefined) continue;
     if (typeof b[k] !== 'boolean') return res.status(400).json({ error: 'Invalid value' });
     patch[k] = b[k];

@@ -2312,7 +2312,7 @@ function GatesManager() {
 // The escalation contacts travel as { mobiles, emails } and are edited as one comma-separated line.
 const withContacts = (d) => ({
   ...d, assemblyPoint: d.assemblyPoint || '', purposes: (d.purposes || []).join(', '), durations: (d.durations || []).join(', '),
-  lanyardCards: Boolean(d.lanyardCards), notifyCheckout: d.notifyCheckout !== false, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
+  lanyardCards: Boolean(d.lanyardCards), notifyCheckout: d.notifyCheckout !== false, thankVisitor: d.thankVisitor !== false, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
 
 function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
   const [s, setS] = useState(null);
@@ -2323,7 +2323,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     api('/api/admin/settings').then((raw) => {
       const d = withContacts(raw);
       setS(d);
-      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', purposes: d.purposes, durations: d.durations, lanyardCards: d.lanyardCards, notifyCheckout: d.notifyCheckout, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
+      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', purposes: d.purposes, durations: d.durations, lanyardCards: d.lanyardCards, notifyCheckout: d.notifyCheckout, thankVisitor: d.thankVisitor, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
     }).catch((e) => setErr(e.message));
   }, []);
 
@@ -2413,6 +2413,10 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
           <label className="checkbox" style={{ fontSize: 14 }}>
             <input type="checkbox" checked={f.notifyCheckout} onChange={(e) => setF({ ...f, notifyCheckout: e.target.checked })} />
             <span>Tell the host when their visitor leaves <span className="faint">(WhatsApp, email; SMS once its template is approved)</span></span>
+          </label>
+          <label className="checkbox" style={{ fontSize: 14 }}>
+            <input type="checkbox" checked={f.thankVisitor} onChange={(e) => setF({ ...f, thankVisitor: e.target.checked })} />
+            <span>Thank the visitor when they leave <span className="faint">(email if they gave one; SMS once its template is approved, 1 SMS each)</span></span>
           </label>
           <label className="checkbox" style={{ fontSize: 14 }}>
             <input type="checkbox" checked={f.lanyardCards} onChange={(e) => setF({ ...f, lanyardCards: e.target.checked })} />
