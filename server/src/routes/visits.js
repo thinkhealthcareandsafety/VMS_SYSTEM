@@ -358,7 +358,10 @@ async function checkIn(req, res) {
     const share = await issueApprovalLink(visit, host, visitorName, company);
     res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, whatsapp: share, card: card || null });
   } catch (err) {
-    await Promise.all([photoPath, idPath, idFullPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
+    // The files go only when the visit was surely not saved: after a database restart the save can land even though
+    // the reply was lost, and that visit must keep its photo and ID.
+    const saved = photoPath ? await Visit.exists({ photoPath }).catch(() => true) : false;
+    if (!saved) await Promise.all([photoPath, idPath, idFullPath].filter(Boolean).map((p) => fs.rm(p, { force: true })));
     console.error('check-in failed', err);
     res.status(500).json({ error: 'Could not register visitor. Please retry.' });
   }

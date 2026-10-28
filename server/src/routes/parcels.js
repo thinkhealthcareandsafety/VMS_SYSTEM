@@ -101,55 +101,59 @@ router.get('/', requireRole('guard', 'admin'), async (req, res) => {
 
 // Both registers in Excel, in the columns of the hotel's paper registers: incoming and outgoing on their own sheets.
 router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
-  const list = await Parcel.find(await search(req.query)).sort({ createdAt: 1 }).limit(20000).populate('host').lean();
-  const wb = new ExcelJS.Workbook();
+  const q = await search(req.query);
+  // Written row by row to the download, pausing now and then, so the gates keep working during a big export.
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true, useSharedStrings: false });
+  res.type(XLSX).attachment(`courier register ${siteDay()}.xlsx`);
   const fmt = (d) => (d ? new Date(d).toLocaleString('en-IN', { timeZone: config.timezone, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
-  const sheet = (name, columns) => {
+  const remarksOf = (r) => [r.note, r.handover?.reason, r.voidReason && `Void: ${r.voidReason}`].filter(Boolean).join(' · ');
+  // One sheet at a time (a streamed workbook writes its sheets in order).
+  const sheet = async (name, direction, columns, line) => {
     const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = columns;
     ws.getRow(1).font = { bold: true };
     ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
-    return ws;
-  };
-  const inWs = sheet('Incoming', [
-    { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'No.', key: 'number', width: 12 }, { header: 'Receiving date & time', key: 'at', width: 19 },
-    { header: 'Name on courier (to)', key: 'who', width: 24 }, { header: 'For department / room', key: 'unit', width: 18 }, { header: 'From (sender)', key: 'sender', width: 24 },
-    { header: 'Courier', key: 'carrier', width: 16 }, { header: 'Tracking / docket / AWB', key: 'awb', width: 20 }, { header: 'Pieces', key: 'pieces', width: 7 },
-    { header: 'Type', key: 'type', width: 12 }, { header: 'Recipient answer', key: 'response', width: 22 }, { header: 'Handover to', key: 'to', width: 22 },
-    { header: 'Their mobile', key: 'mobile', width: 15 }, { header: 'Handed over at', key: 'handedAt', width: 19 }, { header: 'Recipient told', key: 'ack', width: 13 },
-    { header: 'LP (guard)', key: 'guard', width: 18 }, { header: 'Status', key: 'status', width: 20 }, { header: 'Remarks', key: 'remarks', width: 30 },
-  ]);
-  const outWs = sheet('Outgoing', [
-    { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'No.', key: 'number', width: 12 }, { header: 'Date & time', key: 'at', width: 19 },
-    { header: 'Name on courier (to)', key: 'addressee', width: 24 }, { header: 'Address', key: 'address', width: 32 }, { header: 'Sender department', key: 'dept', width: 18 },
-    { header: 'Name of sender', key: 'sender', width: 22 }, { header: 'Courier', key: 'carrier', width: 16 }, { header: 'Tracking / docket / AWB (from picker)', key: 'awb', width: 22 },
-    { header: 'Courier picker', key: 'picker', width: 20 }, { header: 'Picker mobile', key: 'mobile', width: 15 }, { header: 'Picked up at', key: 'handedAt', width: 19 },
-    { header: 'LP (guard)', key: 'guard', width: 18 }, { header: 'Status', key: 'status', width: 18 }, { header: 'Remarks', key: 'remarks', width: 30 },
-  ]);
-  let nIn = 0;
-  let nOut = 0;
-  for (const p of list) {
-    const r = row(p);
-    const remarks = [r.note, r.handover?.reason, r.voidReason && `Void: ${r.voidReason}`].filter(Boolean).join(' · ');
-    if (r.direction === 'in') {
-      nIn += 1;
-      inWs.addRow({
-        sr: nIn, number: r.number, at: fmt(r.createdAt), who: r.recipient.name, unit: r.recipient.kind === 'host' ? r.recipient.unit : [r.recipient.room && `Room ${r.recipient.room}`, r.department].filter(Boolean).join(', '),
-        sender: [r.sender?.company, r.sender?.name].filter(Boolean).join(', '), carrier: r.carrier, awb: r.awb, pieces: r.pieces, type: r.typeLabel,
-        response: r.response ? `${r.response.label} ${fmt(r.response.at)}` : r.notifiedVia ? 'No answer' : 'Not sent', to: r.handover?.to || '', mobile: r.handover?.mobile || '',
-        handedAt: fmt(r.handover?.at), ack: r.ackSentAt ? 'Yes' : '', guard: r.handover?.by || r.createdBy, status: r.aging ? 'Waiting (overdue)' : r.statusLabel, remarks,
-      });
-    } else {
-      nOut += 1;
-      outWs.addRow({
-        sr: nOut, number: r.number, at: fmt(r.createdAt), addressee: r.addressee, address: r.address, dept: r.department || (r.recipient.kind === 'host' ? r.recipient.unit : ''),
-        sender: r.recipient.name, carrier: r.carrier, awb: r.awb, picker: r.handover?.to || '', mobile: r.handover?.mobile || '', handedAt: fmt(r.handover?.at),
-        guard: r.handover?.by || r.createdBy, status: r.statusLabel, remarks,
-      });
+    ws.getRow(1).commit();
+    let n = 0;
+    if (!q.direction || q.direction === direction) {
+      const cursor = Parcel.find({ ...q, direction }).sort({ createdAt: 1 }).limit(20000).populate('host').lean().cursor({ batchSize: 500 });
+      for await (const p of cursor) {
+        n += 1;
+        ws.addRow(line(row(p), n)).commit();
+        if (n % 300 === 0) await new Promise((r) => setImmediate(r));
+      }
     }
-  }
-  audit(req.user, 'parcel.exported', { details: { rows: list.length, view: req.query.view || 'all' }, ip: req.ip });
-  res.type(XLSX).attachment(`courier register ${siteDay()}.xlsx`).send(Buffer.from(await wb.xlsx.writeBuffer()));
+    ws.commit();
+    return n;
+  };
+  try {
+    const nIn = await sheet('Incoming', 'in', [
+      { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'No.', key: 'number', width: 12 }, { header: 'Receiving date & time', key: 'at', width: 19 },
+      { header: 'Name on courier (to)', key: 'who', width: 24 }, { header: 'For department / room', key: 'unit', width: 18 }, { header: 'From (sender)', key: 'sender', width: 24 },
+      { header: 'Courier', key: 'carrier', width: 16 }, { header: 'Tracking / docket / AWB', key: 'awb', width: 20 }, { header: 'Pieces', key: 'pieces', width: 7 },
+      { header: 'Type', key: 'type', width: 12 }, { header: 'Recipient answer', key: 'response', width: 22 }, { header: 'Handover to', key: 'to', width: 22 },
+      { header: 'Their mobile', key: 'mobile', width: 15 }, { header: 'Handed over at', key: 'handedAt', width: 19 }, { header: 'Recipient told', key: 'ack', width: 13 },
+      { header: 'LP (guard)', key: 'guard', width: 18 }, { header: 'Status', key: 'status', width: 20 }, { header: 'Remarks', key: 'remarks', width: 30 },
+    ], (r, sr) => ({
+      sr, number: r.number, at: fmt(r.createdAt), who: r.recipient.name, unit: r.recipient.kind === 'host' ? r.recipient.unit : [r.recipient.room && `Room ${r.recipient.room}`, r.department].filter(Boolean).join(', '),
+      sender: [r.sender?.company, r.sender?.name].filter(Boolean).join(', '), carrier: r.carrier, awb: r.awb, pieces: r.pieces, type: r.typeLabel,
+      response: r.response ? `${r.response.label} ${fmt(r.response.at)}` : r.notifiedVia ? 'No answer' : 'Not sent', to: r.handover?.to || '', mobile: r.handover?.mobile || '',
+      handedAt: fmt(r.handover?.at), ack: r.ackSentAt ? 'Yes' : '', guard: r.handover?.by || r.createdBy, status: r.aging ? 'Waiting (overdue)' : r.statusLabel, remarks: remarksOf(r),
+    }));
+    const nOut = await sheet('Outgoing', 'out', [
+      { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'No.', key: 'number', width: 12 }, { header: 'Date & time', key: 'at', width: 19 },
+      { header: 'Name on courier (to)', key: 'addressee', width: 24 }, { header: 'Address', key: 'address', width: 32 }, { header: 'Sender department', key: 'dept', width: 18 },
+      { header: 'Name of sender', key: 'sender', width: 22 }, { header: 'Courier', key: 'carrier', width: 16 }, { header: 'Tracking / docket / AWB (from picker)', key: 'awb', width: 22 },
+      { header: 'Courier picker', key: 'picker', width: 20 }, { header: 'Picker mobile', key: 'mobile', width: 15 }, { header: 'Picked up at', key: 'handedAt', width: 19 },
+      { header: 'LP (guard)', key: 'guard', width: 18 }, { header: 'Status', key: 'status', width: 18 }, { header: 'Remarks', key: 'remarks', width: 30 },
+    ], (r, sr) => ({
+      sr, number: r.number, at: fmt(r.createdAt), addressee: r.addressee, address: r.address, dept: r.department || (r.recipient.kind === 'host' ? r.recipient.unit : ''),
+      sender: r.recipient.name, carrier: r.carrier, awb: r.awb, picker: r.handover?.to || '', mobile: r.handover?.mobile || '', handedAt: fmt(r.handover?.at),
+      guard: r.handover?.by || r.createdBy, status: r.statusLabel, remarks: remarksOf(r),
+    }));
+    await wb.commit();
+    audit(req.user, 'parcel.exported', { details: { rows: nIn + nOut, view: req.query.view || 'all' }, ip: req.ip });
+  } catch (err) { console.error('parcel export:', err.message); res.destroy(err); }
 });
 
 router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {

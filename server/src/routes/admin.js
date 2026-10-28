@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const fs = require('node:fs');
 const path = require('node:path');
+const { PassThrough } = require('node:stream');
 const mongoose = require('mongoose');
 const archiver = require('archiver');
 const config = require('../config');
@@ -27,7 +28,7 @@ const esc = (s) => String(s ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
 // Shared search for history + CSV. Filters: from, to, host, company, name, status.
-async function searchVisits(query, { page = 1, limit = 50 } = {}) {
+async function visitFilter(query) {
   const from = dayStr.safeParse(query.from), to = dayStr.safeParse(query.to);
   const q = {};
   if (from.success && from.data) q.visitDay = { ...(q.visitDay || {}), $gte: from.data };
@@ -46,6 +47,11 @@ async function searchVisits(query, { page = 1, limit = 50 } = {}) {
     const hosts = await Host.find({ fullName: new RegExp(esc(cleanText(query.host, 100)), 'i') }, '_id').lean();
     q.host = { $in: hosts.map((h) => h._id) };
   }
+  return q;
+}
+
+async function searchVisits(query, { page = 1, limit = 50 } = {}) {
+  const q = await visitFilter(query);
   const [total, visits] = await Promise.all([
     Visit.countDocuments(q),
     Visit.find(q).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate('host').lean(),
@@ -72,7 +78,31 @@ router.get('/visits', requireRole('admin'), async (req, res) => {
 });
 
 // ----- Export: one sheet builder shared by the CSV and the ZIP, so both always match -----
-const EXPORT_LIMIT = 50000;
+// A busy hotel has about 110,000 visits a year; the sheet streams, so a whole year fits. The full record (with a folder
+// of photos per visit) is held to a range that a laptop can unzip.
+const EXPORT_LIMIT = 250000;
+const ZIP_LIMIT = 20000;
+
+// Visits for an export, read from the database in batches, newest first, never all at once.
+async function* visitDocs(q, limit = EXPORT_LIMIT) {
+  const cursor = Visit.find(q).sort({ createdAt: -1 }).limit(limit).populate('host', 'fullName unit').lean().cursor({ batchSize: 500 });
+  let n = 0;
+  for await (const v of cursor) {
+    yield v;
+    n += 1;
+    if (n % 500 === 0) await exporter.breathe();
+  }
+}
+async function* visitRecords(q) {
+  for await (const v of visitDocs(q)) yield exporter.records([v])[0];
+}
+// Too many for one download: say how many, and how to narrow it.
+async function tooMany(q, max, res) {
+  const total = await Visit.countDocuments(q);
+  if (total <= max) return false;
+  res.status(400).json({ error: `This range has ${total.toLocaleString('en-IN')} visits; one download holds ${max.toLocaleString('en-IN')}. Pick a shorter date range.` });
+  return true;
+}
 const STATUS_LABEL = {
   pending: 'Awaiting host', approved: 'On premises', rejected: 'Declined', expired: 'Host did not reply',
   cancelled: 'Cancelled', checked_out: 'Checked out', force_checked_out: 'Checked out by admin', away: 'Outside, pass valid',
@@ -89,11 +119,11 @@ const sheetMobile = (m = '') => (m.startsWith(config.defaultCountryCode) ? m.sli
 const sheetCell = (v) => csvCell(/^[=+\-@\t\r]/.test(String(v ?? '')) ? `'${v}` : v);
 
 // Excel reads UTF-8 CSV correctly only with a BOM; CRLF keeps Excel and Notepad happy.
-function visitsSheet(docs) {
-  const header = ['Visitor ID', 'Date', 'Pass no', 'Lanyard card', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Number checked', 'Company', 'Purpose', 'Host', 'Flat / dept',
+const CSV_HEADER = () => ['Visitor ID', 'Date', 'Pass no', 'Lanyard card', 'First name', 'Last name', 'Gender', `Mobile (${config.defaultCountryCode})`, 'Email', 'Number checked', 'Company', 'Purpose', 'Host', 'Flat / dept',
     'Status', 'Arrived', 'Let in', 'Left', 'Minutes inside', 'Entry gate', 'Let in by', 'Exit gate', 'Checked out by', 'Entries', 'Pass for', 'Pass valid till',
     'Force checkout reason', 'Face match %', 'Photo file'];
-  const lines = docs.map((v) => {
+function visitLine(v) {
+  {
     const admitted = ['approved', 'away', 'checked_out', 'force_checked_out'].includes(v.status);
     const moves = passes.entryExit(v);
     const end = v.checkedOutAt ? new Date(v.checkedOutAt) : v.status === 'approved' ? new Date() : moves.exit ? new Date(moves.exit.at) : null;
@@ -102,14 +132,21 @@ function visitsSheet(docs) {
       STATUS_LABEL[v.status] || v.status, localStamp(v.createdAt), admitted ? localStamp(v.decidedAt) : '', localStamp(v.checkedOutAt || moves.exit?.at),
       mins, moves.entry?.gate || '', moves.entry?.by || '', moves.exit?.gate || '', moves.exit?.by || '', moves.entries || '',
       v.validity ? passes.validityLabel(v.validity) : '', localStamp(v.validUntil), v.forceReason, v.faceMatchScore ?? '', v.photoPath ? photoFile(v) : ''].map(sheetCell).join(',');
-  });
-  return `﻿${[header.map(sheetCell).join(','), ...lines].join('\r\n')}\r\n`;
+  }
 }
 
 router.get('/visits.csv', requireRole('admin'), async (req, res) => {
-  const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
-  audit(req.user, 'export.visits_csv', { details: { rows: docs.length, from: req.query.from, to: req.query.to }, ip: req.ip });
-  res.type('text/csv; charset=utf-8').attachment(exportName(req.query, 'csv')).send(visitsSheet(docs));
+  const q = await visitFilter(req.query);
+  if (await tooMany(q, EXPORT_LIMIT, res)) return;
+  res.type('text/csv; charset=utf-8').attachment(exportName(req.query, 'csv'));
+  res.write(`﻿${CSV_HEADER().map(sheetCell).join(',')}\r\n`);
+  let rows = 0;
+  for await (const v of visitDocs(q)) {
+    if (!res.write(`${visitLine(v)}\r\n`)) await new Promise((r) => res.once('drain', r));
+    rows += 1;
+  }
+  res.end();
+  audit(req.user, 'export.visits_csv', { details: { rows, from: req.query.from, to: req.query.to }, ip: req.ip });
 });
 
 // What the download covers, in words, for the About sheet and the report header.
@@ -127,10 +164,14 @@ const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 // Excel sheet on its own: formatted columns, real dates, filters, and an "About this download" tab.
 router.get('/visits.xlsx', requireRole('admin'), async (req, res) => {
-  const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
-  const buf = await exporter.workbook(exporter.records(docs), { meta: await exportMeta(req) });
-  audit(req.user, 'export.visits_xlsx', { details: { rows: docs.length, from: req.query.from, to: req.query.to }, ip: req.ip });
-  res.type(XLSX).attachment(exportName(req.query, 'xlsx')).send(Buffer.from(buf));
+  const q = await visitFilter(req.query);
+  if (await tooMany(q, EXPORT_LIMIT, res)) return;
+  const meta = await exportMeta(req);
+  res.type(XLSX).attachment(exportName(req.query, 'xlsx'));
+  try {
+    const rows = await exporter.writeWorkbook(res, visitRecords(q), { meta });
+    audit(req.user, 'export.visits_xlsx', { details: { rows, from: req.query.from, to: req.query.to }, ip: req.ip });
+  } catch (err) { console.error('export xlsx:', err.message); res.destroy(err); }
 });
 
 // Full record: the Excel sheet, a printable report, and one folder per visit with the photo and,
@@ -141,21 +182,23 @@ router.get('/visits.xlsx', requireRole('admin'), async (req, res) => {
 //   Visitor records <dates>/2026-10-06/V-000012 Ravi Kumar/aadhaar-masked.jpg
 router.get('/visits.zip', requireRole('admin'), async (req, res) => {
   const aadhaar = req.query.aadhaar === '1';
-  const { docs } = await searchVisits(req.query, { page: 1, limit: EXPORT_LIMIT });
-  const recs = exporter.records(docs).map((r) => ({ ...r, hasPhoto: exists(r.photoPath), hasIdImage: aadhaar && exists(r.idImagePath) }));
+  const q = await visitFilter(req.query);
+  if (await tooMany(q, ZIP_LIMIT, res)) return;
+  const recs = [];
+  for await (const r of visitRecords(q)) recs.push({ ...r, hasPhoto: exists(r.photoPath), hasIdImage: aadhaar && exists(r.idImagePath) });
   const meta = await exportMeta(req);
-  const sheet = await exporter.workbook(recs, { files: { aadhaar }, meta });
   audit(req.user, 'export.visits_zip', {
-    details: { rows: docs.length, from: req.query.from, to: req.query.to, aadhaar, aadhaarImages: recs.filter((r) => r.hasIdImage).length }, ip: req.ip,
+    details: { rows: recs.length, from: req.query.from, to: req.query.to, aadhaar, aadhaarImages: recs.filter((r) => r.hasIdImage).length }, ip: req.ip,
   });
 
-  const q = req.query;
-  const root = `Visitor records ${q.from ? `${q.from} to ${q.to || siteDay()}` : `up to ${q.to || siteDay()}`}`;
+  const root = `Visitor records ${req.query.from ? `${req.query.from} to ${req.query.to || siteDay()}` : `up to ${req.query.to || siteDay()}`}`;
   res.type('application/zip').attachment(`${root}.zip`);
   const zip = archiver('zip', { zlib: { level: 1 } }); // JPEGs barely compress; favour speed
   zip.on('error', (err) => { console.error('export zip:', err.message); res.destroy(err); });
   zip.pipe(res);
-  zip.append(Buffer.from(sheet), { name: `${root}/Visitors.xlsx` });
+  const sheet = new PassThrough();
+  zip.append(sheet, { name: `${root}/Visitors.xlsx` });
+  exporter.writeWorkbook(sheet, recs, { files: { aadhaar }, meta }).catch((err) => sheet.destroy(err));
   zip.append(exporter.report(recs, { meta, aadhaar }), { name: `${root}/Report.html` });
   for (const r of recs) {
     if (r.hasPhoto) zip.file(path.resolve(r.photoPath), { name: `${root}/${r.folder}/photo.jpg` });

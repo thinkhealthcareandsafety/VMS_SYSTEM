@@ -2206,3 +2206,13 @@ test('no reply from the host: the guard lets the visitor in after the host said 
   assert.ok(await Audit.exists({ action: 'visit.approved_by_phone', entityId: v._id }));
   assert.equal((await call('POST', `/api/visits/${r.body.id}/approve-by-phone`, { note: 'again' }, guard)).status, 409, 'once only');
 });
+
+test('a counter behind the records (data moved or partly restored) catches up instead of failing every new entry', async () => {
+  const { Counter } = require('../src/models');
+  await Counter.updateOne({ _id: 'visitor' }, { $set: { seq: 0 } });
+  await Counter.updateOne({ _id: 'parcel' }, { $set: { seq: 0 } });
+  const v = await checkIn('Behind', hostIds.asha, '9700000393');
+  assert.equal(v.status, 201, JSON.stringify(v.body));
+  const p = await call('POST', '/api/parcels', { direction: 'in', carrier: 'DTDC', awb: 'BEHIND1', pieces: 1, type: 'parcel', hostId: hostIds.asha, photos: [jpeg()] }, guard);
+  assert.equal(p.status, 201, JSON.stringify(p.body));
+});

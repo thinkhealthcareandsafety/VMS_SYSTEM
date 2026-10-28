@@ -114,8 +114,9 @@ router.get('/', requireRole('guard', 'admin'), async (req, res) => {
 
 // The inward register in Excel, in the order of the hotel's paper register: one row per item, so quantities total.
 router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
-  const list = await Material.find({ ...search(req.query), direction: 'in' }).sort({ createdAt: 1 }).limit(20000).lean();
-  const wb = new ExcelJS.Workbook();
+  // Written row by row to the download, pausing now and then, so the gates keep working during a big export.
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true, useSharedStrings: false });
+  res.type(XLSX).attachment(`material inward register ${siteDay()}.xlsx`);
   const ws = wb.addWorksheet('Material inward', { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = [
     { header: 'Sr. No.', key: 'sr', width: 7 }, { header: 'Entry no.', key: 'number', width: 12 }, { header: 'Date', key: 'date', width: 12 },
@@ -131,7 +132,12 @@ router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
   const fmt = (d, o) => (d ? new Date(d).toLocaleString('en-IN', { timeZone: config.timezone, ...o }) : '');
   const DAY = { day: '2-digit', month: 'short', year: 'numeric' };
   const TIME = { hour: '2-digit', minute: '2-digit' };
-  list.forEach((m, n) => {
+  ws.getRow(1).font = { bold: true };
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
+  ws.getRow(1).commit();
+  let n = 0;
+  const cursor = Material.find({ ...search(req.query), direction: 'in' }).sort({ createdAt: 1 }).limit(20000).lean().cursor({ batchSize: 500 });
+  for await (const m of cursor) {
     const ee = passes.entryExit(m);
     for (const it of m.items) {
       const kept = it.acceptedQty ?? null;
@@ -142,13 +148,14 @@ router.get('/export.xlsx', requireRole('admin'), async (req, res) => {
         dept: m.department, receivedBy: [m.receivedBy?.department, m.receivedBy?.name].filter(Boolean).join(' / ') || m.handedTo || '',
         gate: ee.entry?.gate || '', guardIn: ee.entry?.by || m.createdByName || '', outAt: fmt(ee.exit?.at || m.checkedOutAt, { ...DAY, ...TIME }), guardOut: ee.exit?.by || '',
         status: material.STATUS_LABEL[m.status], remarks: [m.note, m.exitNote].filter(Boolean).join(' · '),
-      });
+      }).commit();
     }
-  });
-  ws.getRow(1).font = { bold: true };
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
-  audit(req.user, 'material.exported', { details: { rows: list.length, view: req.query.view || 'all' }, ip: req.ip });
-  res.type(XLSX).attachment(`material inward register ${siteDay()}.xlsx`).send(Buffer.from(await wb.xlsx.writeBuffer()));
+    n += 1;
+    if (n % 300 === 0) await new Promise((r) => setImmediate(r));
+  }
+  ws.commit();
+  await wb.commit();
+  audit(req.user, 'material.exported', { details: { rows: n, view: req.query.view || 'all' }, ip: req.ip });
 });
 
 router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {

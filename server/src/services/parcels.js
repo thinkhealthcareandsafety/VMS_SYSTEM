@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const config = require('../config');
-const { Parcel, Counter, Outbox, Host, ActionToken } = require('../models');
-const { audit, cleanText, normalizeMobile, sha256 } = require('./core');
+const { Parcel, Outbox, Host, ActionToken } = require('../models');
+const { nextSeq, lastNumber, audit, cleanText, normalizeMobile, sha256 } = require('./core');
 const telegram = require('./telegram');
 const whatsapp = require('./whatsapp');
 const email = require('./email');
@@ -21,8 +21,8 @@ const AGING_DAYS = 3;                      // flagged as waiting too long
 const MAX_PHOTOS = 5;
 
 async function nextNumber() {
-  const c = await Counter.findByIdAndUpdate('parcel', { $inc: { seq: 1 } }, { upsert: true, new: true });
-  return `PCL-${String(c.seq).padStart(6, '0')}`;
+  const code = (n) => `PCL-${String(n).padStart(6, '0')}`;
+  return code(await nextSeq('parcel', { taken: (n) => Parcel.exists({ number: code(n) }), highest: () => lastNumber(Parcel, 'number') }));
 }
 
 function readParcel(b, direction) {

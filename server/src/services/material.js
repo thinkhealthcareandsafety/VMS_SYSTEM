@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const config = require('../config');
-const { Material, ActionToken, Counter, Outbox, Host } = require('../models');
-const { siteDay, audit, sha256, cleanText, normalizeMobile } = require('./core');
+const { Material, ActionToken, Outbox, Host } = require('../models');
+const { nextSeq, lastNumber, siteDay, audit, sha256, cleanText, normalizeMobile } = require('./core');
 const telegram = require('./telegram');
 const { cardNo, CARD_RE } = require('./passes');
 const whatsapp = require('./whatsapp');
@@ -29,8 +29,8 @@ const STATUS_LABEL = {
 const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 async function nextNumber(direction) {
-  const c = await Counter.findByIdAndUpdate(`material-${direction}`, { $inc: { seq: 1 } }, { upsert: true, new: true });
-  return `${direction === 'out' ? 'OUT' : 'IN'}-${String(c.seq).padStart(6, '0')}`;
+  const code = (n) => `${direction === 'out' ? 'OUT' : 'IN'}-${String(n).padStart(6, '0')}`;
+  return code(await nextSeq(`material-${direction}`, { taken: (n) => Material.exists({ number: code(n) }), highest: () => lastNumber(Material, 'number', { direction }) }));
 }
 
 // The request body -> clean fields, or { error }.

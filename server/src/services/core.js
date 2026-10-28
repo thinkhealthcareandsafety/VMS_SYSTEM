@@ -8,16 +8,38 @@ function siteDay(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
+// The next number from a counter. A counter can fall behind the records (data moved from another server, a partial
+// restore); then every new entry would collide and fail. So a number already in use makes the counter jump past the
+// highest one in use, and the next one is taken instead.
+async function nextSeq(id, { taken, highest }) {
+  for (let tries = 0; tries < 3; tries += 1) {
+    const { seq } = await Counter.findByIdAndUpdate(id, { $inc: { seq: 1 } }, { upsert: true, new: true });
+    if (!(await taken(seq))) return seq;
+    await Counter.updateOne({ _id: id }, { $max: { seq: await highest() } });
+  }
+  throw new Error(`No free number for counter ${id}`);
+}
+// The number at the end of the highest code in use, e.g. "V-000123" -> 123.
+async function lastNumber(model, field, filter = {}) {
+  const doc = await model.findOne({ ...filter, [field]: { $exists: true } }, field).sort({ [field]: -1 }).lean();
+  return Number(String(doc?.[field] ?? 0).replace(/\D/g, '')) || 0;
+}
+
 // Atomic daily pass number: 1, 2, 3... per site day. New day = new counter = starts at 1.
 async function nextDailyNumber(date = new Date()) {
+  const { Visit } = require('../models');
   const day = siteDay(date);
-  const c = await Counter.findByIdAndUpdate(`pass:${day}`, { $inc: { seq: 1 } }, { upsert: true, new: true });
-  return { day, number: c.seq };
+  const number = await nextSeq(`pass:${day}`, {
+    taken: (n) => Visit.exists({ dailyDay: day, dailyNumber: n }),
+    highest: () => lastNumber(Visit, 'dailyNumber', { dailyDay: day }),
+  });
+  return { day, number };
 }
 
 async function nextVisitorRef() {
-  const c = await Counter.findByIdAndUpdate('visitor', { $inc: { seq: 1 } }, { upsert: true, new: true });
-  return `V-${String(c.seq).padStart(6, '0')}`;
+  const { Visit } = require('../models');
+  const ref = (n) => `V-${String(n).padStart(6, '0')}`;
+  return ref(await nextSeq('visitor', { taken: (n) => Visit.exists({ ref: ref(n) }), highest: () => lastNumber(Visit, 'ref') }));
 }
 
 // Append-only audit entry. Never throws into the request path.
@@ -81,4 +103,4 @@ function oneAtATime(key, work) {
   return run;
 }
 
-module.exports = { oneAtATime, siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };
+module.exports = { nextSeq, lastNumber, oneAtATime, siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };

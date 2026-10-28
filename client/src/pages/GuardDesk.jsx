@@ -1350,6 +1350,10 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
   const [confirmId, setConfirmId] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [extending, setExtending] = useState(null);
+  // A big event can put hundreds inside: the list shows a page at a time, so a tablet stays quick. Search finds anyone.
+  const PAGE = 40;
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => { setShown(PAGE); }, [q]);
 
   const term = q.trim().toLowerCase();
   const match = (v) => !term || `${v.firstName} ${v.lastName} ${v.company} ${v.host?.name} ${v.host?.unit} ${v.dailyNumber} ${v.ref} card ${v.card?.no || ''}`.toLowerCase().includes(term);
@@ -1459,9 +1463,14 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
             <span>If they have left, press Check out. If they are still here, call their host.</span>
           </div>
         )}
-        {late.map((v) => row(v, true))}
-        {late.length > 0 && current.length > 0 && <div className="list-section"><strong>Inside now</strong></div>}
-        {current.map((v) => row(v, false))}
+        {late.slice(0, shown).map((v) => row(v, true))}
+        {late.length > 0 && current.length > 0 && shown > late.length && <div className="list-section"><strong>Inside now</strong></div>}
+        {current.slice(0, Math.max(0, shown - late.length)).map((v) => row(v, false))}
+        {rows.length > shown && (
+          <button type="button" className="btn btn-block" onClick={() => setShown((n) => n + PAGE)}>
+            <ChevronDown />Show {Math.min(PAGE, rows.length - shown)} more · {rows.length - shown} not shown
+          </button>
+        )}
       </div>
 
       {data && away.length > 0 && (
@@ -1473,7 +1482,7 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
             </div>
           </div>
           <div className="visitor-list">
-            {away.map((v) => (
+            {away.slice(0, shown).map((v) => (
               <div className="visitor-item is-away" key={v.id}>
                 <Avatar src={`/api/visits/${v.id}/photo`} name={name(v)} size={48} square />
                 <div style={{ minWidth: 0 }}>

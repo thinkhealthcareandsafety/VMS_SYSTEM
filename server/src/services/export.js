@@ -83,8 +83,11 @@ const ID_CHECK_LABEL = { match: 'Matches', partial: 'Partly matches', mismatch: 
 
 // ---------------------------------------------------------------- Excel
 // `files`: null for a sheet on its own; { aadhaar } when the sheet sits in the ZIP next to the folders.
-async function workbook(recs, { files = null, meta }) {
-  const wb = new ExcelJS.Workbook();
+// Written row by row straight to `out` (the download, or a file inside the ZIP), pausing every few hundred rows so the
+// gates keep working while a year of visits is exported. Memory stays flat however many rows there are.
+// `recs` is an array or an async iterator of records(). Resolves to the number of visits written.
+async function writeWorkbook(out, recs, { files = null, meta }) {
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: out, useStyles: true, useSharedStrings: false });
   wb.creator = meta.site || config.siteName;
   wb.created = new Date();
 
@@ -122,10 +125,21 @@ async function workbook(recs, { files = null, meta }) {
     { header: 'Face match %', key: 'faceMatch', width: 13 },
     ...(files ? [{ header: 'Photo', key: 'photo', width: 10 }, { header: 'Aadhaar (masked)', key: 'aadhaar', width: 18 }] : []),
   ];
+  const head = ws.getRow(1);
+  head.font = { bold: true, color: { argb: 'FF111111' } };
+  head.alignment = { vertical: 'middle' };
+  head.height = 22;
+  head.eachCell((c) => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF0F3' } };
+    c.border = { bottom: { style: 'thin', color: { argb: 'FFB8BEC8' } } };
+  });
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
+  head.commit();
 
   // Relative links to the files next to the sheet. Plain paths: Excel on Windows resolves these most reliably.
   const link = (text, target) => ({ text, hyperlink: target });
-  for (const r of recs) {
+  let n = 0;
+  for await (const r of recs) {
     const row = ws.addRow({
       ...r, day: dayDate(r.day), arrived: wall(r.arrived), letIn: wall(r.letIn), left: wall(r.left), inside: duration(r.minutes), validUntil: wall(r.validUntil),
     });
@@ -139,17 +153,11 @@ async function workbook(recs, { files = null, meta }) {
         if (c.value?.hyperlink) c.font = { color: { argb: 'FF0563C1' }, underline: true };
       }
     }
+    row.commit();
+    n += 1;
+    if (n % 300 === 0) await breathe();
   }
-
-  const head = ws.getRow(1);
-  head.font = { bold: true, color: { argb: 'FF111111' } };
-  head.alignment = { vertical: 'middle' };
-  head.height = 22;
-  head.eachCell((c) => {
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF0F3' } };
-    c.border = { bottom: { style: 'thin', color: { argb: 'FFB8BEC8' } } };
-  });
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
+  ws.commit();
 
   const about = wb.addWorksheet('About this download');
   about.columns = [{ width: 22 }, { width: 70 }];
@@ -157,16 +165,36 @@ async function workbook(recs, { files = null, meta }) {
     ['Site', meta.site || config.siteName],
     ['Downloaded', human(new Date())],
     ['Downloaded by', meta.by],
-    ['Visits', recs.length],
+    ['Visits', n],
     ['Dates', meta.range],
     ...(meta.filters ? [['Filters', meta.filters]] : []),
     ['Contents', files ? `This sheet, a printable report (Report.html), and one folder per visit with the visitor photo${files.aadhaar ? ' and the masked Aadhaar image' : ''}.` : 'This sheet only. Photos are in the full record download.'],
     ['Times', `Local time at the site (${config.timezone}).`],
     ...(files?.aadhaar ? [['Aadhaar images', 'Masked on the guard\'s device before upload: the first 8 digits are blacked out. Handle as personal data.']] : []),
   ];
-  for (const [k, v] of lines) about.addRow([k, v]).getCell(1).font = { bold: true };
+  for (const [k, v] of lines) {
+    const row = about.addRow([k, v]);
+    row.getCell(1).font = { bold: true };
+    row.commit();
+  }
+  about.commit();
+  await wb.commit();
+  return n;
+}
 
-  return wb.xlsx.writeBuffer();
+// Lets the server answer the gates between chunks of a long export.
+const breathe = () => new Promise((resolve) => setImmediate(resolve));
+
+// The whole workbook as one buffer: for small sets and tests.
+async function workbook(recs, opts) {
+  const { PassThrough } = require('node:stream');
+  const out = new PassThrough();
+  const chunks = [];
+  out.on('data', (c) => chunks.push(c));
+  const ended = new Promise((resolve, reject) => { out.on('end', resolve); out.on('error', reject); });
+  await writeWorkbook(out, recs, opts);
+  await ended;
+  return Buffer.concat(chunks);
 }
 
 // ---------------------------------------------------------------- Printable report (opens in any browser)
@@ -251,4 +279,4 @@ function report(recs, { meta, aadhaar }) {
 </html>`;
 }
 
-module.exports = { records, workbook, report, STATUS_LABEL, GENDER_LABEL, VERIFIED_LABEL };
+module.exports = { records, workbook, writeWorkbook, breathe, report, STATUS_LABEL, GENDER_LABEL, VERIFIED_LABEL };
