@@ -1461,3 +1461,12 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
 .cp-tick { width: 16px; height: 16px; color: var(--ok); }
 .cp-empty { color: var(--text-3); cursor: default; }
 @media (max-width: 480px) { .cp-btn { height: 46px; padding: 0 7px; font-size: 14px; } }
+
+/* Portrait tablets (641–1100 px): the gate header keeps one row; the counts shorten instead of wrapping under the tabs. */
+@media (min-width: 641px) and (max-width: 1100px) {
+  .app-guard .topbar > div:first-child { flex: 1 1 0; min-width: 0; }
+  .app-guard .topbar .where { min-width: 0; }
+  .app-guard .topbar .where small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .app-guard .topbar .desk-mode button svg { display: none; }
+  .app-guard .topbar .where small .sep { margin: 0 4px; }
+}
