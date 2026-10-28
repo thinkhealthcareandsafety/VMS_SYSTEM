@@ -67,9 +67,10 @@ module.exports = {
   sms: {
     driver: env.SMS_DRIVER || 'console',   // console | http | msg91
     // msg91: approval text sent through a DLT-approved template. The template's variables, in order, receive
-    // MSG91_APPROVAL_VARS names mapped to [visitor name, company, approval link].
+    // Two names (the DLT template): ["Ravi Kumar from Deloitte", the whole approval link for its {#url#} tag].
+    // Three names (older templates): [visitor name, company, link code].
     msg91TemplateId: env.MSG91_APPROVAL_TEMPLATE_ID || '',
-    msg91Vars: (env.MSG91_APPROVAL_VARS || 'var1,var2,var3').split(',').map((s) => s.trim()),
+    msg91Vars: (env.MSG91_APPROVAL_VARS || 'var1,var2').split(',').map((s) => s.trim()),
     // msg91: one DLT template per emergency type (DLT allows no free text). Its two {#var#} receive the site's short
     // name and the assembly point, 30 characters each. A type without a template is not sent by SMS.
     msg91Alerts: {

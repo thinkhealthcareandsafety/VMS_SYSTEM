@@ -40,8 +40,8 @@ async function sendSms(to, body, vars = {}) {
     return 'console';
   }
   if (config.sms.driver === 'msg91') {
-    // MSG91 Flow API: the approval text is a DLT-approved template; only its variables travel. DLT allows 30 characters
-    // a variable, so the link's address is fixed in the template (".../approve?{#var#}") and only the 24-character code travels.
+    // MSG91 Flow API: the approval text is a DLT-approved template; only its variables travel. A text variable holds up to
+    // 30 characters; the link goes whole into the template's {#url#} tag (whitelisted as https://<site>/approve?).
     if (!config.otp.authKey || !config.sms.msg91TemplateId) throw new Error('MSG91 approval template is not set up');
     const [vName, vCompany, vLink] = config.sms.msg91Vars;
     const v30 = (s) => String(s || '').slice(0, 30);
@@ -51,7 +51,9 @@ async function sendSms(to, body, vars = {}) {
       body: JSON.stringify({
         template_id: config.sms.msg91TemplateId,
         short_url: '0',
-        recipients: [{ mobiles: to.replace(/^\+/, ''), [vName]: v30(vars.name), [vCompany]: v30(vars.company), [vLink]: vars.token || v30(vars.link) }],
+        recipients: [{ mobiles: to.replace(/^\+/, ''), ...(vLink
+          ? { [vName]: v30(vars.name), [vCompany]: v30(vars.company), [vLink]: vars.token || v30(vars.link) }
+          : { [vName]: v30(vars.company === 'Personal' ? vars.name : `${vars.name} from ${vars.company}`), [vCompany]: vars.link || '' }) }],
       }),
       signal: AbortSignal.timeout(10000),
     });
