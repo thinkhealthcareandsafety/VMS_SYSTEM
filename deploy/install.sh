@@ -42,7 +42,14 @@ if [ ! -f .env ]; then
   echo "  nano deploy/.env"
   exit 0
 fi
-set -a; . ./.env; set +a
+# Read the settings as plain text, not as a script: values like the hotel name have spaces and "&".
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|\#*) continue ;; esac
+  key="${line%%=*}"; val="${line#*=}"
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+  val="${val%\"}"; val="${val#\"}"
+  export "$key=$val"
+done < .env
 for v in LAN_HOST JWT_SECRET ID_ENCRYPTION_KEY; do
   [ -n "${!v:-}" ] || { echo "deploy/.env: $v is empty. Fill it in (nano deploy/.env) and run again."; exit 1; }
 done
