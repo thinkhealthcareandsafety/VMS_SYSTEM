@@ -18,8 +18,10 @@ function backup(now = Date.now()) {
   return { state: 'ok', at };
 }
 
-// Free space where the photos are kept. Low: under 10 GB or under 10 per cent.
+// Free space where the photos are kept. Low: under 10 GB or under 10 per cent. Only on the hotel's own PC (the install
+// sets BACKUP_STATUS_FILE): a cloud demo's small disk is not the hotel's concern.
 function disk() {
+  if (!process.env.BACKUP_STATUS_FILE) return null;
   try {
     const s = fs.statfsSync(config.uploadDir);
     const free = s.bavail * s.bsize;

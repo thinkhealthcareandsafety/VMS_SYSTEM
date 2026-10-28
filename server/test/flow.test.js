@@ -2179,6 +2179,7 @@ test('the console warns when last night\'s backup failed or is missing, and says
   const stats = async () => (await call('GET', '/api/admin/stats', null, admin)).body;
   try {
     assert.equal((await stats()).backup.state, 'off', 'no backup service: nothing to say');
+    assert.equal((await stats()).disk, null, 'not the hotel PC (cloud demo): no disk warning');
     process.env.BACKUP_STATUS_FILE = file;
     fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), ok: true, error: '' }));
     assert.equal((await stats()).backup.state, 'ok');
@@ -2188,7 +2189,7 @@ test('the console warns when last night\'s backup failed or is missing, and says
     assert.match(failed.error, /not connected/);
     fs.writeFileSync(file, JSON.stringify({ at: new Date(Date.now() - 40 * 3600e3).toISOString(), ok: true, error: '' }));
     assert.equal((await stats()).backup.state, 'stale');
-    assert.equal(typeof (await stats()).disk.freeGb, 'number');
+    assert.equal(typeof (await stats()).disk.freeGb, 'number', 'on the hotel PC the free space is checked');
   } finally { delete process.env.BACKUP_STATUS_FILE; fs.rmSync(file, { force: true }); }
 });
 
