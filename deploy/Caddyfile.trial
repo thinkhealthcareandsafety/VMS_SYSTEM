@@ -1,5 +1,10 @@
 # Trial without Cloudflare: the address is this PC's IP (LAN_HOST=192.168.x.x) and Caddy makes its own certificate.
 # Tablets show a warning once (Advanced -> Proceed). For a clean padlock, install /srv/vms/data/caddy/caddy/pki/authorities/local/root.crt on each tablet.
+{
+	# Browsers send no server name when opening an IP address; without this the secure connection fails.
+	default_sni {$LAN_HOST}
+}
+
 {$LAN_HOST} {
 	tls internal
 	encode gzip
