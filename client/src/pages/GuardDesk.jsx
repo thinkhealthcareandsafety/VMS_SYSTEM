@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   AlertTriangle, ArrowDown, Phone, BadgeCheck, Bell, ChevronRight, Plus, LogIn, MessageCircle, Building2, CalendarCheck, ShieldAlert, Check, CheckCircle2, ChevronDown, Clock, CreditCard, History, KeyRound, LogOut,
-  Mail, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, TimerReset, UserPlus, UserRound, Users, X, XCircle,
+  Mail, MapPin, Package, PartyPopper, Printer, Siren, RotateCcw, ScanFace, ScanLine, Search, Send, ShieldCheck, TimerReset, UserPlus, UserRound, Users, X, XCircle,
 } from 'lucide-react';
 import { api, cardLabel, clock, fmtDate, fmtTime, fmtDuration, fmtUntil, minutesSince, passLabel, secondsSince, today } from '../api.js';
 import { useLive, useTick } from '../lib/live.js';
@@ -15,6 +15,7 @@ import Camera from '../components/Camera.jsx';
 import MobileVerify from '../components/MobileVerify.jsx';
 import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
 import CountryPicker from '../components/CountryPicker.jsx';
+import { COUNTRIES } from '../lib/countries.js';
 import PassScanner from '../components/PassScanner.jsx';
 import GroupGate from '../components/GroupGate.jsx';
 import MaterialBoard from '../components/Material.jsx';
@@ -486,6 +487,13 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
   const india = cc === '+91';
   const mobileOk = india ? MOBILE_RE.test(digits) : INTL_RE.test(digits);
   const fullMobile = india ? digits : `${cc}${digits}`; // what the server and the lookups get
+  // A name tapped on the expected list: their number goes in, and the lookup fills in the rest and picks the host.
+  const pickExpected = (row) => {
+    const m = row.mobile || '';
+    if (m.startsWith('+91')) { update({ country: 'IN', cc: '+91', mobile: m.slice(3) }); return; }
+    const c = [...COUNTRIES].sort((x, y) => y.dial.length - x.dial.length).find((x) => m.startsWith(x.dial));
+    if (c) update({ country: c.iso, cc: c.dial, mobile: m.slice(c.dial.length) });
+  };
 
   useEffect(() => {
     setReturning(null);
@@ -692,6 +700,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
         <h1>New visitor</h1>
         <p>Fill in everything below, then send. The host gets a message to approve.</p>
       </div>
+      {!digits && <ExpectedToday liveTick={liveTick} onPick={pickExpected} />}
 
       <section className={flag('visitor')} ref={sec.visitor} aria-labelledby="sec-visitor">
         <SectionHead id="sec-visitor" n={1} title="Mobile number" done={done('visitor')} />
@@ -736,8 +745,9 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           <div className="expected">
             <CalendarCheck />
             <span className="grow">
-              <strong>Expected today</strong>, pre-approved to meet {invite.host.name} ({invite.host.unit}).
+              <strong>Expected today</strong>{invite.dayOf ? ` (${invite.dayOf})` : ''}, pre-approved to meet {invite.host.name} ({invite.host.unit}).
               {host && host.id !== invite.host.id ? ' You picked a different host, so this will go to them for approval.' : ' They get their pass straight away.'}
+              {invite.elsewhere && <span className="expected-note">They were told to use {invite.gate}. Let them in here anyway.</span>}
               {invite.note && <span className="expected-note">Note from admin: {invite.note}</span>}
             </span>
           </div>
@@ -1572,6 +1582,70 @@ function InsideList({ data, onChanged, onPrint, onOpenGroup, onScan }) {
 }
 
 // ---------------------------------------------------------------- Groups that can be let in today
+// Who the admin said is coming today. Every gate sees everyone (people turn up at the wrong entrance); those told to
+// use this gate come first. A tap starts their check-in; they get their pass without waiting for the host.
+function ExpectedToday({ liveTick, onPick }) {
+  const [data, setData] = useState(null);
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(true);
+  const [showArrived, setShowArrived] = useState(false);
+  const load = useCallback(() => api('/api/visits/expected').then(setData).catch(() => {}), []);
+  useEffect(() => { load(); }, [load, liveTick]);
+  useEffect(() => { const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
+  if (!data || (!data.rows.length && !data.arrived.length)) return null;
+  const term = q.trim().toLowerCase();
+  const rows = data.rows.filter((r) => !term || `${r.firstName} ${r.lastName} ${r.company} ${r.host.name} ${r.host.unit} ${r.mobile}`.toLowerCase().includes(term));
+  return (
+    <section className="expected-today" aria-label="Expected today">
+      <button type="button" className="expected-today-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <CalendarCheck />
+        <span className="grow">
+          <strong>Expected today</strong>
+          <small>{data.rows.length ? `${data.rows.length} still to come` : 'Everyone expected has arrived'}{data.arrived.length ? ` · ${data.arrived.length} arrived` : ''}</small>
+        </span>
+        <ChevronDown className={open ? 'up' : ''} />
+      </button>
+      {open && <>
+        {data.rows.length > 0 && <p className="expected-today-hint">Pre-approved by the admin. Tap the person in front of you to start their check-in. Their photo and ID are still taken.</p>}
+        {data.rows.length > 5 && (
+          <div className="input-group"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, company or host" aria-label="Search expected visitors" /></div>
+        )}
+        <div className="expected-rows">
+          {rows.map((r) => (
+            <button type="button" key={r.id} className="expected-row" onClick={() => onPick(r)}>
+              <span className="grow">
+                <strong>{r.firstName} {r.lastName}{r.company && <span className="faint"> · {r.company}</span>}</strong>
+                <small>Meeting {r.host.name}{r.host.unit ? `, ${r.host.unit}` : ''}{r.purpose ? ` · ${r.purpose}` : ''}</small>
+                {r.note && <small className="expected-row-note">{r.note}</small>}
+              </span>
+              <span className="expected-row-tags">
+                {r.gate && <span className={`badge plain ${r.here ? 'badge-ok' : ''}`}><MapPin size={12} />{r.here ? 'This gate' : r.gate}</span>}
+                {r.dayOf && <span className="badge plain">{r.dayOf}</span>}
+              </span>
+              <ChevronRight />
+            </button>
+          ))}
+          {term && !rows.length && <p className="faint" style={{ fontSize: 13 }}>Nobody expected matches “{q}”. Type their mobile number below instead.</p>}
+        </div>
+        {data.arrived.length > 0 && (
+          <div className="expected-arrived">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowArrived((x) => !x)}>
+              {showArrived ? 'Hide' : 'Show'} who already arrived ({data.arrived.length})
+            </button>
+            {showArrived && data.arrived.map((a) => (
+              <div key={a.id} className="expected-arrived-row">
+                <CheckCircle2 />
+                <span className="grow">{a.firstName} {a.lastName} <span className="faint">· meeting {a.host.name}</span></span>
+                <span className="faint num">{a.dailyNumber != null ? `Pass ${a.dailyNumber} · ` : ''}{fmtTime(a.at)}{a.gate ? ` · ${a.gate}` : ''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </>}
+    </section>
+  );
+}
+
 function TodaysGroups({ groups, openId, onOpen, onScan }) {
   return (
     <div className="todays-groups">

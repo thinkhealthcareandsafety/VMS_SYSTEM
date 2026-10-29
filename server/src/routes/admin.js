@@ -20,6 +20,7 @@ const sheets = require('../services/sheets');
 const overstay = require('../services/overstay');
 const license = require('../services/license');
 const health = require('../services/health');
+const invites = require('../services/invites');
 const { siteDay, audit, normalizeMobile, cleanText, tidyName, passwordProblem, sha256 } = require('../services/core');
 
 const router = express.Router();
@@ -274,7 +275,7 @@ router.get('/stats', requireRole('admin'), async (req, res) => {
     today, inside, pending, checkedOutToday, forceToday, printFailed, smsFailed, staleInside: staleCut, arrivalsToday: arrivals.length, byHour,
     // So the console can say plainly when SMS are only logged, or no sticker printer is connected.
     smsLive: config.sms.driver !== 'console', telegramOn: telegram.enabled(), emailOn: email.enabled(), printerOn: config.printer.mode !== 'off',
-    expectedToday: await Invite.countDocuments({ day: today, status: 'expected' }),
+    expectedToday: await Invite.countDocuments(invites.openOn(today)),
     backup: health.backup(), disk: health.disk(),
     ...(await gateWork(today)),
   });
@@ -755,17 +756,36 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
 });
 
 // ----- Expected visitors (let in on arrival without waiting for the host) -----
-const inviteRow = (i) => ({
+const inviteRow = (i, today = siteDay()) => ({
   id: String(i._id), firstName: i.firstName, lastName: i.lastName, mobile: i.mobile, company: i.company, purpose: i.purpose, note: i.note,
-  day: i.day, status: i.status, visitId: i.visit ? String(i.visit) : null,
+  day: i.day, dayTo: invites.endOf(i), status: i.status, visitId: i.visit ? String(i.visit) : null,
+  gate: i.gate?.name ? { id: String(i.gate._id), name: i.gate.name } : null,
+  arrivedDays: (i.arrivals || []).map((a) => a.day), arrivedToday: (i.arrivals || []).some((a) => a.day === today),
   host: i.host ? { id: String(i.host._id), name: i.host.fullName, unit: i.host.unit } : null, createdAt: i.createdAt,
 });
+// Ranges that end on or after this day: today's, the coming ones, and the past week's (to see who never came).
+const sinceDay = (day) => ({ $or: [{ dayTo: { $gte: day } }, { dayTo: { $exists: false }, day: { $gte: day } }] });
+// Another entry for the same number on any of these days.
+const overlaps = (mobile, from, to) => ({ mobile, status: 'expected', day: { $lte: to }, ...sinceDay(from) });
+const MAX_RANGE_DAYS = 31;
+// The days of an invite: from today up to 90 days ahead, at most a month long. Returns [from, to] or an error.
+function inviteDays(from, to, today = siteDay()) {
+  const last = siteDay(new Date(Date.now() + 90 * 86400e3));
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ymd.test(String(from || '')) || from < today || from > last) return { error: 'Pick a date from today up to 90 days ahead' };
+  const end = to ? String(to) : from;
+  if (!ymd.test(end) || end < from) return { error: 'The last day must be on or after the first day' };
+  if (end > last) return { error: 'The last day can be at most 90 days ahead' };
+  if ((Date.parse(end) - Date.parse(from)) / 86400e3 >= MAX_RANGE_DAYS) return { error: `Expect someone for at most ${MAX_RANGE_DAYS} days at a time` };
+  return { from, to: end };
+}
 
 router.get('/invites', requireRole('admin'), async (req, res) => {
   const today = siteDay();
-  const rows = await Invite.find({ $or: [{ day: { $gte: today } }, { status: 'arrived', day: today }] })
-    .sort({ day: 1, createdAt: 1 }).limit(500).populate('host').lean();
-  res.json({ today, rows: rows.map(inviteRow) });
+  await invites.closePast(today);
+  const rows = await Invite.find(sinceDay(passes.addDays(today, -7)))
+    .sort({ day: 1, createdAt: 1 }).limit(1000).populate('host').populate('gate', 'name').lean();
+  res.json({ today, rows: rows.map((i) => inviteRow(i, today)) });
 });
 
 router.post('/invites', requireRole('admin'), license.requireLicense, async (req, res) => {
@@ -773,22 +793,23 @@ router.post('/invites', requireRole('admin'), license.requireLicense, async (req
   const firstName = cleanText(b.firstName, 60);
   const lastName = cleanText(b.lastName, 60);
   const mobile = normalizeMobile(b.mobile);
-  const today = siteDay();
-  const last = siteDay(new Date(Date.now() + 90 * 86400e3));
   if (firstName.length < 1 || lastName.length < 1) return res.status(400).json({ error: 'Enter the visitor\'s first and last name' });
   if (!mobile) return res.status(400).json({ error: 'Enter a valid mobile number (Indian mobiles start with 6 to 9)' });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.day || '')) || b.day < today || b.day > last) return res.status(400).json({ error: 'Pick a date from today up to 90 days ahead' });
+  const days = inviteDays(b.day, b.dayTo);
+  if (days.error) return res.status(400).json({ error: days.error });
   if (!mongoose.isValidObjectId(b.hostId)) return res.status(400).json({ error: 'Choose whom they are meeting' });
   const host = await Host.findOne({ _id: b.hostId, active: true }).lean();
   if (!host) return res.status(400).json({ error: 'That host is not active' });
+  const gate = await gateChoice(b.gateId);
+  if (gate === false) return res.status(400).json({ error: 'That gate is switched off. Pick another, or Any gate.' });
   if (await Block.exists({ mobile, active: true })) return res.status(409).json({ error: 'This number is on the blocked list' });
-  if (await Invite.exists({ mobile, day: b.day, status: 'expected' })) return res.status(409).json({ error: 'This visitor is already expected that day' });
+  if (await Invite.exists(overlaps(mobile, days.from, days.to))) return res.status(409).json({ error: 'This visitor is already expected on one of those days' });
   const invite = await Invite.create({
     firstName, lastName, mobile, company: cleanText(b.company, 100), purpose: cleanText(b.purpose, 100), note: cleanText(b.note, 200),
-    host: host._id, day: b.day, createdBy: req.user.id,
+    host: host._id, day: days.from, dayTo: days.to, ...(gate ? { gate: gate._id } : {}), createdBy: req.user.id,
   });
-  audit(req.user, 'invite.created', { entity: 'Invite', entityId: invite._id, details: { name: `${firstName} ${lastName}`, day: b.day, host: host.fullName }, ip: req.ip });
-  res.status(201).json(inviteRow({ ...invite.toObject(), host }));
+  audit(req.user, 'invite.created', { entity: 'Invite', entityId: invite._id, details: { name: `${firstName} ${lastName}`, day: days.from, ...(days.to !== days.from ? { dayTo: days.to } : {}), host: host.fullName, ...(gate ? { gate: gate.name } : {}) }, ip: req.ip });
+  res.status(201).json(inviteRow({ ...invite.toObject(), host, gate }));
 });
 
 // A whole list at once: interview candidates, a delegation, a contractor crew. Same rules as one by one.
@@ -802,7 +823,9 @@ const INVITE_HEAD = {
   company: ['company', 'organisation', 'organization', 'org', 'firm', 'from', 'companyname', 'vendor'],
   purpose: ['purpose', 'reason', 'visitpurpose', 'agenda'],
   note: ['note', 'notes', 'remarks', 'instructions', 'comment', 'comments'],
-  day: ['date', 'day', 'visitdate', 'arrivaldate', 'arrival', 'on'],
+  day: ['date', 'day', 'visitdate', 'arrivaldate', 'arrival', 'on', 'fromdate', 'startdate', 'firstday'],
+  dayTo: ['to', 'todate', 'until', 'till', 'lastday', 'enddate', 'dateto', 'departure', 'departuredate'],
+  gate: ['gate', 'entrance', 'entry', 'entrygate', 'entrypoint'],
   host: ['host', 'meeting', 'whomtomeet', 'tomeet', 'hostname', 'flat', 'unit', 'department', 'dept'],
 };
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
@@ -826,9 +849,15 @@ function parseDay(raw) {
 router.post('/invites/import', requireRole('admin'), async (req, res) => {
   const b = req.body || {};
   const today = siteDay();
-  const last = siteDay(new Date(Date.now() + 90 * 86400e3));
   const defaultDay = b.day ? String(b.day) : '';
-  if (defaultDay && (!/^\d{4}-\d{2}-\d{2}$/.test(defaultDay) || defaultDay < today || defaultDay > last)) return res.status(400).json({ error: 'Pick a date from today up to 90 days ahead' });
+  const defaultTo = b.dayTo ? String(b.dayTo) : '';
+  if (defaultDay) {
+    const d = inviteDays(defaultDay, defaultTo || defaultDay, today);
+    if (d.error) return res.status(400).json({ error: d.error });
+  }
+  const defaultGate = await gateChoice(b.gateId);
+  if (defaultGate === false) return res.status(400).json({ error: 'That gate is switched off. Pick another, or Any gate.' });
+  const activeGates = await Gate.find({ active: true }, 'name').lean();
   const defaultHost = mongoose.isValidObjectId(b.hostId) ? await Host.findOne({ _id: b.hostId, active: true }).lean() : null;
   if (b.hostId && !defaultHost) return res.status(400).json({ error: 'That host is not active' });
 
@@ -855,10 +884,14 @@ router.post('/invites/import', requireRole('admin'), async (req, res) => {
   const mobiles = rows.map((r) => normalizeMobile(r.mobile)).filter(Boolean);
   const [blocked, expected] = await Promise.all([
     Block.find({ mobile: { $in: mobiles }, active: true }, 'mobile').lean(),
-    Invite.find({ mobile: { $in: mobiles }, status: 'expected', day: { $gte: today } }, 'mobile day').lean(),
+    Invite.find({ mobile: { $in: mobiles }, status: 'expected', ...sinceDay(today) }, 'mobile day dayTo').lean(),
   ]);
   const blockedSet = new Set(blocked.map((x) => x.mobile));
-  const taken = new Set(expected.map((x) => `${x.mobile}|${x.day}`));
+  // Days already taken per number (entries saved before, and earlier lines of this sheet).
+  const taken = new Map();
+  const takeDays = (mobile, from, to) => taken.set(mobile, [...(taken.get(mobile) || []), [from, to]]);
+  const clash = (mobile, from, to) => (taken.get(mobile) || []).some(([f, t]) => f <= to && t >= from);
+  for (const x of expected) takeDays(x.mobile, x.day, invites.endOf(x));
 
   const out = rows.map((r) => {
     let full = r.name || `${r.first} ${r.last}`.trim();
@@ -868,9 +901,12 @@ router.post('/invites/import', requireRole('admin'), async (req, res) => {
     full = `${firstName} ${lastName}`.trim();
     const mobile = normalizeMobile(r.mobile);
     const day = r.day ? parseDay(r.day) : defaultDay;
+    const dayTo = r.dayTo ? parseDay(r.dayTo) : r.day ? day : defaultTo || day;
+    const gateHit = r.gate ? activeGates.find((g) => g.name.toLowerCase() === r.gate.toLowerCase()) || false : defaultGate;
     const hostHit = r.host ? byKey.get(r.host.toLowerCase()) : defaultHost;
     const row = {
-      line: r.line, name: full, mobile: mobile || r.mobile, company: r.company, purpose: r.purpose, note: r.note, day: day || r.day,
+      line: r.line, name: full, mobile: mobile || r.mobile, company: r.company, purpose: r.purpose, note: r.note, day: day || r.day, dayTo: dayTo || r.dayTo || '',
+      gate: gateHit ? gateHit.name : '',
       host: hostHit && hostHit !== 'many' ? { id: String(hostHit._id), name: hostHit.fullName, unit: hostHit.unit } : null,
     };
     const fail = (error) => ({ ...row, action: 'error', error });
@@ -878,23 +914,26 @@ router.post('/invites/import', requireRole('admin'), async (req, res) => {
     if (!/^[\p{L} .'-]{1,60}$/u.test(firstName) || !/^[\p{L} .'-]{1,60}$/u.test(lastName)) return fail('The name has characters that are not letters');
     if (!mobile) return fail(r.mobile ? `"${r.mobile}" is not a valid mobile. Use the 10-digit number` : 'No mobile number');
     if (!day) return fail(r.day ? `"${r.day}" is not a date. Write it as 20/10/2026` : 'No day. Go back and pick the day, or add a Date column');
-    if (day < today || day > last) return fail('The date must be from today up to 90 days ahead');
+    if (r.dayTo && !dayTo) return fail(`"${r.dayTo}" is not a date. Write it as 20/10/2026`);
+    const range = inviteDays(day, dayTo, today);
+    if (range.error) return fail(range.error);
+    if (r.gate && !gateHit) return fail(`No gate called "${r.gate}". Use a gate name as listed under Settings → Gates`);
     if (r.host && hostHit === 'many') return fail(`Several hosts share "${r.host}". Use the host's full name instead`);
     if (r.host && !hostHit) return fail(`No host called "${r.host}". Use the host's full name or flat as listed under Hosts`);
     if (!hostHit) return fail('No host. Go back and pick whom they meet, or add a Host column');
     if (blockedSet.has(mobile)) return fail('On the blocked list');
-    if (taken.has(`${mobile}|${day}`)) return fail('Already expected that day');
-    taken.add(`${mobile}|${day}`);
-    return { ...row, action: 'add', firstName, lastName, hostId: hostHit._id };
+    if (clash(mobile, range.from, range.to)) return fail('Already expected on one of those days');
+    takeDays(mobile, range.from, range.to);
+    return { ...row, action: 'add', firstName, lastName, hostId: hostHit._id, dayTo: range.to, gateId: gateHit ? gateHit._id : null };
   });
   const ok = out.filter((r) => r.action === 'add');
   const errors = out.filter((r) => r.action === 'error').map(({ line, name, error }) => ({ line, name, error }));
-  const clean = ({ firstName, lastName, hostId, ...r }) => r; // eslint-disable-line no-unused-vars
+  const clean = ({ firstName, lastName, hostId, gateId, ...r }) => r; // eslint-disable-line no-unused-vars
   if (b.dryRun === true) return res.json({ add: ok.length, errors, rows: out.slice(0, 1000).map(clean) });
 
   const docs = ok.map((r) => ({
     firstName: tidyName(r.firstName), lastName: tidyName(r.lastName), mobile: r.mobile, company: cleanText(r.company, 100), purpose: cleanText(r.purpose, 100),
-    note: cleanText(r.note, 200), host: r.hostId, day: r.day, createdBy: req.user.id,
+    note: cleanText(r.note, 200), host: r.hostId, day: r.day, dayTo: r.dayTo, ...(r.gateId ? { gate: r.gateId } : {}), createdBy: req.user.id,
   }));
   if (docs.length) await Invite.insertMany(docs);
   audit(req.user, 'invite.imported', { details: { created: docs.length, errors: errors.length }, ip: req.ip });

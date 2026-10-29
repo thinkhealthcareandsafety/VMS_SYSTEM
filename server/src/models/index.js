@@ -351,9 +351,13 @@ const inviteSchema = new Schema({
   purpose: { type: String, trim: true, default: '' },
   note: { type: String, trim: true, default: '' },
   host: { type: Schema.Types.ObjectId, ref: 'Host', required: true },
-  day: { type: String, required: true, index: true },        // YYYY-MM-DD, site time
-  status: { type: String, enum: ['expected', 'arrived', 'cancelled'], default: 'expected', index: true },
-  visit: { type: Schema.Types.ObjectId, ref: 'Visit' },
+  day: { type: String, required: true, index: true },        // YYYY-MM-DD, site time: the first day they may come
+  dayTo: { type: String, index: true },                      // the last day (a contractor for a week); unset on older entries = day
+  gate: { type: Schema.Types.ObjectId, ref: 'Gate' },        // the entrance they should use; any gate may still let them in
+  // expected: still to come (on a range, until the last day) | arrived | cancelled | missed: the range passed and they never came
+  status: { type: String, enum: ['expected', 'arrived', 'cancelled', 'missed'], default: 'expected', index: true },
+  arrivals: { type: [{ _id: false, day: String, visit: { type: Schema.Types.ObjectId, ref: 'Visit' }, at: Date }], default: undefined }, // one per day let in
+  visit: { type: Schema.Types.ObjectId, ref: 'Visit' },     // the latest visit
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, opts);
 

@@ -17,6 +17,7 @@ const gate = require('../services/gate');
 const vault = require('../services/vault');
 const overstay = require('../services/overstay');
 const departure = require('../services/departure');
+const invites = require('../services/invites');
 const { requireLicense } = require('../services/license');
 const { approveByPhone } = require('../services/decision');
 const { oneAtATime, siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
@@ -161,7 +162,7 @@ const activeMessage = (v) => {
 const blockFor = (mobile) => Block.findOne({ mobile, active: true }).lean();
 const blockMessage = (b) => `Do not admit${b.name ? ` ${b.name}` : ''}. This number is on the blocked list: ${b.reason}. Call your supervisor.`;
 // An expected visitor for today: let in without waiting for the host.
-const inviteFor = (mobile) => Invite.findOne({ mobile, day: siteDay(), status: 'expected' }).sort({ createdAt: -1 }).populate('host').lean();
+const inviteFor = (mobile) => invites.forMobile(mobile);
 
 // Message status per visit, in one query: the latest phone message (SMS, Telegram or WhatsApp),
 // except that a failed one whose email went through reads 'email', so the guard is not told nobody was reached.
@@ -290,8 +291,8 @@ async function checkIn(req, res) {
   // Expected visitor: only honoured for the same person, today, meeting the same host.
   let invite = null;
   if (b.inviteId) {
-    invite = isId(b.inviteId) ? await Invite.findOne({ _id: b.inviteId, status: 'expected' }).lean() : null;
-    if (!invite || invite.mobile !== mobile || invite.day !== siteDay() || String(invite.host) !== String(host._id)) {
+    invite = isId(b.inviteId) ? await Invite.findOne({ _id: b.inviteId, ...invites.openOn(siteDay()) }).lean() : null;
+    if (!invite || invite.mobile !== mobile || String(invite.host) !== String(host._id)) {
       return res.status(409).json({ error: 'That expected-visitor entry no longer matches. Send the request to the host instead.' });
     }
   }
@@ -342,7 +343,7 @@ async function checkIn(req, res) {
 
     if (invite) {
       // Claim the invite first, so two guards cannot both use it.
-      const claimed = await Invite.findOneAndUpdate({ _id: invite._id, status: 'expected' }, { status: 'arrived', visit: visit._id }, { new: true });
+      const claimed = await invites.claim(invite, visit._id);
       if (claimed) {
         const { day, number } = await nextDailyNumber();
         const now = new Date();
@@ -353,6 +354,7 @@ async function checkIn(req, res) {
         await visit.save();
         if (config.printer.mode !== 'off') await Outbox.create({ kind: 'print', visit: visit._id });
         audit(req.user, 'visit.approved', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, dailyNumber: number, via: 'expected' }, ip: req.ip });
+        await invites.tellHostArrived(visit, host, gate?.name).catch((err) => console.error('[expected arrival]', err.message));
         return res.status(201).json({ id: String(visit._id), ref: visit.ref, status: visit.status, dailyNumber: number, validUntil: visit.validUntil, passCode: visit.passCode, card: card || null });
       }
     }
@@ -430,8 +432,37 @@ router.get('/lookup', requireRole('guard', 'admin'), async (req, res) => {
     invite: invite && invite.host?.active ? {
       id: String(invite._id), firstName: invite.firstName, lastName: invite.lastName, company: invite.company, purpose: invite.purpose, note: invite.note,
       host: { id: String(invite.host._id), name: invite.host.fullName, unit: invite.host.unit },
+      gate: invite.gate?.name || null, dayOf: invites.dayOf(invite),
+      elsewhere: Boolean(invite.gate && String(invite.gate._id) !== String((await passes.gateOf(req.user.id)).id)),
     } : null,
   });
+});
+
+// Expected today, for every gate tablet: still to come (the guard's own gate first), and who already came today.
+router.get('/expected', requireRole('guard', 'admin'), async (req, res) => {
+  const today = siteDay();
+  const [mine, open, came] = await Promise.all([
+    passes.gateOf(req.user.id),
+    Invite.find(invites.openOn(today)).populate('host').populate('gate', 'name').lean(),
+    Invite.find({ 'arrivals.day': today }).populate('host').populate('arrivals.visit', 'dailyNumber movements').lean(),
+  ]);
+  const hostOf = (i) => ({ id: String(i.host._id), name: i.host.fullName, unit: i.host.unit });
+  const here = (i) => Boolean(i.gate && mine.id && String(i.gate._id) === String(mine.id));
+  const rows = open.filter((i) => i.host?.active !== false && i.host)
+    .map((i) => ({
+      id: String(i._id), firstName: i.firstName, lastName: i.lastName, mobile: i.mobile, company: i.company, purpose: i.purpose, note: i.note,
+      host: hostOf(i), gate: i.gate?.name || null, here: here(i), dayOf: invites.dayOf(i, today),
+    }))
+    .sort((a, b) => (b.here - a.here) || `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+  const arrived = came.filter((i) => i.host).map((i) => {
+    const a = i.arrivals.find((x) => x.day === today);
+    const v = a?.visit;
+    return {
+      id: String(i._id), firstName: i.firstName, lastName: i.lastName, host: hostOf(i), at: a?.at || null,
+      visitId: v?._id ? String(v._id) : null, dailyNumber: v?.dailyNumber ?? null, gate: v?.movements?.find((m) => m.kind === 'in')?.gateName || '',
+    };
+  }).sort((a, b) => new Date(b.at) - new Date(a.at));
+  res.json({ today, gate: mine.name, rows, arrived });
 });
 
 // The guard's "waiting for host" tray: everything still undecided, no-replies from the last 30 minutes, and decisions from the last 20,

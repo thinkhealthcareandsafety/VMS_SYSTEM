@@ -1954,6 +1954,9 @@ const dayLabel = (day, today) => {
   if (day === t.toISOString().slice(0, 10)) return 'Tomorrow';
   return fmtDate(`${day}T12:00:00+05:30`);
 };
+// One day, or "Today to 31 Oct" for someone expected over several days.
+const rangeLabel = (r, today) => (r.dayTo && r.dayTo !== r.day ? `${dayLabel(r.day, today)} to ${dayLabel(r.dayTo, today)}` : dayLabel(r.day, today));
+const coversToday = (r, today) => r.day <= today && (r.dayTo || r.day) >= today;
 
 function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
   const [data, setData] = useState(null);
@@ -1961,14 +1964,16 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [batch, setBatch] = useState({ day: daysAgo(0), host: null }); // the day and host for an imported list
+  const [batch, setBatch] = useState({ day: daysAgo(0), dayTo: '', gateId: '', host: null }); // the days, gate and host for an imported list
+  const [gates, setGates] = useState([]);
+  useEffect(() => { api('/api/admin/gates').then((x) => setGates(x.rows.filter((g) => g.active))).catch(() => {}); }, []);
   const [picked, setPicked] = useState(() => new Set());
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => api('/api/admin/invites').then(setData).catch(() => setData({ today: daysAgo(0), rows: [] })), []);
   useEffect(() => { load(); }, [load, tick]);
   useIntent(intent, { add: () => setAdding(true), import: () => setImporting(true) });
-  useEffect(() => { if (importing) setBatch({ day: daysAgo(0), host: null }); }, [importing]);
+  useEffect(() => { if (importing) setBatch({ day: daysAgo(0), dayTo: '', gateId: '', host: null }); }, [importing]);
 
   const cancel = async (r) => {
     try { await api(`/api/admin/invites/${r.id}`, { method: 'PATCH', body: { status: 'cancelled' } }); toast(`${r.firstName} ${r.lastName} is no longer expected.`); load(); refresh(); } catch (e) { toast(e.message, 'bad'); }
@@ -1984,10 +1989,12 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
 
   const today = data?.today;
   const term = q.trim().toLowerCase();
+  const ended = (r) => (r.dayTo || r.day) < today;
   const rows = (data?.rows || [])
-    .filter((r) => (view === 'today' ? r.day === today : r.status !== 'cancelled' || r.day === today))
+    .filter((r) => (view === 'today' ? coversToday(r, today) : view === 'past' ? ended(r) : !ended(r) && (r.status !== 'cancelled' || coversToday(r, today))))
     .filter((r) => !term || `${r.firstName} ${r.lastName} ${r.mobile} ${r.company} ${r.host?.name} ${r.host?.unit}`.toLowerCase().includes(term));
-  const todayCount = (data?.rows || []).filter((r) => r.day === today && r.status === 'expected').length;
+  const todayCount = (data?.rows || []).filter((r) => coversToday(r, today) && r.status === 'expected' && !r.arrivedToday).length;
+  const missedCount = (data?.rows || []).filter((r) => r.status === 'missed').length;
   const open = rows.filter((r) => r.status === 'expected');
   const allPicked = open.length > 0 && open.every((r) => picked.has(r.id));
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -2000,6 +2007,7 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
         <div className="seg" role="group" aria-label="Which days">
           <button aria-pressed={view === 'today'} onClick={() => setView('today')}>Today{todayCount > 0 && <span className="n">{todayCount}</span>}</button>
           <button aria-pressed={view === 'upcoming'} onClick={() => setView('upcoming')}>Today and later</button>
+          <button aria-pressed={view === 'past'} onClick={() => setView('past')}>Past week{missedCount > 0 && <span className="n">{missedCount} didn’t come</span>}</button>
         </div>
         <div className="input-group field wide"><Search /><input className="input" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, mobile, host" aria-label="Search expected visitors" /></div>
         <span className="spacer-x" />
@@ -2008,7 +2016,7 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
       </div>
       <div className="notice">
         <Info />
-        <span className="grow">People added here <strong>do not wait for the host</strong>. At the gate the guard types their mobile number, the form fills in, and they get their pass at once. Their photo and ID are still taken.</span>
+        <span className="grow">People added here <strong>do not wait for the host</strong>. Every gate tablet lists today’s expected people; the guard taps the name, and they get their pass at once. Their photo and ID are still taken, and the host gets an email when they arrive.</span>
       </div>
       {!data ? <ListSkeleton /> : rows.length === 0 ? (
         <Empty icon={CalendarCheck} title={term ? 'No match' : 'Nobody expected yet'} action={term ? null : (
@@ -2024,27 +2032,30 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
           <table className="table">
             <thead><tr>
               <th className="pick-col">{open.length > 0 && <input type="checkbox" checked={allPicked} onChange={toggleAll} aria-label="Select everyone still expected" />}</th>
-              <th>Day</th><th>Visitor</th><th>Meeting</th><th>Note for the guard</th><th>Status</th><th className="r"><span className="sr-only">Actions</span></th>
+              <th>Days</th><th>Visitor</th><th>Meeting</th><th>Gate</th><th>Note for the guard</th><th>Status</th><th className="r"><span className="sr-only">Actions</span></th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className={`${r.status === 'cancelled' ? 'row-off' : ''}${picked.has(r.id) ? ' row-picked' : ''}`}>
                   <td className="pick-col">{r.status === 'expected' && <input type="checkbox" checked={picked.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Select ${r.firstName} ${r.lastName}`} />}</td>
-                  <td className={r.day === today ? 'day-today' : ''}>{dayLabel(r.day, today)}</td>
+                  <td className={coversToday(r, today) ? 'day-today' : ''}>{rangeLabel(r, today)}{r.arrivedDays?.length > 0 && r.dayTo !== r.day && <div className="meta-line">Came {r.arrivedDays.length} {r.arrivedDays.length === 1 ? 'day' : 'days'}</div>}</td>
                   <td>
                     <div className="name">{r.firstName} {r.lastName}</div>
                     <div className="meta-line">{fmtMobile(r.mobile)}{r.company ? ` · ${r.company}` : ''}{r.purpose ? ` · ${r.purpose}` : ''}</div>
                   </td>
                   <td>{r.host?.name}<div className="meta-line">{r.host?.unit}</div></td>
+                  <td>{r.gate?.name || <span className="faint">Any gate</span>}</td>
                   <td className="meta-line wrap">{r.note || '—'}</td>
                   <td>
                     {r.status === 'arrived' ? <span className="badge badge-live">Arrived</span>
                       : r.status === 'cancelled' ? <span className="badge">Cancelled</span>
-                        : <span className="badge badge-warn">Expected</span>}
+                        : r.status === 'missed' ? <span className="badge badge-bad">Didn’t come</span>
+                          : r.arrivedToday ? <span className="badge badge-live">Arrived today</span>
+                            : <span className="badge badge-warn">Expected</span>}
                   </td>
                   <td className="r">
                     {r.status === 'expected' && <button className="btn btn-sm btn-ghost" onClick={() => cancel(r)}><X />Cancel</button>}
-                    {r.status === 'arrived' && r.visitId && <button className="btn btn-sm" onClick={() => openVisit(r.visitId)}>View visit</button>}
+                    {(r.status === 'arrived' || r.arrivedToday) && r.visitId && <button className="btn btn-sm" onClick={() => openVisit(r.visitId)}>View visit</button>}
                   </td>
                 </tr>
               ))}
@@ -2066,35 +2077,57 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
         open={importing} onClose={() => setImporting(false)} onDone={() => { load(); refresh(); }}
         title="Import expected visitors" noun={['visitor', 'visitors']} endpoint="/api/admin/invites/import"
         intro="For a group you know is coming: interview candidates, a delegation, a contractor crew. 1. Pick the day and whom they meet. 2. Upload the sheet or paste the rows. 3. Check the lines, then add them."
-        body={{ day: batch.day, hostId: batch.host?.id }}
+        body={{ day: batch.day, dayTo: batch.dayTo || undefined, gateId: batch.gateId || undefined, hostId: batch.host?.id }}
         settings={(
           <div className="import-settings">
-            <label className="field"><span>Day they come</span>
-              <input className="input" type="date" min={daysAgo(0)} max={daysAgo(-90)} value={batch.day} onChange={(e) => setBatch({ ...batch, day: e.target.value })} />
-            </label>
+            <div className="grid-2">
+              <label className="field"><span>First day</span>
+                <input className="input" type="date" min={daysAgo(0)} max={daysAgo(-90)} value={batch.day} onChange={(e) => setBatch({ ...batch, day: e.target.value, dayTo: batch.dayTo && batch.dayTo < e.target.value ? '' : batch.dayTo })} />
+              </label>
+              <label className="field"><span>Last day <span className="faint">· if more than one</span></span>
+                <input className="input" type="date" min={batch.day} max={daysAgo(-90)} value={batch.dayTo} onChange={(e) => setBatch({ ...batch, dayTo: e.target.value })} />
+              </label>
+            </div>
+            {gates.length > 1 && <GateSelect gates={gates} value={batch.gateId} onChange={(gateId) => setBatch({ ...batch, gateId })} />}
             <div className="field"><span>Whom they meet</span><HostPicker value={batch.host} onChange={(host) => setBatch({ ...batch, host })} /></div>
-            <span className="hint">People on different days or with different hosts? Add a <strong>Date</strong> or <strong>Host</strong> column to the sheet (the host's name or flat). The sheet's column is used for that person instead of these two boxes.</span>
+            <span className="hint">People on different days, gates or hosts? Add a <strong>Date</strong>, <strong>To date</strong>, <strong>Gate</strong> or <strong>Host</strong> column to the sheet (the host's name or flat). The sheet's column is used for that person instead of these boxes.</span>
           </div>
         )}
         placeholder={'Kavya Iyer\t98765 43210\tTCS\nArjun Rao\t98200 11223\tInfosys'}
-        template={'Name,Mobile,Company,Purpose,Note for the guard,Date,Host\r\nKavya Iyer,98765 43210,TCS,Interview,,,\r\n'} templateName="expected visitors"
+        template={'Name,Mobile,Company,Purpose,Note for the guard,Date,To date,Gate,Host\r\nKavya Iyer,98765 43210,TCS,Interview,,,,,\r\n'} templateName="expected visitors"
         columns={[
           { label: 'Name', cell: (r) => r.name },
           { label: 'Mobile', cell: (r) => <span className="num">{fmtMobile(r.mobile)}</span> },
           { label: 'Company', cell: (r) => r.company },
-          { label: 'Day', cell: (r) => (/^\d{4}-\d{2}-\d{2}$/.test(r.day || '') && today ? dayLabel(r.day, today) : r.day) },
+          { label: 'Days', cell: (r) => (/^\d{4}-\d{2}-\d{2}$/.test(r.day || '') && today ? rangeLabel(r, today) : r.day) },
+          { label: 'Gate', cell: (r) => r.gate || 'Any gate' },
           { label: 'Meeting', cell: (r) => (r.host ? `${r.host.name}, ${r.host.unit}` : '') },
         ]}
         status={() => ['Ready', 'badge-live']}
-        done={(r) => `${r.created} ${r.created === 1 ? 'visitor is' : 'visitors are'} now expected. The guard sees them as soon as their mobile number is typed at the gate.`}
+        done={(r) => `${r.created} ${r.created === 1 ? 'visitor is' : 'visitors are'} now expected. On their day they are listed on every gate tablet.`}
       />
     </section>
   );
 }
 
+// Which entrance they should use. Only a guide: any gate can still let them in.
+function GateSelect({ gates, value, onChange }) {
+  return (
+    <label className="field"><span>Gate they use <span className="faint">· optional</span></span>
+      <select className="select" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any gate</option>
+        {gates.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+      </select>
+      <span className="hint">They show first on that gate’s tablet. Every gate can still let them in.</span>
+    </label>
+  );
+}
+
 function ExpectedDialog({ open, onClose, onDone }) {
   const toast = useToast();
-  const blank = () => ({ day: daysAgo(0), firstName: '', lastName: '', mobile: '', company: '', purpose: '', note: '' });
+  const blank = () => ({ day: daysAgo(0), dayTo: '', gateId: '', firstName: '', lastName: '', mobile: '', company: '', purpose: '', note: '' });
+  const [gates, setGates] = useState([]);
+  useEffect(() => { if (open) api('/api/admin/gates').then((x) => setGates(x.rows.filter((g) => g.active))).catch(() => {}); }, [open]);
   const [f, setF] = useState(blank);
   const [host, setHost] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -2109,8 +2142,8 @@ function ExpectedDialog({ open, onClose, onDone }) {
     if (!host) return setErr('Choose whom they are meeting');
     setBusy(true); setErr('');
     try {
-      await api('/api/admin/invites', { method: 'POST', body: { ...f, mobile: digits, hostId: host.id } });
-      toast(`${f.firstName} ${f.lastName} added for ${f.day === daysAgo(0) ? 'today' : fmtDate(`${f.day}T12:00:00+05:30`)}.`);
+      const r = await api('/api/admin/invites', { method: 'POST', body: { ...f, dayTo: f.dayTo || undefined, gateId: f.gateId || undefined, mobile: digits, hostId: host.id } });
+      toast(`${f.firstName} ${f.lastName} expected ${rangeLabel(r, daysAgo(0)).replace(/^Today$/, 'today').replace(/^Tomorrow$/, 'tomorrow')}${r.gate ? ` at ${r.gate.name}` : ''}. Every gate tablet lists them on the day.`);
       onDone();
       onClose();
     } catch (x) { setErr(x.message); } finally { setBusy(false); }
@@ -2122,7 +2155,10 @@ function ExpectedDialog({ open, onClose, onDone }) {
         <div className="dialog-head"><h2>Add an expected visitor</h2><p>They are let in on arrival, without waiting for the host to reply.</p></div>
         <div className="dialog-body">
           <div className="grid-2">
-            <label className="field"><span>Day</span><input className="input" type="date" required min={daysAgo(0)} max={maxDay} value={f.day} onChange={set('day')} /></label>
+            <label className="field"><span>First day</span><input className="input" type="date" required min={daysAgo(0)} max={maxDay} value={f.day} onChange={(e) => setF({ ...f, day: e.target.value, dayTo: f.dayTo && f.dayTo < e.target.value ? '' : f.dayTo })} /></label>
+            <label className="field"><span>Last day <span className="faint">· if more than one</span></span><input className="input" type="date" min={f.day} max={maxDay} value={f.dayTo} onChange={set('dayTo')} /></label>
+          </div>
+          <div className="grid-2">
             <label className="field"><span>Mobile</span>
               <div className="input-group"><span className="prefix">+91</span><input className="input num" inputMode="numeric" required value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value.replace(/[^\d ]/g, '').slice(0, 11) })} placeholder="98765 43210" /></div>
             </label>
@@ -2136,6 +2172,7 @@ function ExpectedDialog({ open, onClose, onDone }) {
             <label className="field"><span>Purpose <span className="faint">· optional</span></span><input className="input" value={f.purpose} onChange={set('purpose')} placeholder="Meeting, delivery…" /></label>
           </div>
           <div className="field"><span>Meeting</span><HostPicker value={host} onChange={setHost} /></div>
+          {gates.length > 1 && <GateSelect gates={gates} value={f.gateId} onChange={(gateId) => setF({ ...f, gateId })} />}
           <label className="field"><span>Note for the guard <span className="faint">· optional</span></span><input className="input" maxLength={200} value={f.note} onChange={set('note')} placeholder="e.g. Bringing a laptop, send to 3rd floor" /></label>
           {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
         </div>

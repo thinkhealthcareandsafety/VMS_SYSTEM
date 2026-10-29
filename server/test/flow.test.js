@@ -1654,7 +1654,7 @@ test('expected visitors in bulk: preview, per-line reasons, own dates and hosts,
   assert.match(why[4], /first and last name/);
   assert.match(why[5], /not a valid mobile/);
   assert.equal(why[6], 'On the blocked list');
-  assert.equal(why[7], 'Already expected that day');
+  assert.equal(why[7], 'Already expected on one of those days');
   assert.match(why[8], /No host called/);
   assert.match(why[9], /90 days/);
   const arjun = dry.body.rows.find((r) => r.name === 'Arjun Rao');
@@ -2324,4 +2324,74 @@ test('daily report by email: a PDF to the security manager once a night, and on 
     Object.assign(config.email, saved);
     await settings.update({ dailyReportTo: [], dailyReportSentFor: '' });
   }
+});
+
+test('expected visitors: a date range and a gate, listed on every gate tablet, the host told on arrival, closed after', async () => {
+  const config = require('../src/config');
+  const { Invite, Outbox, Host } = require('../src/models');
+  const invites = require('../src/services/invites');
+  const { siteDay } = require('../src/services/core');
+  const passes = require('../src/services/passes');
+  const today = siteDay();
+  const tower = await call('POST', '/api/admin/gates', { name: 'Tower Test Gate' }, admin);
+  assert.equal(tower.status, 201, JSON.stringify(tower.body));
+  const add = (body) => call('POST', '/api/admin/invites', { firstName: 'Kabir', lastName: 'Contractor', mobile: '9700000501', company: 'BuildCo', hostId: hostIds.rahul, day: today, ...body }, admin);
+
+  assert.equal((await add({ dayTo: passes.addDays(today, -1) })).status, 400, 'last day before the first');
+  assert.equal((await add({ dayTo: passes.addDays(today, 40) })).status, 400, 'at most a month');
+  assert.equal((await add({ gateId: '000000000000000000000000' })).status, 400, 'unknown gate');
+  const inv = await add({ dayTo: passes.addDays(today, 2), gateId: tower.body.id, note: 'Fixing the lobby lights' });
+  assert.equal(inv.status, 201, JSON.stringify(inv.body));
+  assert.equal(inv.body.dayTo, passes.addDays(today, 2));
+  assert.equal(inv.body.gate.name, 'Tower Test Gate');
+  assert.equal((await add({ day: passes.addDays(today, 1) })).status, 409, 'overlapping days refused');
+
+  // Every gate lists them, with the day of the range and the gate they should use.
+  const list = await call('GET', '/api/visits/expected', null, guard);
+  assert.equal(list.status, 200);
+  const row = list.body.rows.find((r) => r.id === inv.body.id);
+  assert.ok(row, 'on the guard\'s list');
+  assert.equal(row.gate, 'Tower Test Gate');
+  assert.equal(row.dayOf, 'Day 1 of 3');
+  assert.equal(row.mobile, '+919700000501');
+  assert.equal((await call('GET', '/api/visits/lookup?mobile=9700000501', null, guard)).body.invite.gate, 'Tower Test Gate');
+
+  // Let in: pass at once, the host emailed, and the list moves them to "arrived".
+  const saved = { ...config.email };
+  Object.assign(config.email, { driver: 'smtp', from: 'desk@example.com', smtp: { ...saved.smtp, host: '127.0.0.1', port: 9, user: 'u', pass: 'p' } });
+  await Host.updateOne({ _id: hostIds.rahul }, { email: 'rahul@example.com' });
+  try {
+    const v = await call('POST', '/api/visits', { firstName: 'Kabir', lastName: 'Contractor', gender: 'male', mobile: '9700000501', company: 'BuildCo', hostId: hostIds.rahul, photo: jpeg(), idImage: jpeg(), inviteId: inv.body.id }, guard);
+    assert.equal(v.status, 201, JSON.stringify(v.body));
+    assert.equal(v.body.status, 'approved');
+    const mail = await Outbox.findOne({ visit: v.body.id, kind: 'email', to: 'rahul@example.com' }).lean();
+    assert.ok(mail && /has arrived/.test(mail.vars.subject), 'host told their guest arrived');
+    const after = await call('GET', '/api/visits/expected', null, guard);
+    assert.ok(!after.body.rows.some((r) => r.id === inv.body.id), 'off the to-come list for today');
+    const came = after.body.arrived.find((r) => r.id === inv.body.id);
+    assert.ok(came && came.dailyNumber === v.body.dailyNumber, 'shown as arrived with the pass number');
+    assert.equal((await call('GET', '/api/visits/lookup?mobile=9700000501', null, guard)).body.invite, null, 'once a day');
+    const doc = await Invite.findById(inv.body.id).lean();
+    assert.equal(doc.status, 'expected', 'still expected on the coming days');
+    const adminRow = (await call('GET', '/api/admin/invites', null, admin)).body.rows.find((r) => r.id === inv.body.id);
+    assert.equal(adminRow.arrivedToday, true);
+  } finally {
+    Object.assign(config.email, saved);
+    await Host.updateOne({ _id: hostIds.rahul }, { $unset: { email: 1 } });
+  }
+
+  // The coming days: open again tomorrow, closed for good on the last day.
+  const doc = await Invite.findById(inv.body.id).lean();
+  assert.ok(await Invite.exists({ _id: doc._id, ...invites.openOn(passes.addDays(today, 1)) }), 'open again tomorrow');
+  assert.ok(await invites.claim(doc, doc.visit, passes.addDays(today, 1)));
+  assert.equal(await invites.claim(doc, doc.visit, passes.addDays(today, 1)), null, 'not twice the same day');
+  assert.ok(await invites.claim(doc, doc.visit, passes.addDays(today, 2)));
+  assert.equal((await Invite.findById(doc._id).lean()).status, 'arrived', 'the last day closes it');
+
+  // Never came: closed as missed once the days are over.
+  const no = await add({ mobile: '9700000502', firstName: 'Nobody' });
+  await Invite.updateOne({ _id: no.body.id }, { day: passes.addDays(today, -2), dayTo: passes.addDays(today, -1) });
+  await invites.closePast(today);
+  assert.equal((await Invite.findById(no.body.id).lean()).status, 'missed');
+  await Invite.deleteMany({ mobile: { $in: ['+919700000501', '+919700000502'] } });
 });
