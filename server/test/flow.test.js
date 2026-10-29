@@ -192,6 +192,18 @@ test('admin can download visits as an Excel-safe sheet and as a ZIP with photos'
   assert.match(names, /\/\d{4}-\d{2}-\d{2}\/V-\d{6} Kiran Sharma\/photo\.jpg/, 'one folder per visit');
   assert.doesNotMatch(names, /Ravi Sharma/, 'filters apply to the ZIP too');
   assert.doesNotMatch(names, /aadhaar-masked/, 'Aadhaar only when asked for');
+  assert.match(names, /\/READ ME FIRST\.txt/, 'how to open it (unzip, Enable Editing) comes with it');
+  // The photo links are saved as Excel saves them, spaces as %20, relative to the sheet.
+  const { PassThrough } = require('node:stream');
+  const sheetOut = new PassThrough();
+  const chunks = [];
+  sheetOut.on('data', (c) => chunks.push(c));
+  async function* one() { yield { day: '2026-10-29', ref: 'V-000001', firstName: 'Kiran', lastName: 'Sharma', folder: '2026-10-29/V-000001 Kiran Sharma', hasPhoto: true, hasIdImage: false }; }
+  await require('../src/services/export').writeWorkbook(sheetOut, one(), { files: { aadhaar: false }, meta: {} });
+  const linked = new (require('exceljs').Workbook)();
+  await linked.xlsx.load(Buffer.concat(chunks));
+  const photoCol = linked.getWorksheet(1).getRow(1).values.indexOf('Photo');
+  assert.equal(linked.getWorksheet(1).getRow(2).getCell(photoCol).value.hyperlink, '2026-10-29/V-000001%20Kiran%20Sharma/photo.jpg');
 
   // With Aadhaar: the masked image goes in the visitor's folder, and the download is audited as such.
   const withId = Buffer.from(await (await fetch(`${base}/api/admin/visits.zip?name=Kiran&aadhaar=1`, { headers: { Cookie: admin } })).arrayBuffer());

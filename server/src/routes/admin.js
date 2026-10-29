@@ -180,6 +180,21 @@ router.get('/visits.xlsx', requireRole('admin'), async (req, res) => {
 //   Visitor records <dates>/Report.html
 //   Visitor records <dates>/2026-10-06/V-000012 Ravi Kumar/photo.jpg
 //   Visitor records <dates>/2026-10-06/V-000012 Ravi Kumar/aadhaar-masked.jpg
+// Windows marks a downloaded ZIP and everything unzipped from it as "from the internet": Excel then opens the sheet in
+// Protected View, where links to the photos do nothing until Enable Editing is clicked. Said where people look first.
+const OPEN_ME = [
+  'HOW TO OPEN THESE RECORDS',
+  '',
+  '1. Unzip first: right-click the .zip file and choose "Extract All". Do not open the files from inside the .zip.',
+  '2. Open Visitors.xlsx from the extracted folder.',
+  '3. Excel shows a yellow bar at the top saying PROTECTED VIEW. Click "Enable Editing".',
+  '   Until you do, the Open links in the Photo and Aadhaar columns do nothing.',
+  '4. Click Open in a row to see that visitor\'s photo. If Excel asks whether to continue, click Yes.',
+  '',
+  'Report.html shows every visitor with their photo in your web browser, no Excel needed. Use it to print.',
+  'The photos are also in the dated folders, one folder per visit (Visitor ID and name).',
+].join('\r\n');
+
 router.get('/visits.zip', requireRole('admin'), async (req, res) => {
   const aadhaar = req.query.aadhaar === '1';
   const q = await visitFilter(req.query);
@@ -200,6 +215,7 @@ router.get('/visits.zip', requireRole('admin'), async (req, res) => {
   zip.append(sheet, { name: `${root}/Visitors.xlsx` });
   exporter.writeWorkbook(sheet, recs, { files: { aadhaar }, meta }).catch((err) => sheet.destroy(err));
   zip.append(exporter.report(recs, { meta, aadhaar }), { name: `${root}/Report.html` });
+  zip.append(OPEN_ME, { name: `${root}/READ ME FIRST.txt` });
   for (const r of recs) {
     if (r.hasPhoto) zip.file(path.resolve(r.photoPath), { name: `${root}/${r.folder}/photo.jpg` });
     if (r.hasIdImage) zip.file(path.resolve(r.idImagePath), { name: `${root}/${r.folder}/aadhaar-masked.jpg` });

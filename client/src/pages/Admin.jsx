@@ -1594,6 +1594,9 @@ function ExportDialog({ opts, onClose }) {
             <span><strong>Include masked Aadhaar images</strong><br /><span className="faint">First 8 digits are blacked out on the guard’s device. Images deleted under the retention rule are not available.</span></span>
           </label>
         )}
+        {format === 'zip' && (
+          <div className="notice"><Info /><span className="grow">To open it: right-click the file, choose <strong>Extract All</strong>, and open <strong>Visitors.xlsx</strong> from the new folder. Click <strong>Enable Editing</strong> in Excel’s yellow bar, then each <strong>Open</strong> link shows the photo. Report.html shows all the photos without Excel.</span></div>
+        )}
         <p className="faint" style={{ fontSize: 12.5 }}>Every download is recorded in the audit log{format === 'zip' && withAadhaar ? ', including that Aadhaar images were taken' : ''}.</p>
       </div>
       <div className="dialog-foot">

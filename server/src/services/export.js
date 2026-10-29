@@ -136,8 +136,9 @@ async function writeWorkbook(out, recs, { files = null, meta }) {
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
   head.commit();
 
-  // Relative links to the files next to the sheet. Plain paths: Excel on Windows resolves these most reliably.
-  const link = (text, target) => ({ text, hyperlink: target });
+  // Relative links to the files next to the sheet, each folder name percent-encoded as Excel itself saves them:
+  // a raw space in the link ("V-0001 Asha Rao") makes Excel say "Cannot open the specified file".
+  const link = (text, target) => ({ text, hyperlink: src(target) });
   let n = 0;
   for await (const r of recs) {
     const row = ws.addRow({
@@ -170,6 +171,7 @@ async function writeWorkbook(out, recs, { files = null, meta }) {
     ...(meta.filters ? [['Filters', meta.filters]] : []),
     ['Contents', files ? `This sheet, a printable report (Report.html), and one folder per visit with the visitor photo${files.aadhaar ? ' and the masked Aadhaar image' : ''}.` : 'This sheet only. Photos are in the full record download.'],
     ['Times', `Local time at the site (${config.timezone}).`],
+    ...(files ? [['Photo links', 'If Open does nothing: unzip the download first (Extract All), then click Enable Editing in the yellow bar at the top.']] : []),
     ...(files?.aadhaar ? [['Aadhaar images', 'Masked on the guard\'s device before upload: the first 8 digits are blacked out. Handle as personal data.']] : []),
   ];
   for (const [k, v] of lines) {
