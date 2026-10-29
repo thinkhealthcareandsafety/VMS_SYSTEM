@@ -58,7 +58,7 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
   if (value === 'skipped') {
     return (
       <div className="alert alert-warn" role="status">
-        <ShieldAlert /><span className="grow">Number <strong>not verified</strong> (guard knows the visitor). Recorded on the visit.</span>
+        <ShieldAlert /><span className="grow">Proceeding <strong>without OTP verification</strong>.</span>
         <button type="button" className="btn btn-sm" onClick={() => onChange(null)}>Verify now</button>
       </div>
     );
@@ -70,13 +70,13 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
         <MessageSquare />
         <span className="grow">
           <strong>Verify this number?</strong>
-          <small>{sentAt ? `A 6-digit code was sent to +91 ${mobile.slice(0, 5)} ${mobile.slice(5)}. Ask the visitor to read it out.` : mode === 'required' ? 'Required at this gate: we text a code and the visitor reads it out.' : 'Send a code for a new visitor. Skip it for someone you know.'}</small>
+          <small>{sentAt ? `A 6-digit code was sent to +91 ${mobile.slice(0, 5)} ${mobile.slice(5)}. Ask the visitor to read it out.` : mode === 'required' ? 'Required at this gate: we text a code and the visitor reads it out.' : 'Send an OTP to the visitor’s phone, or proceed without it.'}</small>
         </span>
       </div>
       {!sentAt && (
         <div className="otp-choice">
           <button type="button" className="btn btn-primary" disabled={busy === 'send'} onClick={send}>{busy === 'send' ? <Spinner /> : <MessageSquare />}Send OTP</button>
-          {canSkip && <button type="button" className="btn" onClick={() => onChange('skipped')}><UserCheck />Don’t verify: I know this person</button>}
+          {canSkip && <button type="button" className="btn" onClick={() => onChange('skipped')}><UserCheck />Proceed without OTP</button>}
         </div>
       )}
       {sentAt && (
@@ -94,7 +94,7 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
       {notice && !error && <p className="hint" role="status">{notice}</p>}
       {error && <p className="hint err" role="alert">{error}</p>}
       {canSkip && sentAt && (
-        <button type="button" className="otp-skip" onClick={() => onChange('skipped')}>Code not arriving? Continue without verifying</button>
+        <button type="button" className="otp-skip" onClick={() => onChange('skipped')}>OTP not arriving? Proceed without OTP</button>
       )}
     </div>
   );

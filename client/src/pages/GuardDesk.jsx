@@ -554,11 +554,17 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
   }, [liveTick]);
 
   // The ID or the face does not fit the person: the guard must look and decide, not click past it.
-  const concerns = [
+  // Known right after the photos (card and face) / only once the name and gender are typed.
+  const cardConcerns = [
     idCheck?.tamper && 'the QR does not belong to this ID card',
-    idCheck?.status === 'mismatch' && (idCheck.gender === 'mismatch' && idCheck.name !== 'mismatch' ? 'the gender on the ID does not match' : 'the name on the ID does not match'),
     match?.status === 'scored' && bandOf(match.score) === 'weak' && `the face matches the ID photo only ${match.score}%`,
+    match?.status === 'no_card_face' && 'no face found on the ID card',
+    match?.status === 'no_photo_face' && 'no face found in the live photo',
   ].filter(Boolean);
+  const nameConcerns = [
+    idCheck?.status === 'mismatch' && (idCheck.gender === 'mismatch' && idCheck.name !== 'mismatch' ? 'the gender on the ID does not match' : 'the name on the ID does not match'),
+  ].filter(Boolean);
+  const concerns = [...cardConcerns, ...nameConcerns];
   useEffect(() => { setIdAck(''); }, [photo, idImage]);
 
   const checks = [
@@ -568,12 +574,13 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
     ['visitor', otp.mode !== 'required' || Boolean(otp.verified) || verify === 'verified' || (isAdmin && verify === 'skipped'), 'verify the mobile number', 'otp'],
     ['capture', Boolean(photo), 'photo', 'photo'],
     ['capture', Boolean(idImage), 'ID card', 'id'],
+    ['capture', !cardConcerns.length || Boolean(idAck), 'confirm the ID check', 'idAck'],
     ['details', NAME_RE.test(form.firstName.trim()), 'first name', 'firstName'],
     ['details', NAME_RE.test(form.lastName.trim()), 'last name', 'lastName'],
     ['details', Boolean(form.gender), 'gender', 'gender'],
     ['details', form.company.trim().length > 0, 'company', 'company'],
     ['details', !form.email.trim() || EMAIL_RE.test(form.email.trim()), 'a valid email (or leave it empty)', 'email'],
-    ['details', !concerns.length || idAck.trim().length >= 3, 'confirm the ID check', 'idAck'],
+    ['details', !nameConcerns.length || Boolean(idAck), 'confirm the ID check', 'idAck'],
     ['host', Boolean(host), 'whom to meet', 'host'],
     ['host', (form.validity || defValidity) !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || ''), 'the last day of the pass', 'validUntilDay'],
   ];
@@ -774,7 +781,12 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           </div>
         </div>
         <IdCheck check={idCheck} idLabel={idLabel} filled={nameFromCard} onUse={takeCardDetails} />
-        <FaceMatch match={match} />
+        {!['no_photo_face', 'no_card_face'].includes(match?.status) && <FaceMatch match={match} />}
+        {cardConcerns.length > 0 && (
+          <IdConcern concerns={concerns} value={idAck} onChange={setIdAck}
+            onRetakePhoto={() => { setPhoto(null); setCam('face'); sec.capture.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+            onRetakeId={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); sec.capture.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} />
+        )}
         </>}
       </section>
 
@@ -816,7 +828,7 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
           </div>
           {otherPurpose && <input className="input" value={form.purpose} onChange={(e) => update({ purpose: e.target.value })} placeholder="Type the purpose" maxLength={100} aria-label="Other purpose" autoFocus />}
         </div>
-        {concerns.length > 0 && (
+        {!cardConcerns.length && nameConcerns.length > 0 && (
           <IdConcern concerns={concerns} value={idAck} onChange={setIdAck}
             onRetakePhoto={() => { setPhoto(null); setCam('face'); sec.capture.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
             onRetakeId={() => { setIdImage(null); setIdInfo(null); setCam('aadhaar'); sec.capture.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} />
@@ -885,27 +897,30 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
   );
 }
 
-// The ID or the face does not fit: retake, or proceed with a reason the guard picks (recorded on the visit).
-const ACK_REASONS = ['Checked by eye: same person', 'Name spelled differently on the ID', 'Old photo on the ID', 'Poor light or glare'];
+// The ID or the face does not fit: retake, or proceed anyway (recorded on the visit with the guard's name).
 function IdConcern({ concerns, value, onChange, onRetakePhoto, onRetakeId }) {
-  const [other, setOther] = useState(false);
-  const done = value.trim().length >= 3;
+  if (value) {
+    return (
+      <div className="id-concern is-done" data-field="idAck" tabIndex={-1}>
+        <div className="id-concern-head">
+          <AlertTriangle />
+          <span className="grow"><strong>ID did not match: proceeding anyway.</strong><small>Recorded on the visit with your name.</small></span>
+          <button type="button" className="btn btn-sm" onClick={() => onChange('')}>Undo</button>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className={`id-concern${done ? ' is-done' : ''}`} data-field="idAck" tabIndex={-1}>
+    <div className="id-concern" data-field="idAck" tabIndex={-1}>
       <div className="id-concern-head">
         <AlertTriangle />
-        <span className="grow"><strong>Check before you send:</strong> {concerns.join(', ')}.<small>Look at the visitor and the card. Retake, or proceed and say why.</small></span>
+        <span className="grow"><span><strong>ID does not match:</strong> {concerns.join(', ')}.</span><small>Check the person and the card. Retake, or proceed anyway.</small></span>
       </div>
       <div className="id-concern-actions">
-        <button type="button" className="btn btn-sm" onClick={onRetakePhoto}><RotateCcw />Retake photo</button>
-        <button type="button" className="btn btn-sm" onClick={onRetakeId}><RotateCcw />Retake ID</button>
+        <button type="button" className="btn" onClick={onRetakeId}><RotateCcw />Retake ID</button>
+        <button type="button" className="btn" onClick={onRetakePhoto}><RotateCcw />Retake photo</button>
+        <button type="button" className="btn btn-danger" onClick={() => onChange('Proceeded although the ID did not match')}><Check />ID didn’t match: proceed anyway</button>
       </div>
-      <div className="chips" role="radiogroup" aria-label="Proceed because">
-        {ACK_REASONS.map((r) => <button type="button" key={r} className="chip" aria-pressed={!other && value === r} onClick={() => { setOther(false); onChange(r); }}>{r}</button>)}
-        <button type="button" className="chip" aria-pressed={other} onClick={() => { setOther(true); onChange(''); }}>Other</button>
-      </div>
-      {other && <input className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder="Why it is still the same person" maxLength={100} aria-label="Reason" autoFocus />}
-      {done && <p className="id-concern-ok"><CheckCircle2 />Proceeding: “{value.trim()}”. Recorded on the visit with your name.</p>}
     </div>
   );
 }
