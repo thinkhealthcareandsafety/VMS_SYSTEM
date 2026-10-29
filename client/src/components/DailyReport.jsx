@@ -3,6 +3,7 @@ import { Mail, Printer } from 'lucide-react';
 import { api, today } from '../api.js';
 import { printDailyReport, REPORT_PARTS } from '../lib/dailyReport.js';
 import { Modal, useToast } from './ui.jsx';
+import { DateInput } from './Picker.jsx';
 
 const addDays = (ymd, n) => { const t = new Date(`${ymd}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 
@@ -38,7 +39,7 @@ export function DailyReportDialog({ open, onClose }) {
             <div className="chips">
               <button type="button" className="chip" aria-pressed={day === t} onClick={() => setDay(t)}>Today</button>
               <button type="button" className="chip" aria-pressed={day === addDays(t, -1)} onClick={() => setDay(addDays(t, -1))}>Yesterday</button>
-              <input className="input" type="date" max={t} value={day} onChange={(e) => setDay(e.target.value)} aria-label="Pick a day" style={{ maxWidth: 180 }} />
+              <DateInput max={t} value={day} onChange={setDay} required aria-label="Pick a day" style={{ maxWidth: 220 }} />
             </div>
           </div>
           <div className="field"><span>Registers</span>

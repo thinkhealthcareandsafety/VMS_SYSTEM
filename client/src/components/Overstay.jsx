@@ -4,6 +4,7 @@ import { api, fmtDuration, fmtTime, fmtUntil, passLabel, today } from '../api.js
 import { useTick } from '../lib/live.js';
 import { cue } from '../lib/notify.js';
 import { Avatar, Modal, Spinner, useToast } from './ui.jsx';
+import { DateInput } from './Picker.jsx';
 
 // ----------------------------------------------------------------------------- extend a pass
 const EXTEND = [['1h', '+1 hour', 1], ['2h', '+2 hours', 2], ['4h', '+4 hours', 4], ['8h', '+8 hours', 8], ['today', 'Till tonight'], ['date', 'Pick a date']];
@@ -57,7 +58,7 @@ export function ExtendPassDialog({ visit, onClose, onDone }) {
           </div>
           {by === 'date' && (
             <label className="field" style={{ maxWidth: 240 }}><span>Last day of the pass</span>
-              <input className="input" type="date" min={today()} max={addDays(today(), MAX_DAYS)} value={day} onChange={(e) => setDay(e.target.value)} />
+              <DateInput min={today()} max={addDays(today(), MAX_DAYS)} value={day} onChange={setDay} required aria-label="Last day of the pass" />
             </label>
           )}
           <div className="field">

@@ -6,6 +6,7 @@ import {
 import { DailyReportDialog } from './DailyReport.jsx';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import HostPicker from './HostPicker.jsx';
+import { Select } from './Picker.jsx';
 import BarcodeScan, { carrierFromAwb } from './BarcodeScan.jsx';
 import SignaturePad from './Signature.jsx';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
@@ -156,7 +157,7 @@ function ParcelForm({ direction, carriers, onClose, onDone }) {
               </div>
             </>
           )}
-          <div className="grid-2">
+          <div className={`grid-2${out ? '' : ' awb-grid'}`}>
             {!out && (
               <div className="field">
                 <span>AWB / tracking no. <span className="faint">· scan the label barcode, or type</span></span>
@@ -329,7 +330,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
                 <div className="grid-2">
                   <label className="field"><span>Picker’s name</span><input className="input" value={f.agent} onChange={set('agent')} maxLength={80} autoFocus /></label>
                   <label className="field"><span>Picker’s mobile <span className="faint">· optional</span></span><input className="input num" inputMode="numeric" value={f.mobile} onChange={set('mobile')} maxLength={15} /></label>
-                  <label className="field"><span>Courier</span><select className="select" value={f.carrier} onChange={set('carrier')}><option value="">Choose</option>{CARRIERS.map((c) => <option key={c}>{c}</option>)}</select></label>
+                  <label className="field"><span>Courier</span><Select value={f.carrier} onChange={(v) => setF({ ...f, carrier: v })} placeholder="Choose the courier" aria-label="Courier" options={CARRIERS.map((c) => ({ value: c, label: c }))} /></label>
                   <div className="field"><span>Tracking / docket / AWB no.</span>
                     <div className="awb-row">
                       <input className="input mono" value={f.awb} onChange={set('awb')} maxLength={40} aria-label="Tracking number" />

@@ -11,6 +11,7 @@ import { printEvacuation } from '../lib/evacuation.js';
 import { Avatar, Empty, Logo, Spinner, useToast, useTitle, initials, PoweredBy } from '../components/ui.jsx';
 import { PasswordDialog } from '../components/Account.jsx';
 import HostPicker from '../components/HostPicker.jsx';
+import { DateInput } from '../components/Picker.jsx';
 import Camera from '../components/Camera.jsx';
 import MobileVerify from '../components/MobileVerify.jsx';
 import DigitBoxes, { cleanMobile } from '../components/DigitBoxes.jsx';
@@ -859,10 +860,10 @@ function CheckInForm({ onSubmitted, onOpenActive, liveTick, isAdmin, keepFullId,
             ))}
           </div>
           {form.validity === 'date' && (
-            <input className="input" data-field="validUntilDay" type="date" style={{ maxWidth: 220 }} aria-label="Last day of the pass"
+            <DateInput dataField="validUntilDay" style={{ maxWidth: 260 }} aria-label="Last day of the pass"
               min={today()} max={addDays(today(), MAX_PASS_DAYS)} value={form.validUntilDay || ''}
-              aria-invalid={tried && !/^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || '')}
-              onChange={(e) => update({ validUntilDay: e.target.value })} />
+              invalid={tried && !/^\d{4}-\d{2}-\d{2}$/.test(form.validUntilDay || '')}
+              onChange={(v) => update({ validUntilDay: v })} />
           )}
           <span className="hint">{validityPreview(lengths.some(([k]) => k === form.validity) ? form.validity : defValidity, form.validUntilDay)}</span>
         </div>

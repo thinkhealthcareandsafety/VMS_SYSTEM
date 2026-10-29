@@ -6,6 +6,7 @@ import { DailyReportDialog } from './DailyReport.jsx';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import SignaturePad from './Signature.jsx';
+import { Select } from './Picker.jsx';
 import Camera from './Camera.jsx';
 import { readInvoice, warmUpInvoiceReader } from '../lib/invoiceRead.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
@@ -284,7 +285,7 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
                   <input className="input mono" placeholder="Item no." value={it.code} onChange={(e) => setItem(i, 'code', e.target.value)} maxLength={30} aria-label={`Item ${i + 1} number`} />
                   <input className="input" placeholder="Goods, e.g. Tomatoes" value={it.name} onChange={(e) => setItem(i, 'name', e.target.value)} maxLength={120} aria-label={`Item ${i + 1}`} />
                   <input className="input num" type="number" min="0" step="any" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} aria-label="Quantity" />
-                  <select className="select" value={it.unit} onChange={(e) => setItem(i, 'unit', e.target.value)} aria-label="Unit">{units.map((u) => <option key={u}>{u}</option>)}</select>
+                  <Select value={it.unit} onChange={(v) => setItem(i, 'unit', v)} aria-label="Unit" options={units.map((u) => ({ value: u, label: u }))} />
                   <button type="button" className="btn btn-ghost btn-sm btn-icon" disabled={f.items.length === 1} onClick={() => set('items', f.items.filter((_, j) => j !== i))} aria-label="Remove item"><Trash2 /></button>
                 </div>
               ))}

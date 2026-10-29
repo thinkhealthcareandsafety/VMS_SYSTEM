@@ -9,6 +9,7 @@ import {
 import { api, cardLabel, fmtDate, fmtDateTime, fmtDuration, fmtMobile, fmtTime, fmtUntil, minutesSince, passLabel, today } from '../api.js';
 import QRCode from 'qrcode';
 import HostPicker from '../components/HostPicker.jsx';
+import { DateInput, Select } from '../components/Picker.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
 import { PasswordDialog, SecretBox } from '../components/Account.jsx';
 import { useLive, useTick } from '../lib/live.js';
@@ -781,23 +782,17 @@ function HistoryPage({ tick, openVisit, openExport, params }) {
         <label className="field"><span>Host</span><input className="input" value={f.host} onChange={set('host')} placeholder="Any host" /></label>
         <label className="field"><span>Company</span><input className="input" value={f.company} onChange={set('company')} placeholder="Any company" /></label>
         <label className="field"><span>Status</span>
-          <select className="select" value={f.status} onChange={set('status')}>
-            <option value="">Any status</option>
-            {Object.entries(STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          <Select value={f.status} onChange={(v) => setF({ ...f, status: v })} aria-label="Status"
+            options={[{ value: '', label: 'Any status' }, ...Object.entries(STATUS).map(([k, [l]]) => ({ value: k, label: l }))]} />
         </label>
         <label className="field"><span>Name on ID</span>
-          <select className="select" value={f.idCheck} onChange={set('idCheck')}>
-            <option value="">Any</option>
-            {ID_CHECKS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          <Select value={f.idCheck} onChange={(v) => setF({ ...f, idCheck: v })} aria-label="Name on ID"
+            options={[{ value: '', label: 'Any' }, ...ID_CHECKS.map(([k, l]) => ({ value: k, label: l }))]} />
         </label>
         {gates.length > 1 && (
           <label className="field"><span>Gate</span>
-            <select className="select" value={f.gate} onChange={set('gate')}>
-              <option value="">Any gate</option>
-              {gates.map((g) => <option key={g.id} value={g.id}>{g.name}{g.active ? '' : ' (closed)'}</option>)}
-            </select>
+            <Select value={f.gate} onChange={(v) => setF({ ...f, gate: v })} aria-label="Gate"
+              options={[{ value: '', label: 'Any gate' }, ...gates.map((g) => ({ value: g.id, label: `${g.name}${g.active ? '' : ' (closed)'}` }))]} />
           </label>
         )}
       </div>
@@ -805,8 +800,8 @@ function HistoryPage({ tick, openVisit, openExport, params }) {
         <div className="seg" role="group" aria-label="Date range">
           {RANGES.map((r) => <button key={r.id} aria-pressed={range === r.id} onClick={() => setF({ ...f, from: r.from(), to: r.to() })}>{r.label}</button>)}
         </div>
-        <label className="field date"><span>From</span><input className="input" type="date" value={f.from} onChange={set('from')} /></label>
-        <label className="field date"><span>To</span><input className="input" type="date" value={f.to} onChange={set('to')} /></label>
+        <label className="field date"><span>From</span><DateInput value={f.from} max={f.to || daysAgo(0)} range={[f.from, f.to]} placeholder="Any day" aria-label="From" onChange={(v) => setF({ ...f, from: v })} /></label>
+        <label className="field date"><span>To</span><DateInput value={f.to} min={f.from || undefined} max={daysAgo(0)} range={[f.from, f.to]} placeholder="Any day" aria-label="To" onChange={(v) => setF({ ...f, to: v })} /></label>
         <span className="spacer-x" />
         <button className="btn btn-sm" onClick={() => openExport({ ...applied })}><Download />Download these</button>
       </div>
@@ -1575,8 +1570,8 @@ function ExportDialog({ opts, onClose }) {
         </div>
         {range === 'custom' && (
           <div className="grid-2">
-            <label className="field"><span>From</span><input className="input" type="date" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /></label>
-            <label className="field"><span>To</span><input className="input" type="date" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></label>
+            <label className="field"><span>From</span><DateInput value={custom.from} max={custom.to || daysAgo(0)} range={[custom.from, custom.to]} aria-label="From" onChange={(v) => setCustom({ ...custom, from: v })} /></label>
+            <label className="field"><span>To</span><DateInput value={custom.to} min={custom.from || undefined} max={daysAgo(0)} range={[custom.from, custom.to]} aria-label="To" onChange={(v) => setCustom({ ...custom, to: v })} /></label>
           </div>
         )}
         {filterNote && <p className="faint" style={{ fontSize: 13 }}>Only visits matching {filterNote}.</p>}
@@ -1640,10 +1635,8 @@ function GatePicker({ value, onChange, gates }) {
   const open = gates.filter((g) => g.active || g.id === value);
   return (
     <label className="field"><span>Gate</span>
-      <select className="select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{open.length > 1 ? 'Not fixed (uses the first gate)' : 'Main gate'}</option>
-        {open.map((g) => <option key={g.id} value={g.id}>{g.name}{g.active ? '' : ' (closed)'}</option>)}
-      </select>
+      <Select value={value || ''} onChange={onChange} aria-label="Gate"
+        options={[{ value: '', label: open.length > 1 ? 'Not fixed (uses the first gate)' : 'Main gate' }, ...open.map((g) => ({ value: g.id, label: `${g.name}${g.active ? '' : ' (closed)'}` }))]} />
       <span className="hint">Where they check visitors in and out. Every entry and exit records this gate.</span>
     </label>
   );
@@ -2085,10 +2078,10 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
           <div className="import-settings">
             <div className="grid-2">
               <label className="field"><span>First day</span>
-                <input className="input" type="date" min={daysAgo(0)} max={daysAgo(-90)} value={batch.day} onChange={(e) => setBatch({ ...batch, day: e.target.value, dayTo: batch.dayTo && batch.dayTo < e.target.value ? '' : batch.dayTo })} />
+                <DateInput required min={daysAgo(0)} max={daysAgo(-90)} value={batch.day} range={[batch.day, batch.dayTo]} aria-label="First day" onChange={(v) => setBatch({ ...batch, day: v, dayTo: batch.dayTo && batch.dayTo < v ? '' : batch.dayTo })} />
               </label>
               <label className="field"><span>Last day <span className="faint">· if more than one</span></span>
-                <input className="input" type="date" min={batch.day} max={daysAgo(-90)} value={batch.dayTo} onChange={(e) => setBatch({ ...batch, dayTo: e.target.value })} />
+                <DateInput min={batch.day} max={daysAgo(-90)} value={batch.dayTo} range={[batch.day, batch.dayTo]} placeholder="Same day" aria-label="Last day" onChange={(v) => setBatch({ ...batch, dayTo: v })} />
               </label>
             </div>
             {gates.length > 1 && <GateSelect gates={gates} value={batch.gateId} onChange={(gateId) => setBatch({ ...batch, gateId })} />}
@@ -2117,10 +2110,8 @@ function ExpectedPage({ toast, tick, openVisit, refresh, intent }) {
 function GateSelect({ gates, value, onChange }) {
   return (
     <label className="field"><span>Gate they use <span className="faint">· optional</span></span>
-      <select className="select" value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Any gate</option>
-        {gates.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-      </select>
+      <Select value={value} onChange={onChange} aria-label="Gate they use"
+        options={[{ value: '', label: 'Any gate' }, ...gates.map((g) => ({ value: g.id, label: g.name }))]} />
       <span className="hint">They show first on that gate’s tablet. Every gate can still let them in.</span>
     </label>
   );
@@ -2158,8 +2149,8 @@ function ExpectedDialog({ open, onClose, onDone }) {
         <div className="dialog-head"><h2>Add an expected visitor</h2><p>They are let in on arrival, without waiting for the host to reply.</p></div>
         <div className="dialog-body">
           <div className="grid-2">
-            <label className="field"><span>First day</span><input className="input" type="date" required min={daysAgo(0)} max={maxDay} value={f.day} onChange={(e) => setF({ ...f, day: e.target.value, dayTo: f.dayTo && f.dayTo < e.target.value ? '' : f.dayTo })} /></label>
-            <label className="field"><span>Last day <span className="faint">· if more than one</span></span><input className="input" type="date" min={f.day} max={maxDay} value={f.dayTo} onChange={set('dayTo')} /></label>
+            <label className="field"><span>First day</span><DateInput required min={daysAgo(0)} max={maxDay} value={f.day} range={[f.day, f.dayTo]} aria-label="First day" onChange={(v) => setF({ ...f, day: v, dayTo: f.dayTo && f.dayTo < v ? '' : f.dayTo })} /></label>
+            <label className="field"><span>Last day <span className="faint">· if more than one</span></span><DateInput min={f.day} max={maxDay} value={f.dayTo} range={[f.day, f.dayTo]} placeholder="Same day" aria-label="Last day" onChange={(v) => setF({ ...f, dayTo: v })} /></label>
           </div>
           <div className="grid-2">
             <label className="field"><span>Mobile</span>
@@ -2417,9 +2408,8 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
         <div className="panel-head"><h2>Privacy</h2></div>
         <div className="panel-body">
           <label className="field"><span>Keep masked Aadhaar images for</span>
-            <select className="select" value={f.idRetentionDays} onChange={(e) => setF({ ...f, idRetentionDays: Number(e.target.value) })}>
-              {(s.retentionChoices || [1, 7, 30, 90, 180, 365]).map((d) => <option key={d} value={d}>{RETENTION_LABEL[d] || `${d} days`}</option>)}
-            </select>
+            <Select value={f.idRetentionDays} onChange={(v) => setF({ ...f, idRetentionDays: Number(v) })} aria-label="Keep masked Aadhaar images for"
+              options={(s.retentionChoices || [1, 7, 30, 90, 180, 365]).map((d) => ({ value: d, label: RETENTION_LABEL[d] || `${d} days` }))} />
             <span className="hint">Older images are deleted automatically and are then left out of downloads. Visitor photos are not affected.</span>
           </label>
           <div className="field">
@@ -2442,11 +2432,8 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
         <div className="panel-head"><h2>Visitor mobile number</h2></div>
         <div className="panel-body">
           <label className="field"><span>Check that the number is real</span>
-            <select className="select" value={f.otpMode} onChange={(e) => setF({ ...f, otpMode: e.target.value })}>
-              <option value="off">Off: just take the number</option>
-              <option value="optional">Optional: guard can verify or skip</option>
-              <option value="required">Required: verify before every check-in</option>
-            </select>
+            <Select value={f.otpMode} onChange={(v) => setF({ ...f, otpMode: v })} aria-label="Check that the number is real"
+              options={[{ value: 'off', label: 'Off: just take the number' }, { value: 'optional', label: 'Optional: guard can verify or skip' }, { value: 'required', label: 'Required: verify before every check-in' }]} />
             <span className="hint">The visitor gets a 6-digit code by SMS and reads it out to the guard. Expected visitors and numbers verified in the last 90 days are not asked again. Only admins can skip when it is required.</span>
           </label>
           <div className={`alert ${ch.otp ? 'alert-ok' : 'alert-warn'}`}>

@@ -7,6 +7,7 @@ import {
 import { api, fmtDateTime, fmtMobile, today } from '../api.js';
 import HostPicker from '../components/HostPicker.jsx';
 import { Empty, Modal, Spinner, useToast } from '../components/ui.jsx';
+import { DateInput } from '../components/Picker.jsx';
 
 // Groups and events: a guest list per wedding, banquet or conference. Creating the group is the approval;
 // each guest gets a pass (QR + code) that any gate scans, and the list shows who came.
@@ -131,11 +132,11 @@ function GroupDialog({ open, group, onClose, onDone }) {
           <div className="field"><span>Responsible host</span><HostPicker value={host} onChange={setHost} /></div>
           <div className="grid-2">
             <label className="field"><span>First day</span>
-              <input className="input" type="date" required value={f.startDay} min={group ? undefined : today()}
-                onChange={(e) => setF({ ...f, startDay: e.target.value, endDay: f.endDay < e.target.value ? e.target.value : f.endDay })} />
+              <DateInput required value={f.startDay} min={group ? undefined : today()} range={[f.startDay, f.endDay]} aria-label="First day"
+                onChange={(v) => setF({ ...f, startDay: v, endDay: f.endDay < v ? v : f.endDay })} />
             </label>
             <label className="field"><span>Last day</span>
-              <input className="input" type="date" required value={f.endDay} min={f.startDay} max={addDays(f.startDay || today(), 90)} onChange={set('endDay')} />
+              <DateInput required value={f.endDay} min={f.startDay} max={addDays(f.startDay || today(), 90)} range={[f.startDay, f.endDay]} aria-label="Last day" onChange={(v) => setF({ ...f, endDay: v })} />
             </label>
           </div>
           <label className="field"><span>Purpose <span className="faint">· optional</span></span><input className="input" value={f.purpose} onChange={set('purpose')} placeholder="Wedding, Conference, Training…" maxLength={80} /></label>
