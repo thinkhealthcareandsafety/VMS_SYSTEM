@@ -65,12 +65,15 @@ chown -R 1000:1000 "$DATA_DIR/uploads"
 if mountpoint -q "$BACKUP_DIR"; then
   touch "$BACKUP_DIR/.vms-backup-drive"
 elif [ ! -f "$BACKUP_DIR/.vms-backup-drive" ]; then
-  echo "Warning: $BACKUP_DIR is not a separate drive, so nightly backups will not run. Mount the backup SSD there (docs/ONSITE.md, step 4)."
-  echo "         For a trial on one disk only: sudo touch $BACKUP_DIR/.vms-backup-drive"
+  echo "Warning: $BACKUP_DIR is not a separate drive. Until the backup SSD is mounted there (docs/ONSITE.md, step 4),"
+  echo "         only the database is copied each night, onto this PC's own disk, and the console says so."
 fi
 
 say "6/6 Building and starting (the first time takes 5 to 10 minutes)"
 docker compose up -d --build
+# backup.sh and the Caddyfile are mounted as single files: an update replaces the file, and a running container keeps
+# the old one until it restarts. Restarted here so every update takes effect.
+docker compose restart backup caddy >/dev/null
 docker image prune -f >/dev/null
 
 say "Done."
