@@ -96,7 +96,7 @@ Open `https://stregis-desk.gatesmartx.com` on the admin PC and sign in. Then in 
 | Logs | `sudo docker compose -f deploy/docker-compose.yml logs --tail 100 app` |
 | Check backups | `tail /mnt/vms-backup/backup.log` |
 | Renew the licence | GateSmartX: `node server/scripts/license.js <private-key.pem> "<Site>" <YYYY-MM-DD> 3`; the admin pastes it in Settings → Licence |
-| Restore a backup | `sudo docker compose -f deploy/docker-compose.yml exec -T mongo mongorestore --drop --gzip --archive < /mnt/vms-backup/vms-YYYY-MM-DD.archive.gz` and copy `/mnt/vms-backup/uploads/` back to `/srv/vms/data/uploads/` |
+| Restore a backup | `sudo bash deploy/restore.sh` (the latest) or `sudo bash deploy/restore.sh 2026-10-28`. It saves the database as it is first, so a restore can be undone, and copies back any missing photos. On a new PC, copy `/mnt/vms-backup/server-settings.env` to `deploy/.env` before installing: it holds the key the full ID images are encrypted with. |
 
 When the licence ends, new check-ins, material and courier entries pause. Check-outs, Emergency and all records keep
 working. Never keep the licence private key (`private-key.pem`) on the hotel's mini PC.
