@@ -73,6 +73,7 @@ const visitSchema = new Schema({
   idMaskMethod: { type: String },                            // auto | already | guide | none, + "+manual" if the guard blacked out more
   idType: { type: String, enum: ['aadhaar', 'pan', 'dl', 'passport', 'voter', 'other'] }, // absent on visits from before the choice existed (all Aadhaar)
   idTypeOther: { type: String },                             // what "other" was, as typed by the guard
+  idOverride: { type: { _id: false, reason: String, byName: String }, default: undefined }, // ID or face did not match; the guard went ahead and said why
   idCheck: {                                                 // the card against the typed name and gender, read on the guard's device; advice only
     status: { type: String, enum: ['match', 'partial', 'mismatch', 'unread'] },
     source: { type: String, enum: ['qr', 'ocr'] },             // Aadhaar Secure QR, or the printed text
@@ -255,6 +256,9 @@ const materialSchema = new Schema({
   exitPhotos: { type: [String], default: undefined }, // invoice as stamped by the hotel (older entries; now a signature)
   signature: String,                                  // the receiving person's signature at the vendor's checkout (a JPEG file)
   receivedBy: { name: { type: String, default: '' }, department: { type: String, default: '' } },
+  personPhoto: String,                                // live photo of the person who brought the goods
+  personIdImage: String,                              // their ID card (Aadhaar masked on the tablet), when shown
+  personIdType: String,
   cardNo: { type: String },                           // the hotel's vendor lanyard card given at the gate, collected at checkout
   exitNote: String,
   checkedOutAt: Date,

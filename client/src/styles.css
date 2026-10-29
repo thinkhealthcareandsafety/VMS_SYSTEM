@@ -350,6 +350,7 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .shutter:disabled { opacity: 0.5; cursor: wait; }
 .cam-round { width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(11, 13, 16, 0.55); color: #fff; display: grid; place-items: center; cursor: pointer; backdrop-filter: blur(8px); }
 .cam-round svg { width: 20px; height: 20px; }
+.cam-round.is-on { background: #f5c542; color: #15130f; }
 .cam-spacer { width: 44px; }
 .cam-msg { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 10px; padding: 24px; text-align: center; color: #e9ecf1; }
 .cam-msg svg { width: 28px; height: 28px; color: #a6aebb; }
@@ -759,6 +760,9 @@ dialog::backdrop { background: rgba(11, 13, 16, 0.42); backdrop-filter: blur(2px
 .otp-head { display: flex; align-items: center; gap: 12px; }
 .otp-head > svg { width: 20px; height: 20px; flex: none; color: var(--text-2); }
 .otp-head .grow { display: grid; gap: 2px; min-width: 0; }
+.otp-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.otp-choice .btn { min-height: 48px; justify-content: center; }
+@media (max-width: 560px) { .otp-choice { grid-template-columns: 1fr; } }
 .otp-head small { font-size: 13px; color: var(--text-2); }
 .otp-entry { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -1470,3 +1474,18 @@ dialog:has(> .finder) { margin: 10vh auto auto; }
   .app-guard .topbar .desk-mode button svg { display: none; }
   .app-guard .topbar .where small .sep { margin: 0 4px; }
 }
+
+/* The ID or face does not match: the guard retakes, or proceeds with a reason. */
+.id-concern { display: grid; gap: 12px; padding: 14px 16px; border: 1.5px solid var(--bad, #b42318); border-radius: 14px; background: color-mix(in srgb, var(--bad, #b42318) 6%, var(--surface, #fff)); }
+.id-concern.is-done { border-color: var(--warn, #b54708); background: color-mix(in srgb, var(--warn, #b54708) 6%, var(--surface, #fff)); }
+.id-concern-head { display: flex; gap: 10px; align-items: flex-start; }
+.id-concern-head > svg { width: 20px; height: 20px; flex: none; color: var(--bad, #b42318); margin-top: 2px; }
+.id-concern-head .grow { display: grid; gap: 3px; }
+.id-concern-head small { color: var(--text-2); font-size: 13px; }
+.id-concern-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.id-concern-ok { display: flex; gap: 8px; align-items: center; margin: 0; font-size: 13.5px; color: var(--text-2); }
+.id-concern-ok svg { width: 16px; height: 16px; color: var(--warn, #b54708); flex: none; }
+
+/* Material: the person bringing the goods, recorded like a visitor. */
+.person-block { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+.person-block .section-title { margin: 0; }

@@ -6,6 +6,7 @@ import { DailyReportDialog } from './DailyReport.jsx';
 import { api, fmtDateTime, fmtMobile } from '../api.js';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import SignaturePad from './Signature.jsx';
+import Camera from './Camera.jsx';
 import { readInvoice, warmUpInvoiceReader } from '../lib/invoiceRead.js';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
@@ -96,6 +97,7 @@ export default function MaterialBoard({ admin = false, liveTick = 0, lanyard = f
 }
 
 // ----------------------------------------------------------------------------- goods coming in
+const ID_KINDS = [['aadhaar', 'Aadhaar'], ['pan', 'PAN'], ['dl', 'Licence'], ['voter', 'Voter ID'], ['other', 'Other']];
 const blankItem = () => ({ code: '', name: '', qty: '1', unit: 'nos' });
 const blank = () => ({
   items: [blankItem()], party: { company: '', name: '', address: '', mobile: '', gstin: '' }, docs: { invoice: '', dc: '' },
@@ -106,6 +108,11 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
   const [f, setF] = useState(blank);
   const [docPhotos, setDocPhotos] = useState([]);
   const [photos, setPhotos] = useState([]);
+  const [face, setFace] = useState(null);       // live photo of the person who brought the goods
+  const [idCard, setIdCard] = useState(null);   // their ID card, masked on this device (optional)
+  const [idInfo, setIdInfo] = useState(null);
+  const [idType, setIdType] = useState('aadhaar');
+  const [cam, setCam] = useState(null);         // 'face' | 'id' | null
   const [reading, setReading] = useState(null); // null | 'busy' | { found: [...] } | { error }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -113,6 +120,7 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
   useEffect(() => {
     if (!open) return;
     setF(blank()); setDocPhotos([]); setPhotos([]); setReading(null); setErr('');
+    setFace(null); setIdCard(null); setIdInfo(null); setIdType('aadhaar'); setCam('face');
     warmUpInvoiceReader();
   }, [open]);
 
@@ -151,7 +159,9 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
     if (!next.length) setReading(null);
   };
 
-  const ready = f.items.some((it) => it.name.trim()) && (f.party.company.trim() || f.party.name.trim());
+  const mobileOk = /^[6-9]\d{9}$/.test(f.party.mobile.replace(/\D/g, '').slice(-10));
+  const personOk = f.party.name.trim().length >= 2 && mobileOk && Boolean(face);
+  const ready = personOk && f.items.some((it) => it.name.trim()) && (f.party.company.trim() || f.party.name.trim());
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true); setErr('');
@@ -159,7 +169,8 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
       onDone(await api('/api/material', {
         method: 'POST',
         body: {
-          ...f, direction: 'in', kind: 'delivery', photos, docPhotos,
+          ...f, direction: 'in', kind: 'delivery', photos, docPhotos, personPhoto: face,
+          ...(idCard ? { personIdImage: idCard, personIdType: idType } : {}),
           items: f.items.filter((it) => it.name.trim()).map((it) => ({ ...it, qty: Number(it.qty) })),
           party: { ...f.party, mobile: f.party.mobile || undefined },
         },
@@ -172,9 +183,34 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
       <form onSubmit={submit}>
         <div className="dialog-head">
           <h2>Vendor check-in: goods coming in</h2>
-          <p>Photograph the invoice or challan first: the details fill in by themselves. No invoice? Type the supplier’s details.</p>
+          <p>Record the person bringing the goods, then photograph the invoice: its details fill in by themselves. No invoice? Type the supplier.</p>
         </div>
         <div className="dialog-body">
+          <div className="person-block">
+            <h3 className="section-title">Person bringing the goods</h3>
+            <div className="grid-2">
+              <label className="field"><span>Name</span><input className="input" value={f.party.name} onChange={(e) => setIn('party', 'name', e.target.value)} maxLength={80} autoFocus /></label>
+              <label className="field"><span>Mobile</span><input className="input num" inputMode="numeric" value={f.party.mobile} onChange={(e) => setIn('party', 'mobile', e.target.value)} maxLength={15} placeholder="98765 43210" />
+                {f.party.mobile && !mobileOk && <span className="hint err">Enter a 10-digit mobile number</span>}</label>
+            </div>
+            <div className="capture-grid">
+              <div className="field">
+                <span>Live photo</span>
+                {face || cam === 'face'
+                  ? <Camera mode="face" captured={face} onCapture={(p) => { setFace(p); setCam(null); }} onRetake={() => { setFace(null); setCam('face'); }} />
+                  : <button type="button" className="cam-tile" onClick={() => setCam('face')}><Plus /><span>Take photo</span></button>}
+              </div>
+              <div className="field">
+                <span>ID card <span className="faint">· optional{idType === 'aadhaar' ? ', first 8 digits blacked out' : ''}</span></span>
+                <div className="chips" role="radiogroup" aria-label="Which ID">
+                  {ID_KINDS.map(([k, l]) => <button type="button" key={k} className="chip" role="radio" aria-checked={idType === k} aria-pressed={idType === k} onClick={() => { if (k === idType) return; setIdType(k); setIdCard(null); setIdInfo(null); }}>{l}</button>)}
+                </div>
+                {idCard || cam === 'id'
+                  ? <Camera mode="aadhaar" key={idType} idType={idType} idLabel={ID_KINDS.find(([k]) => k === idType)[1]} captured={idCard} info={idInfo} onCapture={(p, info) => { setIdCard(p); setIdInfo(info); setCam(null); }} onEdit={(p) => setIdCard(p)} onRetake={() => { setIdCard(null); setIdInfo(null); setCam('id'); }} />
+                  : <button type="button" className="cam-tile" onClick={() => setCam('id')}><Plus /><span>Scan ID card</span></button>}
+              </div>
+            </div>
+          </div>
           <div className="field">
             <span>Invoice or challan <span className="faint">· printed or handwritten, up to 4 photos</span></span>
             <PhotoPicker photos={docPhotos} onChange={onDocPhotos} max={4} addLabel="Photo of invoice" onError={setErr} />
@@ -188,8 +224,6 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
 
           <div className="grid-2">
             <label className="field"><span>Supplier / company</span><input className="input" value={f.party.company} onChange={(e) => setIn('party', 'company', e.target.value)} placeholder="As on the invoice" maxLength={100} /></label>
-            <label className="field"><span>Delivered by (name) <span className="faint">· optional</span></span><input className="input" value={f.party.name} onChange={(e) => setIn('party', 'name', e.target.value)} maxLength={80} /></label>
-            <label className="field"><span>Mobile <span className="faint">· optional</span></span><input className="input num" inputMode="numeric" value={f.party.mobile} onChange={(e) => setIn('party', 'mobile', e.target.value)} maxLength={15} /></label>
             <label className="field"><span>GSTIN <span className="faint">· optional</span></span><input className="input mono" value={f.party.gstin} onChange={(e) => setIn('party', 'gstin', e.target.value.toUpperCase())} placeholder="07AABCU9603R1ZM" maxLength={15} /></label>
           </div>
           <label className="field"><span>Address <span className="faint">· optional</span></span><input className="input" value={f.party.address} onChange={(e) => setIn('party', 'address', e.target.value)} maxLength={200} /></label>
@@ -229,7 +263,7 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
           {err && <div className="alert alert-bad" role="alert"><AlertTriangle /><span className="grow">{err}</span></div>}
         </div>
         <div className="dialog-foot">
-          {!ready && <span className="faint foot-hint">Enter the supplier and at least one item to record it.</span>}
+          {!ready && <span className="faint foot-hint">{!personOk ? 'Enter the person’s name and mobile, and take their photo.' : 'Enter the supplier and at least one item.'}</span>}
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" disabled={busy || !ready}>{busy ? <Spinner /> : <Check />}Check in vendor</button>
         </div>
@@ -291,6 +325,11 @@ function MaterialDetail({ id, liveTick, onClose, onChanged }) {
               {m.handedTo && <><dt>Handed to</dt><dd>{m.handedTo} · {fmtDateTime(m.handedAt)}</dd></>}
             </dl>
 
+            {(m.personPhoto || m.personIdImage) && (
+              <div><h3 className="section-title">Person who brought it: {m.party?.name}{m.party?.mobile ? ` · ${fmtMobile(m.party.mobile)}` : ''}</h3>
+                <PhotoRow srcs={[m.personPhoto, m.personIdImage].filter(Boolean)} title={m.party?.name || m.number} label="Person" />
+              </div>
+            )}
             {m.docPhotos.length > 0 && <div><h3 className="section-title"><FileText size={15} /> Invoice / challan as it came</h3><PhotoRow srcs={m.docPhotos} title={m.number} label="Invoice" /></div>}
             {m.signature && <div><h3 className="section-title">Signature of {m.receivedBy?.name || 'the receiver'}</h3><img className="sign-saved" src={m.signature} alt={`Signature of ${m.receivedBy?.name || 'the receiver'}`} /></div>}
             {m.exitPhotos.length > 0 && <div><h3 className="section-title"><FileText size={15} /> Invoice as stamped by the hotel</h3><PhotoRow srcs={m.exitPhotos} title={m.number} label="Stamped invoice" /></div>}

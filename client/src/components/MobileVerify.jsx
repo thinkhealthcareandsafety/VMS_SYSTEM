@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, MessageSquare, RotateCcw, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, MessageSquare, RotateCcw, ShieldAlert, UserCheck } from 'lucide-react';
 import { api } from '../api.js';
 import { Spinner } from './ui.jsx';
 import DigitBoxes from './DigitBoxes.jsx';
@@ -58,7 +58,7 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
   if (value === 'skipped') {
     return (
       <div className="alert alert-warn" role="status">
-        <ShieldAlert /><span className="grow">Number <strong>not verified</strong>. This is recorded on the visit.</span>
+        <ShieldAlert /><span className="grow">Number <strong>not verified</strong> (guard knows the visitor). Recorded on the visit.</span>
         <button type="button" className="btn btn-sm" onClick={() => onChange(null)}>Verify now</button>
       </div>
     );
@@ -69,11 +69,16 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
       <div className="otp-head">
         <MessageSquare />
         <span className="grow">
-          <strong>Verify this number</strong>
-          <small>{sentAt ? `A 6-digit code was sent to +91 ${mobile.slice(0, 5)} ${mobile.slice(5)}. Ask the visitor to read it out.` : `We text a code to the number; the visitor reads it out.${mode === 'required' ? ' Required at this gate.' : ''}`}</small>
+          <strong>Verify this number?</strong>
+          <small>{sentAt ? `A 6-digit code was sent to +91 ${mobile.slice(0, 5)} ${mobile.slice(5)}. Ask the visitor to read it out.` : mode === 'required' ? 'Required at this gate: we text a code and the visitor reads it out.' : 'Send a code for a new visitor. Skip it for someone you know.'}</small>
         </span>
-        {!sentAt && <button type="button" className="btn btn-sm btn-primary" disabled={busy === 'send'} onClick={send}>{busy === 'send' ? <Spinner /> : 'Send code'}</button>}
       </div>
+      {!sentAt && (
+        <div className="otp-choice">
+          <button type="button" className="btn btn-primary" disabled={busy === 'send'} onClick={send}>{busy === 'send' ? <Spinner /> : <MessageSquare />}Send OTP</button>
+          {canSkip && <button type="button" className="btn" onClick={() => onChange('skipped')}><UserCheck />Don’t verify: I know this person</button>}
+        </div>
+      )}
       {sentAt && (
         <div className="otp-entry">
           <DigitBoxes
@@ -88,8 +93,8 @@ export default function MobileVerify({ mobile, mode, canSkip, value, onChange })
       {test && <p className="hint">Test mode: no SMS provider is connected yet, so no text was sent. The code is in the server log.</p>}
       {notice && !error && <p className="hint" role="status">{notice}</p>}
       {error && <p className="hint err" role="alert">{error}</p>}
-      {canSkip && (
-        <button type="button" className="otp-skip" onClick={() => onChange('skipped')}>Can’t verify now (no signal, no phone)? Skip</button>
+      {canSkip && sentAt && (
+        <button type="button" className="otp-skip" onClick={() => onChange('skipped')}>Code not arriving? Continue without verifying</button>
       )}
     </div>
   );

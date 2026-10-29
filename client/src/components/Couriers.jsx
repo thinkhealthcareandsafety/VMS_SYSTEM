@@ -11,7 +11,7 @@ import SignaturePad from './Signature.jsx';
 import { PhotoPicker, PhotoRow } from './Photos.jsx';
 import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 
-// Couriers at the gate. Incoming: logged with photos; the recipient sees them on WhatsApp or Telegram and taps
+// Couriers at the gate. Incoming: logged with photos; the recipient sees them by email or Telegram and taps
 // Accept or Decline; whoever collects it gives their name and number and is photographed, and the recipient is
 // told who took it. Outgoing: a department hands it in, the courier's picker takes it and gives the docket number.
 const CARRIERS = ['Blue Dart', 'Delhivery', 'DTDC', 'India Post', 'Amazon', 'Ekart (Flipkart)', 'XpressBees', 'Shadowfax', 'Ecom Express', 'Professional Couriers', 'Shree Maruti', 'Trackon', 'Gati', 'FedEx', 'DHL', 'UPS', 'Aramex', 'By hand', 'Other'];
@@ -92,7 +92,7 @@ export default function CourierBoard({ admin = false, liveTick = 0 }) {
           setForm(null);
           toast(p.direction === 'out' ? `${p.number} logged. Press “Courier took it” when the picker comes.`
             : p.notifiedVia ? `${p.number} logged. ${p.recipient.name} has been sent the photos to accept or decline.`
-              : `${p.number} logged. ${p.recipient.kind === 'host' ? `${p.recipient.name} cannot be reached on WhatsApp, Telegram or email: call them.` : 'Nobody to ask: hand it to the desk or the room.'}`,
+              : `${p.number} logged. ${p.recipient.kind === 'host' ? `${p.recipient.name} cannot be reached by email or Telegram: call them.` : 'Nobody to ask: hand it to the desk or the room.'}`,
           p.direction === 'in' && !p.notifiedVia ? 'info' : 'ok');
           load();
         }} />
@@ -141,7 +141,7 @@ function ParcelForm({ direction, carriers, onClose, onDone }) {
       <form onSubmit={submit}>
         <div className="dialog-head">
           <h2>{out ? 'Send a parcel' : 'Parcel arrived'}</h2>
-          <p>{out ? 'Logged now; marked dispatched when the courier’s picker takes it and gives the docket number.' : 'The person gets your photos on WhatsApp or Telegram and taps Accept or Decline.'}</p>
+          <p>{out ? 'Logged now; marked dispatched when the courier’s picker takes it and gives the docket number.' : 'The person gets your photos by email and taps Accept or Decline.'}</p>
         </div>
         <div className="dialog-body">
           {!out && (
@@ -273,7 +273,7 @@ function ParcelDetail({ id, admin, liveTick, onClose, onChanged }) {
               declined ? <div className="alert alert-bad"><XCircle /><span className="grow">{p.response.by} declined it ({fmtDateTime(p.response.at)}): not theirs. Return it to the courier.</span></div>
                 : p.response?.kind === 'accepted' ? <div className="alert alert-ok"><CheckCircle2 /><span className="grow">{p.response.by} accepted it ({fmtDateTime(p.response.at)}, on {VIA[p.response.via] || p.response.via}). Hand it over when they or their person come.</span></div>
                   : p.recipient.kind === 'host' && p.notifiedVia ? <div className="alert"><BellRing /><span className="grow">Sent to {p.recipient.name} on {VIA[p.notifiedVia]} at {fmtDateTime(p.notifiedAt)} with the photos. No answer yet.</span></div>
-                    : p.recipient.kind === 'host' ? <div className="alert alert-warn"><AlertTriangle /><span className="grow">{p.recipient.name} cannot be reached on WhatsApp, Telegram or email. Call them.</span></div>
+                    : p.recipient.kind === 'host' ? <div className="alert alert-warn"><AlertTriangle /><span className="grow">{p.recipient.name} cannot be reached by email or Telegram. Call them.</span></div>
                       : <div className="alert"><UserRound /><span className="grow">Nobody to ask. Hand it to the front desk or the room, with the receiver’s name, number and a photo.</span></div>
             )}
 

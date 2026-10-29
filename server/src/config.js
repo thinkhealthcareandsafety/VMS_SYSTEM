@@ -44,6 +44,8 @@ module.exports = {
   approvalChannel: env.APPROVAL_CHANNEL || 'auto',
   // WhatsApp Cloud API (Meta -> your app -> WhatsApp -> API Setup). Empty token = WhatsApp off.
   whatsapp: {
+    // Off unless WHATSAPP=on: hosts approve by email (and SMS once its template is approved). The code stays for later.
+    on: env.WHATSAPP === 'on',
     token: env.WHATSAPP_TOKEN || '',
     phoneId: env.WHATSAPP_PHONE_ID || '',          // the sending number's "Phone number ID", not the number itself
     verifyToken: env.WHATSAPP_VERIFY_TOKEN || '',  // any phrase; type the same one in Meta when saving the webhook

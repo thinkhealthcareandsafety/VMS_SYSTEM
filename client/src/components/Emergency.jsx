@@ -103,7 +103,7 @@ function Composer({ setup, active, preset, onSent }) {
   const ch = [setup.channels.whatsapp && CHANNEL.whatsapp, smsOn && CHANNEL.sms, setup.channels.email && CHANNEL.email, setup.channels.telegram && CHANNEL.telegram].filter(Boolean);
   const smsNote = smsOn ? '' : tpl?.id === 'custom'
     ? ' Your own words cannot go by SMS (only approved SMS wording is allowed in India). Pick a template to also send SMS.'
-    : ' SMS for this emergency is not set up yet: visitors who have not messaged the hotel’s WhatsApp number may not get it.';
+    : ' SMS for this emergency is not set up yet: visitors without an email on record may not get it.';
   const hosts = allHosts ? c.allHosts : c.theirHosts;
   const reach = (audience !== 'hosts' ? c.visitors : 0) + (audience !== 'visitors' ? hosts : 0);
   const send = async () => {

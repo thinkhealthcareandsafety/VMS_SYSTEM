@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Camera as CameraIcon, CameraOff, CheckCircle2, Maximize2, RefreshCcw, SwitchCamera } from 'lucide-react';
+import { AlertTriangle, Camera as CameraIcon, CameraOff, Flashlight, CheckCircle2, Maximize2, RefreshCcw, SwitchCamera } from 'lucide-react';
 import { CARD_ASPECT, GUIDE_WIDTH, grabCard, maskCard, paintBoxes } from '../lib/aadhaarMask.js';
 import { describeCard } from '../lib/faceMatch.js';
 import { Spinner } from './ui.jsx';
@@ -18,6 +18,8 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
   const [facing, setFacing] = useState('environment');
   const [attempt, setAttempt] = useState(0);
   const fileRef = useRef(null);
+  const trackRef = useRef(null);
+  const [torch, setTorch] = useState(null); // null: no flashlight on this camera; false / true: off / on
 
   useEffect(() => {
     if (captured) return undefined;
@@ -33,6 +35,12 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
           audio: false,
         });
         if (cancelled) return stream.getTracks().forEach((t) => t.stop());
+        // Sharp cards: keep the focus adjusting; offer the flashlight where the camera has one.
+        const track = stream.getVideoTracks()[0];
+        trackRef.current = track;
+        const caps = track?.getCapabilities?.() || {};
+        if (caps.focusMode?.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        setTorch(caps.torch ? false : null);
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
         setReady(true);
@@ -55,6 +63,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
   const fromCard = async (card) => {
     setBusy(true);
     try {
+      const quality = cardQuality(card);
       // The face on the card is read on this device from a copy, while the number is being hidden. The descriptor stays in memory.
       const copy = document.createElement('canvas');
       copy.width = card.width;
@@ -63,7 +72,7 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
       const full = keepFull ? copy.toDataURL('image/jpeg', 0.82) : undefined;
       const face = describeCard(copy).catch(() => 'unavailable');
       const result = await maskCard(card, idType);
-      onCapture(result.dataUrl, { ...result, face: await face, ...(full && result.idType === 'aadhaar' ? { full } : {}) });
+      onCapture(result.dataUrl, { ...result, quality, face: await face, ...(full && result.idType === 'aadhaar' ? { full } : {}) });
     } finally {
       setBusy(false);
     }
@@ -145,6 +154,12 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
         <div className="cam-controls">
           <span className="cam-spacer" />
           <button type="button" className="shutter" onClick={snap} disabled={!ready} aria-label={mode === 'aadhaar' ? 'Capture card' : 'Take photo'} />
+          {torch !== null && (
+            <button type="button" className={`cam-round${torch ? ' is-on' : ''}`} aria-pressed={torch} aria-label={torch ? 'Flashlight off' : 'Flashlight on'}
+              onClick={() => { const next = !torch; trackRef.current?.applyConstraints({ advanced: [{ torch: next }] }).then(() => setTorch(next)).catch(() => setTorch(null)); }}>
+              <Flashlight />
+            </button>
+          )}
           <button type="button" className="cam-round" onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))} aria-label="Switch camera">
             <SwitchCamera />
           </button>
@@ -156,6 +171,44 @@ export default function Camera({ mode, onCapture, captured, onRetake, info, onEd
 
 // The masked card. Tap it to open it full size and check the mask; "Black out more" opens the
 // big view straight in drawing mode, where small text is easy to cover.
+// How good the card photo is, measured on a small grey copy: sharpness (edge strength) and light.
+const QUALITY_NOTE = {
+  blurry: 'Photo looks blurry: hold the card still and retake.',
+  dark: 'Photo is too dark: turn on the flashlight or move to light, and retake.',
+};
+function cardQuality(src) {
+  try {
+    const w = 360;
+    const h = Math.max(1, Math.round((src.height / src.width) * w));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    let sum = 0;
+    for (let i = 0; i < w * h; i += 1) {
+      const v = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+      g[i] = v; sum += v;
+    }
+    let lap = 0;
+    let lap2 = 0;
+    let n = 0;
+    for (let y = 1; y < h - 1; y += 1) {
+      for (let x = 1; x < w - 1; x += 1) {
+        const i = y * w + x;
+        const l = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];
+        lap += l; lap2 += l * l; n += 1;
+      }
+    }
+    const mean = sum / (w * h);
+    const sharp = lap2 / n - (lap / n) ** 2;
+    if (mean < 55) return 'dark';
+    if (sharp < 100) return 'blurry';
+    return null;
+  } catch { return null; }
+}
+
 function MaskedCard({ image, info, onRetake, onEdit, label }) {
   const [viewer, setViewer] = useState(null); // null | { drawing }
   const [history, setHistory] = useState([]);
@@ -172,9 +225,12 @@ function MaskedCard({ image, info, onRetake, onEdit, label }) {
             ? { tone: 'ok', text: `${label} captured` }
             : { tone: 'ok', text: 'Masked on this device' };
   // The card is not the type that was picked: the type has been changed to match it.
-  const status = !info?.switched ? found
+  const switched = !info?.switched ? found
     : info.method === 'none' ? { tone: 'ok', text: `${label} found, ID type changed` }
       : { ...found, text: `Aadhaar found, ID type changed. ${found.text}` };
+  // A poor photo reads badly: say so and make Retake the obvious button.
+  const poor = QUALITY_NOTE[info?.quality];
+  const status = poor ? { tone: 'warn', text: `${poor} ${switched.text}` } : switched;
 
   const paint = async (rect) => {
     const next = await paintBoxes(image, [rect]);
@@ -197,8 +253,8 @@ function MaskedCard({ image, info, onRetake, onEdit, label }) {
         {status.tone === 'warn' ? <AlertTriangle /> : <CheckCircle2 />}{status.text}
       </span>
       <div className="shot-actions">
-        <button type="button" className={`btn btn-sm ${status.tone === 'warn' ? 'btn-primary' : ''}`} onClick={() => setViewer({ drawing: false })}><Maximize2 />Check full size</button>
-        <button type="button" className="btn btn-sm" onClick={onRetake}><RefreshCcw />Retake</button>
+        <button type="button" className={`btn btn-sm ${status.tone === 'warn' && !poor ? 'btn-primary' : ''}`} onClick={() => setViewer({ drawing: false })}><Maximize2 />Check full size</button>
+        <button type="button" className={`btn btn-sm ${poor ? 'btn-primary' : ''}`} onClick={onRetake}><RefreshCcw />Retake</button>
       </div>
       <ImageViewer
         open={Boolean(viewer)}

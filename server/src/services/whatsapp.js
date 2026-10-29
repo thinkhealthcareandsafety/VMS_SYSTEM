@@ -5,7 +5,7 @@ const config = require('../config');
 // WhatsApp Cloud API (Meta). The host gets the request with the visitor's photo and Let them in / Decline
 // buttons; their tap comes back through the webhook (routes/whatsapp.js). Buttons and free text can only be
 // sent within 24 hours of the host last messaging the business number, so each host says "Hi" to it once.
-const enabled = () => Boolean(config.whatsapp.token && config.whatsapp.phoneId);
+const enabled = () => Boolean(config.whatsapp.on && config.whatsapp.token && config.whatsapp.phoneId);
 const digits = (mobile) => String(mobile || '').replace(/\D/g, '');
 
 async function call(path, init) {

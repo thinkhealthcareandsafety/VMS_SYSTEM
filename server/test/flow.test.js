@@ -745,7 +745,7 @@ test('WhatsApp: request with photo and buttons goes to the chosen host; only the
   });
   guard = await login('guard1', 'new-guard-pass-456'); // the password test before this one signed other sessions out
   const saved = { ...config.whatsapp };
-  Object.assign(config.whatsapp, { token: 'wa-token', phoneId: 'PH1', verifyToken: 'gate-verify', apiBase: `http://127.0.0.1:${fake.address().port}/v23.0` });
+  Object.assign(config.whatsapp, { on: true, token: 'wa-token', phoneId: 'PH1', verifyToken: 'gate-verify', apiBase: `http://127.0.0.1:${fake.address().port}/v23.0` });
   const hook = (messages, statuses) => fetch(base + '/api/whatsapp/webhook', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ object: 'whatsapp_business_account', entry: [{ changes: [{ field: 'messages', value: { ...(messages ? { messages } : {}), ...(statuses ? { statuses } : {}) } }] }] }),
@@ -1301,7 +1301,7 @@ test('material: gate passes approved by the head (older API); the inward registe
 
   // The head taps Approve on WhatsApp: only from their own number.
   const saved = { ...config.whatsapp };
-  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  Object.assign(config.whatsapp, { on: true, token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
   try {
     const viaWa = await out({});
     assert.equal(viaWa.body.approvalSentBy, 'whatsapp');
@@ -1322,7 +1322,7 @@ test('material: gate passes approved by the head (older API); the inward registe
   const inward = (body) => call('POST', '/api/material', {
     direction: 'in', party: { company: 'Fresh Farms', name: 'Ramu', address: 'Azadpur Mandi, Delhi 110033', mobile: '9811100011', gstin: '07aabcu 9603r1zm' },
     department: 'Kitchen', docs: { invoice: 'INV-9' }, vehicle: { number: 'dl 1l ab 1234' },
-    items: [{ code: 'V-01', name: 'Vegetables', qty: 100, unit: 'kg' }, { name: 'Eggs', qty: 30, unit: 'nos' }], photos: [jpeg()], docPhotos: [jpeg(), jpeg()],
+    items: [{ code: 'V-01', name: 'Vegetables', qty: 100, unit: 'kg' }, { name: 'Eggs', qty: 30, unit: 'nos' }], photos: [jpeg()], docPhotos: [jpeg(), jpeg()], personPhoto: jpeg(),
     ...body,
   }, guard);
   assert.match((await inward({ party: { company: 'X', gstin: 'NOT-A-GSTIN' } })).body.error, /GSTIN/);
@@ -1358,7 +1358,7 @@ test('material: gate passes approved by the head (older API); the inward registe
   assert.ok((await call('GET', '/api/material?view=short', null, guard)).body.rows.some((r) => r.id === dl.body.id));
 
   // No invoice or challan: the supplier typed by hand, and listed apart for the admin.
-  const manual = await inward({ party: { company: 'Local Carpenter', address: 'Saket, Delhi', mobile: '9811100012' }, docs: {}, docPhotos: [] });
+  const manual = await inward({ party: { company: 'Local Carpenter', name: 'Mohan', address: 'Saket, Delhi', mobile: '9811100012' }, docs: {}, docPhotos: [] });
   assert.equal(manual.status, 201);
   const nodocs = (await call('GET', '/api/material?view=nodocs', null, admin)).body.rows;
   assert.ok(nodocs.some((r) => r.id === manual.body.id) && !nodocs.some((r) => r.id === dl.body.id));
@@ -1394,7 +1394,7 @@ test('couriers: logged with photos, the recipient accepts or declines, handed ov
     body: JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from, id: `w${Math.random()}`, type: 'interactive', interactive: { type: 'button_reply', button_reply: { id } } }] } }] }] }),
   });
   const saved = { ...config.whatsapp };
-  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  Object.assign(config.whatsapp, { on: true, token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
   try {
     // Clear reasons.
     assert.equal((await arrive({ carrier: '', hostId: hostIds.asha })).status, 400, 'which courier');
@@ -1858,7 +1858,7 @@ test('overstay: listed for the gate, acknowledged by the guard, escalated an hou
   assert.ok(row && row.overMinutes >= 19 && !row.ack && !row.escalatedAt);
   assert.ok(await listed(admin));
   const saved = { ...config.whatsapp };
-  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  Object.assign(config.whatsapp, { on: true, token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
   try {
     await escalate();
     assert.equal((await listed()).escalatedAt, null, 'not before an hour');
@@ -1920,7 +1920,7 @@ test('emergency: a template to visitors, hosts or both on every channel, roll ca
   assert.equal(setup.active, null);
 
   const saved = { ...config.whatsapp };
-  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  Object.assign(config.whatsapp, { on: true, token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
   try {
     const send = (body, who = guard) => call('POST', '/api/emergency/send', { template: 'fire', audience: 'both', text: setup.templates[0].text, ...body }, who);
     assert.equal((await send({ text: 'short' })).status, 400);
@@ -2025,7 +2025,7 @@ test('licence: without one new entries pause but check-outs and emergencies work
     const blocked = await call('POST', '/api/visits', { firstName: 'Lic', lastName: 'Ence', gender: 'male', mobile: '9700000941', company: 'L', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg() }, guard);
     assert.equal(blocked.status, 402);
     assert.match(blocked.body.error, /Check-outs, emergency messages and all records still work/);
-    assert.equal((await call('POST', '/api/material', { direction: 'in', party: { company: 'X' }, items: [{ name: 'Y', qty: 1 }] }, guard)).status, 402);
+    assert.equal((await call('POST', '/api/material', { direction: 'in', party: { company: 'X', name: 'Ravi', mobile: '9811100099' }, items: [{ name: 'Y', qty: 1 }], personPhoto: jpeg() }, guard)).status, 402);
     assert.equal((await call('GET', '/api/emergency/setup', null, guard)).status, 200, 'emergency never blocked');
 
     assert.equal((await call('POST', '/api/admin/license', { key: 'not-a-key' }, admin)).status, 400);
@@ -2034,7 +2034,7 @@ test('licence: without one new entries pause but check-outs and emergencies work
     const ok = await call('POST', '/api/admin/license', { key: TEST_KEY }, admin);
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     assert.equal(ok.body.until, '2027-01-27');
-    assert.equal((await call('POST', '/api/material', { direction: 'in', party: { company: 'X' }, items: [{ name: 'Y', qty: 1 }] }, guard)).status, 201, 'entries work again');
+    assert.equal((await call('POST', '/api/material', { direction: 'in', party: { company: 'X', name: 'Ravi', mobile: '9811100099' }, items: [{ name: 'Y', qty: 1 }], personPhoto: jpeg() }, guard)).status, 201, 'entries work again');
 
     // After the last day: ended; a clock turned back is caught.
     license.forget();
@@ -2096,7 +2096,7 @@ test('check-in options are set by the admin; the host is told when the visitor l
   assert.equal(me.checkin.lanyardCards, false, 'lanyard card off by default');
 
   const saved = { ...config.whatsapp };
-  Object.assign(config.whatsapp, { token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
+  Object.assign(config.whatsapp, { on: true, token: 'wa', phoneId: 'PH', apiBase: 'http://127.0.0.1:9/none' });
   try {
     const r = await call('POST', '/api/visits', { firstName: 'Leaves', lastName: 'Soon', gender: 'male', mobile: '9700000951', company: 'LS', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), validity: '6h', purpose: 'Banquet' }, guard);
     assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -2241,4 +2241,24 @@ test('on leaving: the host is emailed (also when security checks them out) and t
     await call('PATCH', '/api/admin/settings', { thankVisitor: true }, admin);
     await Visit.deleteMany({ mobile: { $in: ['+919700000394', '+919700000395'] } });
   } finally { Object.assign(config.email, saved); }
+});
+
+test('a delivery records the person who brings it: name, mobile and photo required; their ID card when shown', async () => {
+  const body0 = { direction: 'in', party: { company: 'Courier Co', name: 'Sunil', mobile: '9811100055' }, items: [{ name: 'Linen', qty: 10 }] };
+  assert.match((await call('POST', '/api/material', { ...body0, party: { company: 'Courier Co' }, personPhoto: jpeg() }, guard)).body.error, /name of the person/);
+  assert.match((await call('POST', '/api/material', body0, guard)).body.error, /photo of the person/);
+  const r = await call('POST', '/api/material', { ...body0, personPhoto: jpeg(), personIdImage: jpeg(), personIdType: 'pan' }, guard);
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.match(r.body.personPhoto, /\/person\/0$/);
+  assert.match(r.body.personIdImage, /\/person-id\/0$/);
+  assert.equal(r.body.personIdType, 'pan');
+  assert.equal((await fetch(base + r.body.personPhoto, { headers: { Cookie: guard } })).status, 200);
+});
+
+test('ID or face did not match: the reason the guard gave is kept on the visit', async () => {
+  const r = await call('POST', '/api/visits', { firstName: 'Odd', lastName: 'Card', gender: 'male', mobile: '9700000396', company: 'Acme', hostId: hostIds.asha, photo: jpeg(), idImage: jpeg(), idOverride: 'Old photo on the ID (the face matches the ID photo only 31%)' }, guard);
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const v = (await call('GET', `/api/visits/${r.body.id}`, null, admin)).body;
+  assert.match(v.idOverride.reason, /Old photo/);
+  assert.equal(v.idOverride.byName, 'Gate Guard');
 });

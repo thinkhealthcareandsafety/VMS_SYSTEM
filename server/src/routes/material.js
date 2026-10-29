@@ -20,7 +20,8 @@ const router = express.Router();
 const isId = (v) => mongoose.isValidObjectId(v);
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_PHOTO = 2 * 1024 * 1024;
-const PHOTO_SETS = { photo: 'photos', doc: 'docPhotos', exit: 'exitPhotos', signature: 'signature' };
+const PHOTO_SETS = { photo: 'photos', doc: 'docPhotos', exit: 'exitPhotos', signature: 'signature', person: 'personPhoto', 'person-id': 'personIdImage' };
+const SINGLE = ['signature', 'personPhoto', 'personIdImage'];
 
 // Data URLs -> saved JPEG files, or { error } naming what to retake.
 async function savePhotos(list, max) {
@@ -56,6 +57,8 @@ function row(m, admin) {
     docPhotos: (m.docPhotos || []).map((_, i) => `/api/material/${m._id}/doc/${i}`),
     exitPhotos: (m.exitPhotos || []).map((_, i) => `/api/material/${m._id}/exit/${i}`),
     signature: m.signature ? `/api/material/${m._id}/signature/0` : null,
+    personPhoto: m.personPhoto ? `/api/material/${m._id}/person/0` : null,
+    personIdImage: m.personIdImage ? `/api/material/${m._id}/person-id/0` : null, personIdType: m.personIdType || null,
     receivedBy: m.receivedBy?.name || m.receivedBy?.department ? m.receivedBy : null, exitNote: m.exitNote || '',
     checkedOutAt: m.checkedOutAt || null, takenBack: Boolean(m.takenBack), cardNo: m.cardNo || null,
     createdAt: m.createdAt, createdBy: m.createdByName || '',
@@ -163,11 +166,11 @@ router.get('/:id', requireRole('guard', 'admin'), async (req, res) => {
   if (m) res.json(row(m.toObject(), isAdmin(req.user)));
 });
 
-router.get('/:id/:set(photo|doc|exit|signature)/:n', requireRole('guard', 'admin'), async (req, res) => {
+router.get('/:id/:set(photo|doc|exit|signature|person|person-id)/:n', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).end();
   const field = PHOTO_SETS[req.params.set];
   const m = await Material.findById(req.params.id, field).lean();
-  const file = field === 'signature' ? m?.signature : m?.[field]?.[Number(req.params.n)];
+  const file = SINGLE.includes(field) ? m?.[field] : m?.[field]?.[Number(req.params.n)];
   if (!file) return res.status(404).end();
   res.type('jpeg').sendFile(path.resolve(file));
 });
@@ -186,9 +189,16 @@ router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res)
     approver = isId(b.approverId) ? await material.approverFor(b.approverId) : null;
     if (!approver) return res.status(400).json({ error: 'Choose who approves this pass (head of department)' });
   }
+  // A delivery: the person who brings it is recorded like a visitor (name, mobile, live photo; ID card when shown).
+  const delivery = direction === 'in' && pass.kind === 'delivery';
+  if (delivery && !pass.party.name) return res.status(400).json({ error: 'Enter the name of the person who brought the goods' });
+  if (delivery && !pass.party.mobile) return res.status(400).json({ error: 'Enter the mobile number of the person who brought the goods' });
+  if (delivery && !b.personPhoto) return res.status(400).json({ error: 'Take a photo of the person who brought the goods' });
   const shots = await savePhotos(b.photos, 3);
   const docs = await savePhotos(b.docPhotos, 4);
-  if (shots.error || docs.error) return res.status(400).json({ error: shots.error || docs.error });
+  const face = await savePhotos(b.personPhoto ? [b.personPhoto] : [], 1);
+  const idCard = await savePhotos(b.personIdImage ? [b.personIdImage] : [], 1);
+  if (shots.error || docs.error || face.error || idCard.error) return res.status(400).json({ error: shots.error || docs.error || (face.error ? 'The photo of the person could not be read. Take it again.' : 'The ID photo could not be read. Take it again.') });
   const photos = shots.files;
 
   const now = new Date();
@@ -203,6 +213,8 @@ router.post('/', requireRole('guard', 'admin'), requireLicense, async (req, res)
     ...(direction === 'in' ? { movements: [passes.movement('in', gate, req.user, now)] } : {}),
     photos: photos.length ? photos : undefined,
     docPhotos: docs.files.length ? docs.files : undefined,
+    personPhoto: face.files[0], personIdImage: idCard.files[0],
+    personIdType: idCard.files[0] ? cleanText(b.personIdType, 20) || 'aadhaar' : undefined,
     createdBy: req.user.id, createdByName: req.user.fullName,
   });
   audit(req.user, direction === 'in' ? 'material.received' : approveNow ? 'material.approved' : 'material.requested', {

@@ -64,7 +64,7 @@ const publicVisit = (v, host, withMobile = false) => ({
   dailyNumber: v.dailyNumber ?? null,
   dailyDay: v.dailyDay ?? null,
   host: host ? { id: String(host._id), name: host.fullName, unit: host.unit, ...(withMobile ? { mobile: host.mobile } : {}) } : null,
-  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), hasFullId: Boolean(v.idFullPath), idMaskMethod: v.idMaskMethod, idType: v.idType || 'aadhaar', idLabel: idLabelOf(v), idCheck: v.idCheck?.status ? v.idCheck : null, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
+  ...(withMobile ? { mobile: v.mobile, email: v.email ?? null, visitDay: v.visitDay, createdAt: v.createdAt, checkedOutAt: v.checkedOutAt, forceReason: v.forceReason, hasIdImage: Boolean(v.idImagePath), hasFullId: Boolean(v.idFullPath), idMaskMethod: v.idMaskMethod, idType: v.idType || 'aadhaar', idLabel: idLabelOf(v), idCheck: v.idCheck?.status ? v.idCheck : null, idOverride: v.idOverride?.reason ? v.idOverride : null, faceMatchScore: v.faceMatchScore ?? null, faceMatchStatus: v.faceMatchStatus ?? null, mobileVerified: v.mobileVerified ?? null } : {}),
   decidedAt: v.decidedAt,
   phoneApproval: v.phoneApproval ? { byName: v.phoneApproval.byName, note: v.phoneApproval.note } : null,
   checkedOutAt: v.checkedOutAt,
@@ -330,13 +330,14 @@ async function checkIn(req, res) {
       status: 'pending',
       visitDay: siteDay(),
       photoPath, idImagePath: idPath, idFullPath, idMaskMethod, idType, idTypeOther, idCheck: idCheckFrom(b.idCheck),
+      ...(cleanText(b.idOverride, 200) ? { idOverride: { reason: cleanText(b.idOverride, 200), byName: req.user.fullName } } : {}),
       ...faceMatchFrom(b), ...mobileCheck,
       validity: pass.validity,
       ...(card ? { card } : {}),
       arrival: { gate: gate.id || undefined, gateName: gate.name, by: req.user.id, byName: req.user.fullName },
       createdBy: req.user.id,
     });
-    audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName, ...(card ? { card: `${passes.CARD_LABEL[card.type]} ${card.no}` } : {}) }, ip: req.ip });
+    audit(req.user, 'visit.created', { entity: 'Visit', entityId: visit._id, details: { ref: visit.ref, host: host.fullName, ...(visit.idOverride ? { idOverride: visit.idOverride.reason } : {}), ...(card ? { card: `${passes.CARD_LABEL[card.type]} ${card.no}` } : {}) }, ip: req.ip });
     if (mobileCheck.mobileVerified === 'otp') await Otp.updateMany({ mobile, verifiedAt: { $exists: true }, usedAt: { $exists: false } }, { usedAt: new Date() });
 
     if (invite) {

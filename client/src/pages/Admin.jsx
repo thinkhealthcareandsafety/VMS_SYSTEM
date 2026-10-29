@@ -1091,6 +1091,7 @@ function VisitDrawer({ id, tick, superAdmin, onClose, onChanged }) {
             <div>
               <h3 className="section-title">{v.idType && v.idType !== 'aadhaar' ? v.idLabel : 'Aadhaar card (masked)'}</h3>
               {v.idCheck && <IdCheckLine c={v.idCheck} />}
+              {v.idOverride && <div className="alert alert-warn" style={{ marginBottom: 10 }}><AlertTriangle /><span className="grow"><strong>Let in despite an ID warning</strong> by {v.idOverride.byName}: {v.idOverride.reason}</span></div>}
               {!v.hasIdImage ? (
                 <p className="muted">Deleted automatically after the retention period.</p>
               ) : showId ? (
@@ -1271,7 +1272,7 @@ const AUDIT_FILTERS = [
   { id: 'auth', label: 'Sign-ins' }, { id: 'user.', label: 'Staff' }, { id: 'host.', label: 'Hosts' }, { id: 'block', label: 'Blocked' }, { id: 'invite.', label: 'Expected' }, { id: 'settings|license|gate.', label: 'Settings' },
 ];
 const ROLE_LABEL = { superadmin: 'Super Admin', admin: 'Administrator', guard: 'Guard' };
-const DETAIL_KEYS = { parcelsIn: 'parcels in', parcelsOut: 'parcels out', expectedCancelled: 'expected visitors cancelled', takenBack: 'part taken back', receivedBy: 'received by', aadhaarImages: 'Aadhaar images', dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', updated: 'updated', errors: 'not added', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors', count: 'how many' };
+const DETAIL_KEYS = { idOverride: 'ID warning passed', parcelsIn: 'parcels in', parcelsOut: 'parcels out', expectedCancelled: 'expected visitors cancelled', takenBack: 'part taken back', receivedBy: 'received by', aadhaarImages: 'Aadhaar images', dailyNumber: 'pass', rows: 'visits', from: 'from', to: 'to', created: 'added', updated: 'updated', errors: 'not added', unit: 'flat', host: 'host', reason: 'reason', error: 'error', active: 'receives visitors', count: 'how many' };
 // Details in plain words: yes / no, and lists or objects as "a, b" rather than code.
 const plainValue = (v) => (v === true ? 'yes' : v === false ? 'no' : Array.isArray(v) ? v.join(', ')
   : typeof v === 'object' ? Object.entries(v).map(([k, x]) => `${k} ${plainValue(x)}`).join(', ') : String(v));
@@ -1925,7 +1926,7 @@ function ConnectTelegramDialog({ host, live, onClose, onRefresh }) {
                 <div className="tg-qr" dangerouslySetInnerHTML={{ __html: qr }} aria-label="QR code to connect Telegram" role="img" />
                 <p className="faint" style={{ fontSize: 13, textAlign: 'center' }}><Spinner size={12} /> Waiting for {first} to tap Start…</p>
                 <SecretBox label="Link" value={link.url} compact />
-                <p className="faint" style={{ fontSize: 12.5 }}>Works once and expires in 24 hours. You can send the link on WhatsApp instead of showing the QR.</p>
+                <p className="faint" style={{ fontSize: 12.5 }}>Works once and expires in 24 hours. You can send the link instead of showing the QR.</p>
               </>
             )}
           </div>
@@ -2416,7 +2417,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
           </label>
           <label className="checkbox" style={{ fontSize: 14 }}>
             <input type="checkbox" checked={f.notifyCheckout} onChange={(e) => setF({ ...f, notifyCheckout: e.target.checked })} />
-            <span>Tell the host when their visitor leaves <span className="faint">(WhatsApp, email; SMS once its template is approved)</span></span>
+            <span>Tell the host when their visitor leaves <span className="faint">(email; SMS once its template is approved)</span></span>
           </label>
           <label className="checkbox" style={{ fontSize: 14 }}>
             <input type="checkbox" checked={f.thankVisitor} onChange={(e) => setF({ ...f, thankVisitor: e.target.checked })} />
@@ -2436,7 +2437,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
             <input className="input" value={f.assemblyPoint} maxLength={120} onChange={(e) => setF({ ...f, assemblyPoint: e.target.value })} placeholder="e.g. Main driveway, by the fountain" />
             <span className="hint">Written into the emergency messages (fire, evacuate, drill), so everyone knows where to go. The Emergency button is on every guard desk and at the top of this console.</span>
           </label>
-          {!ch.smsAlerts && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Emergency SMS is not set up. Visitors who have not messaged the hotel’s WhatsApp number may not get emergency messages. Ask GateSmartX support to set up an SMS emergency template.</span></div>}
+          {!ch.smsAlerts && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Emergency SMS is not set up. Visitors without an email on record may not get emergency messages. Ask GateSmartX support to set up an SMS emergency template.</span></div>}
         </div>
       </section>
 
@@ -2445,9 +2446,9 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
         <div className="panel-body">
           <label className="field"><span>Escalate to</span>
             <textarea className="textarea" rows={2} value={f.escalateTo} onChange={(e) => setF({ ...f, escalateTo: e.target.value })} placeholder="98110 00099, security.manager@hotel.com" />
-            <span className="hint">Mobile numbers (WhatsApp) and email addresses, separated by commas. When a visitor is still inside an hour after their pass ended, these people and the visitor’s host are told. The guard desk and this console show it the moment the pass ends.</span>
+            <span className="hint">Email addresses, separated by commas. When a visitor is still inside an hour after their pass ended, these people and the visitor’s host are told. The guard desk and this console show it the moment the pass ends.</span>
           </label>
-          {!ch.whatsapp && !ch.email && <div className="alert alert-warn"><AlertTriangle /><span className="grow">WhatsApp and email are both off, so nobody can be told yet. The escalation still shows in red on this console.</span></div>}
+          {!ch.email && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Email is off, so nobody can be told yet. The escalation still shows in red on this console.</span></div>}
         </div>
       </section>
 
@@ -2459,11 +2460,13 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
           </button>
         </div>
         <div className="panel-body">
+          {ch.whatsapp && (
           <div className="channel">
-            <MessageSquare />
-            <span className="grow"><strong>WhatsApp</strong><small>{ch.whatsapp ? 'Hosts get requests with Let them in / Decline buttons.' : 'Off. Ask GateSmartX support to set up your WhatsApp business number.'}</small></span>
-            {ch.whatsapp ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
-          </div>
+              <MessageSquare />
+              <span className="grow"><strong>WhatsApp</strong><small>{ch.whatsapp ? 'Hosts get requests with Let them in / Decline buttons.' : 'Off. Ask GateSmartX support to set up your WhatsApp business number.'}</small></span>
+              {ch.whatsapp ? <span className="badge badge-live">On</span> : <span className="badge">Off</span>}
+            </div>
+          )}
           <div className="channel">
             <Mail />
             <span className="grow"><strong>Email</strong><small>{ch.email ? `Sent from ${ch.email} to every host with an email address, as well as WhatsApp or SMS. Free.` : 'Off. Ask GateSmartX support to connect a mail account, so hosts also get requests by email.'}</small></span>

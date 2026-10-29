@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
-  AlertTriangle, ArrowLeft, Ban, CalendarDays, Check, Copy, Download, FileSpreadsheet, Info, Link2, LogOut, MessageCircle,
+  AlertTriangle, ArrowLeft, Ban, CalendarDays, Check, Copy, Download, FileSpreadsheet, Info, Link2, LogOut,
   PartyPopper, Pencil, Plus, Printer, RefreshCw, RotateCcw, Search, Upload, UserX, Users,
 } from 'lucide-react';
 import { api, fmtDateTime, fmtMobile, today } from '../api.js';
@@ -12,7 +12,6 @@ import { Empty, Modal, Spinner, useToast } from '../components/ui.jsx';
 // each guest gets a pass (QR + code) that any gate scans, and the list shows who came.
 const STATUS = { expected: ['Not arrived', ''], inside: ['Inside', 'badge-live'], out: ['Out, pass valid', 'badge-ok'], left: ['Left', ''] };
 const addDays = (ymd, n) => { const t = new Date(`${ymd}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
-const waLink = (mobile, text) => `https://wa.me/${mobile ? mobile.replace(/\D/g, '') : ''}?text=${encodeURIComponent(text)}`;
 const copy = async (text, toast, what) => {
   try { await navigator.clipboard.writeText(text); toast(`${what} copied.`); } catch { window.prompt('Copy this:', text); }
 };
@@ -198,8 +197,6 @@ function GroupDetail({ id, tick, onBack }) {
   };
 
   if (!g) return <section className="panel" style={{ padding: 18 }}><div className="skeleton" style={{ height: 160, borderRadius: 12 }} /></section>;
-  const inviteText = (r) => `Hi ${r.firstName}, here is your entry pass for ${g.name} (${g.days}): ${r.link}\nShow it at the gate. Code: ${r.code}`;
-  const joinText = `You are invited to ${g.name} (${g.days}). Get your entry pass here: ${g.joinLink}`;
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -245,7 +242,7 @@ function GroupDetail({ id, tick, onBack }) {
         )}
       </section>
 
-      <JoinLinkPanel g={g} busy={busy} onPatch={patch} joinText={joinText} />
+      <JoinLinkPanel g={g} busy={busy} onPatch={patch} />
 
       <section className="panel">
         <div className="toolbar">
@@ -275,7 +272,6 @@ function GroupDetail({ id, tick, onBack }) {
                       <td className="num">{r.arrivedAt ? fmtDateTime(r.arrivedAt) : <span className="faint">—</span>}{r.lastIn?.gate && <div className="meta-line">{r.lastIn.gate}</div>}</td>
                       <td className="r">
                         <div className="actions">
-                          <a className="btn btn-sm btn-icon" href={waLink(r.mobile, inviteText(r))} target="_blank" rel="noopener noreferrer" title="Send the pass on WhatsApp" aria-label={`Send ${r.firstName}'s pass on WhatsApp`}><MessageCircle /></a>
                           <button className="btn btn-sm btn-icon" onClick={() => copy(r.link, toast, 'Pass link')} title="Copy pass link" aria-label={`Copy ${r.firstName}'s pass link`}><Copy /></button>
                           {r.status === 'expected' && <button className="btn btn-sm btn-icon btn-ghost" onClick={() => guestPatch(r, { remove: true }, `${r.firstName} removed. Their pass no longer works.`)} title="Remove from the list" aria-label={`Remove ${r.firstName}`}><UserX /></button>}
                         </div>
@@ -296,7 +292,7 @@ function GroupDetail({ id, tick, onBack }) {
 }
 
 // ----------------------------------------------------------------------------- shared link
-function JoinLinkPanel({ g, busy, onPatch, joinText }) {
+function JoinLinkPanel({ g, busy, onPatch }) {
   const toast = useToast();
   const [limit, setLimit] = useState(g.joinLimit || 50);
   useEffect(() => { setLimit(g.joinLimit || 50); }, [g.joinLimit]);
@@ -320,7 +316,6 @@ function JoinLinkPanel({ g, busy, onPatch, joinText }) {
             <code className="mono">{g.joinLink}</code>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn btn-sm" onClick={() => copy(g.joinLink, toast, 'Link')}><Copy />Copy</button>
-              <a className="btn btn-sm btn-whatsapp" href={waLink('', joinText)} target="_blank" rel="noopener noreferrer"><MessageCircle />Share on WhatsApp</a>
               <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => onPatch({ newJoinLink: true }, 'New link made. The old one no longer works.')}><RefreshCw />New link</button>
             </div>
           </div>
