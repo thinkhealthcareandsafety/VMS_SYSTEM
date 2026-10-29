@@ -96,6 +96,17 @@ async function sendOtp(to, code) {
     console.log(`[OTP -> ${to}] ${code} (test mode: no MSG91 key set, nothing was sent)`);
     return 'console';
   }
+  if (config.otp.via === 'flow') {
+    const res = await fetch('https://control.msg91.com/api/v5/flow', {
+      method: 'POST',
+      headers: { authkey: config.otp.authKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ template_id: config.otp.templateId, short_url: '0', recipients: [{ mobiles: to.replace(/^\+/, ''), OTP: code, otp: code }] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.type === 'error') throw new Error(`MSG91: ${json.message || res.status}`);
+    return String(json.message || json.request_id || 'accepted');
+  }
   const q = new URLSearchParams({
     template_id: config.otp.templateId, mobile: to.replace(/^\+/, ''), otp: code,
     otp_expiry: String(config.otp.expiryMinutes), otp_length: '6',

@@ -35,6 +35,9 @@ module.exports = {
   otp: {
     authKey: env.MSG91_AUTHKEY || '',
     templateId: env.MSG91_OTP_TEMPLATE_ID || '',   // the DLT-approved OTP template, from MSG91 -> OTP
+    // flow: the code goes as an ordinary SMS template (##OTP##) through MSG91's Flow API, the same route as every other
+    // message. otp: MSG91's OTP service, which only takes templates made in its OTP section.
+    via: env.MSG91_OTP_VIA === 'flow' ? 'flow' : 'otp',
     expiryMinutes: Number(env.OTP_EXPIRY_MINUTES || 5),
     dailyLimit: Number(env.OTP_DAILY_LIMIT || 300), // SMS sent per day across the site: a cap on cost if someone keeps pressing "send"
     verifiedDays: Number(env.OTP_VERIFIED_DAYS || 0), // 0 = ask on every visit; N = a number verified within N days is not asked again
