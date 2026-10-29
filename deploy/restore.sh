@@ -47,7 +47,7 @@ echo "4/4 Copying back any photos missing on this PC"
 if [ -d "$BACKUP_DIR/uploads" ]; then
   mkdir -p "$DATA_DIR/uploads"
   owner=$(stat -c %u:%g "$DATA_DIR/uploads")
-  cp -rn "$BACKUP_DIR/uploads/." "$DATA_DIR/uploads/"
+  cp -r --update=none "$BACKUP_DIR/uploads/." "$DATA_DIR/uploads/"
   chown -R "$owner" "$DATA_DIR/uploads"
 else
   echo "    No photos on the backup drive (no drive was connected when it was taken)."
