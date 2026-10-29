@@ -12,6 +12,7 @@ const { retireTelegram, whatsappFallback } = require('./notify');
 const passes = require('./passes');
 const parcels = require('./parcels');
 const overstay = require('./overstay');
+const dailyReport = require('./dailyReport');
 
 const backoffMs = (attempts) => Math.min(60000, 2 ** attempts * 1000);
 // The single-use token in a request's link: a visitor, a material gate pass or a parcel.
@@ -143,6 +144,7 @@ function start() {
       await parcels.remind();
       await overstay.escalate();
       await purgeIdImages();
+      dailyReport.nightly().catch((err) => console.error('[daily report]', err.message)); // alongside, so a slow mail never holds up approvals
     } catch (err) {
       console.error('[worker]', err.message);
     } finally {

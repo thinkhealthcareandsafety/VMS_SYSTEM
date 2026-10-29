@@ -166,6 +166,8 @@ const settingSchema = new Schema({
   lanyardCards: { type: Boolean },              // ask for the hotel's lanyard card number at check-in
   notifyCheckout: { type: Boolean },            // tell the host when their visitor leaves
   thankVisitor: { type: Boolean },              // thank the visitor when they leave (email; SMS with its template)
+  dailyReportTo: { type: [String], default: undefined }, // emailed the daily gate report (PDF) every night after midnight
+  dailyReportSentFor: { type: String },         // the latest day (YYYY-MM-DD) whose report went out
   license: { type: String },                    // the GateSmartX licence key (services/license)
   licenseSeenAt: { type: Date },                // the latest time the server has seen: a clock turned back shows here  // where people gather in an evacuation; filled into the emergency messages
   otpMode: { type: String, enum: ['off', 'optional', 'required'] }, // mobile verification by OTP at check-in

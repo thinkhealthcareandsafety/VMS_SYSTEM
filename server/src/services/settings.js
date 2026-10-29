@@ -16,6 +16,8 @@ const defaults = () => ({
   lanyardCards: false,
   notifyCheckout: true,
   thankVisitor: true, // a thank-you when the visitor leaves: email always (free), SMS once its template is approved
+  dailyReportTo: [], // the security manager and others: yesterday's gate report as a PDF, every night after midnight
+  dailyReportSentFor: '',
 });
 
 let cache = null;

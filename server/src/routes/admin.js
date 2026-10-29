@@ -723,6 +723,13 @@ router.patch('/settings', requireRole('admin'), async (req, res) => {
     if (mobiles.length > 10 || emails.length > 10) return res.status(400).json({ error: 'Up to 10 numbers and 10 email addresses' });
     patch.escalateTo = { mobiles: [...new Set(mobiles)], emails: [...new Set(emails)] };
   }
+  // Who gets the daily gate report by email every night: email addresses only.
+  if (b.dailyReportTo !== undefined) {
+    const emails = String(Array.isArray(b.dailyReportTo) ? b.dailyReportTo.join(',') : b.dailyReportTo || '').split(/[\s,;]+/).filter(Boolean);
+    for (const e of emails) if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return res.status(400).json({ error: `${e} is not a valid email address` });
+    if (emails.length > 10) return res.status(400).json({ error: 'Up to 10 email addresses' });
+    patch.dailyReportTo = [...new Set(emails.map((e) => e.toLowerCase()))];
+  }
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
   const before = await settings.get();
   const after = await settings.update(patch);

@@ -8,7 +8,7 @@ const c = config.email;
 const enabled = () => (c.driver === 'smtp' && Boolean(c.smtp.user && c.smtp.pass)) || (c.driver === 'brevo' && Boolean(c.brevoKey && c.from));
 
 let transport;
-async function viaSmtp(to, subject, html, text) {
+async function viaSmtp(to, subject, html, text, attachments) {
   if (!transport) {
     const nodemailer = require('nodemailer');
     transport = nodemailer.createTransport({
@@ -17,15 +17,16 @@ async function viaSmtp(to, subject, html, text) {
       connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000,
     });
   }
-  const info = await transport.sendMail({ from: { name: c.fromName, address: c.from }, to, subject, html, text });
+  const info = await transport.sendMail({ from: { name: c.fromName, address: c.from }, to, subject, html, text, ...(attachments?.length ? { attachments } : {}) });
   return info.messageId || 'accepted';
 }
 
-async function viaBrevo(to, subject, html, text) {
+async function viaBrevo(to, subject, html, text, attachments) {
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'api-key': c.brevoKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ sender: { name: c.fromName, email: c.from }, to: [{ email: to }], subject, htmlContent: html, textContent: text }),
+    body: JSON.stringify({ sender: { name: c.fromName, email: c.from }, to: [].concat(to).map((email) => ({ email })), subject, htmlContent: html, textContent: text,
+      ...(attachments?.length ? { attachment: attachments.map((a) => ({ name: a.filename, content: Buffer.from(a.content).toString('base64') })) } : {}) }),
     signal: AbortSignal.timeout(15000),
   });
   const data = await res.json().catch(() => ({}));
@@ -37,9 +38,10 @@ async function viaBrevo(to, subject, html, text) {
   return data.messageId || 'accepted';
 }
 
-async function send(to, subject, html, text) {
+// to: one address or a list. attachments: [{ filename, content (Buffer) }], e.g. the nightly report PDF.
+async function send(to, subject, html, text, attachments) {
   if (!enabled()) throw Object.assign(new Error('Email is not set up'), { permanent: true });
-  return c.driver === 'brevo' ? viaBrevo(to, subject, html, text) : viaSmtp(to, subject, html, text);
+  return c.driver === 'brevo' ? viaBrevo(to, subject, html, text, attachments) : viaSmtp(to, subject, html, text, attachments);
 }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);

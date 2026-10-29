@@ -25,6 +25,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.24.5",
     "nodemailer": "^6.10.1",
+    "pdfmake": "^0.2.15",
     "zod": "^3.25.76"
   },
   "devDependencies": {

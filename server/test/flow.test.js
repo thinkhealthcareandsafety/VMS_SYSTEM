@@ -2262,3 +2262,54 @@ test('ID or face did not match: the reason the guard gave is kept on the visit',
   assert.match(v.idOverride.reason, /Old photo/);
   assert.equal(v.idOverride.byName, 'Gate Guard');
 });
+
+test('daily report by email: a PDF to the security manager once a night, and on "Email it now"', async () => {
+  const config = require('../src/config');
+  const dailyReport = require('../src/services/dailyReport');
+  const settings = require('../src/services/settings');
+  const { siteDay } = require('../src/services/core');
+  const passes = require('../src/services/passes');
+  const saved = { ...config.email };
+  const realFetch = global.fetch;
+  const sent = [];
+  global.fetch = async (url, opts) => {
+    if (String(url).startsWith('https://api.brevo.com/')) { sent.push(JSON.parse(opts.body)); return new Response(JSON.stringify({ messageId: '<r1@brevo>' }), { status: 201 }); }
+    return realFetch(url, opts);
+  };
+  try {
+    assert.equal((await call('POST', '/api/reports/daily/email', {}, admin)).status, 409, 'email not set up: says so');
+    Object.assign(config.email, { driver: 'brevo', brevoKey: 'test-key', from: 'desk@example.com', fromName: 'Security desk' });
+    assert.equal((await call('POST', '/api/reports/daily/email', {}, admin)).status, 400, 'no address yet: says where to add one');
+    assert.equal((await call('PATCH', '/api/admin/settings', { dailyReportTo: 'not-an-email' }, admin)).status, 400);
+    const set = await call('PATCH', '/api/admin/settings', { dailyReportTo: 'Security@Hotel.example, gm@hotel.example' }, admin);
+    assert.deepEqual(set.body.dailyReportTo, ['security@hotel.example', 'gm@hotel.example']);
+    assert.equal((await call('POST', '/api/reports/daily/email', {}, guard)).status, 403);
+
+    const now = await call('POST', '/api/reports/daily/email', {}, admin);
+    assert.equal(now.status, 200, JSON.stringify(now.body));
+    const mail = sent.pop();
+    assert.deepEqual(mail.to.map((t) => t.email), ['security@hotel.example', 'gm@hotel.example'], 'one email to everyone');
+    assert.match(mail.subject, /Daily gate report/);
+    const pdf = Buffer.from(mail.attachment[0].content, 'base64');
+    assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+    assert.match(mail.attachment[0].name, /\.pdf$/);
+
+    // The night job: not in the first five minutes after midnight, then yesterday's report once.
+    await settings.update({ dailyReportSentFor: '' });
+    dailyReport.nightly.reset();
+    const at = (hhmm) => new Date(`${siteDay()}T${hhmm}:00+05:30`);
+    await dailyReport.nightly(at('00:02'));
+    assert.equal(sent.length, 0, 'waits until 00:05');
+    await dailyReport.nightly(at('00:06'));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].subject, /Daily gate report/);
+    assert.equal((await settings.get()).dailyReportSentFor, passes.addDays(siteDay(at('00:06')), -1));
+    dailyReport.nightly.reset();
+    await dailyReport.nightly(at('09:00'));
+    assert.equal(sent.length, 1, 'never twice for the same day');
+  } finally {
+    global.fetch = realFetch;
+    Object.assign(config.email, saved);
+    await settings.update({ dailyReportTo: [], dailyReportSentFor: '' });
+  }
+});

@@ -2317,7 +2317,8 @@ function GatesManager() {
 // The escalation contacts travel as { mobiles, emails } and are edited as one comma-separated line.
 const withContacts = (d) => ({
   ...d, assemblyPoint: d.assemblyPoint || '', purposes: (d.purposes || []).join(', '), durations: (d.durations || []).join(', '),
-  lanyardCards: Boolean(d.lanyardCards), notifyCheckout: d.notifyCheckout !== false, thankVisitor: d.thankVisitor !== false, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', ') });
+  lanyardCards: Boolean(d.lanyardCards), notifyCheckout: d.notifyCheckout !== false, thankVisitor: d.thankVisitor !== false, escalateTo: [...(d.escalateTo?.mobiles || []), ...(d.escalateTo?.emails || [])].join(', '),
+  dailyReportTo: (d.dailyReportTo || []).join(', ') });
 
 function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
   const [s, setS] = useState(null);
@@ -2328,7 +2329,7 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     api('/api/admin/settings').then((raw) => {
       const d = withContacts(raw);
       setS(d);
-      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', purposes: d.purposes, durations: d.durations, lanyardCards: d.lanyardCards, notifyCheckout: d.notifyCheckout, thankVisitor: d.thankVisitor, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
+      setF({ siteName: d.siteName, gateName: d.gateName, idRetentionDays: d.idRetentionDays, otpMode: d.otpMode, escalateTo: d.escalateTo, assemblyPoint: d.assemblyPoint || '', purposes: d.purposes, durations: d.durations, lanyardCards: d.lanyardCards, notifyCheckout: d.notifyCheckout, thankVisitor: d.thankVisitor, dailyReportTo: d.dailyReportTo, ...(superAdmin ? { fullIdCapture: Boolean(d.fullIdCapture) } : {}) });
     }).catch((e) => setErr(e.message));
   }, []);
 
@@ -2341,11 +2342,19 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
     try {
       const d = withContacts(await api('/api/admin/settings', { method: 'PATCH', body: Object.fromEntries(changed.map((k) => [k, f[k]])) }));
       setS({ ...s, ...d });
-      setF((x) => ({ ...x, escalateTo: d.escalateTo, purposes: d.purposes, durations: d.durations }));
+      setF((x) => ({ ...x, escalateTo: d.escalateTo, purposes: d.purposes, durations: d.durations, dailyReportTo: d.dailyReportTo }));
       toast('Settings saved. Guard screens pick up the changes the next time they open or refresh.');
     } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
   const ch = s.channels || {};
+  const yesterday = new Date(Date.parse(`${today()}T12:00:00Z`) - 864e5).toISOString().slice(0, 10);
+  const emailReport = async () => {
+    setBusy(true); setErr('');
+    try {
+      const r = await api('/api/reports/daily/email', { method: 'POST', body: { day: yesterday } });
+      toast(`Yesterday’s report emailed to ${r.to.join(', ')}.`);
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
 
   return (
     <form className="settings-grid" onSubmit={save}>
@@ -2438,6 +2447,24 @@ function SettingsPage({ toast, superAdmin, go, openExport, stats }) {
             <span className="hint">Written into the emergency messages (fire, evacuate, drill), so everyone knows where to go. The Emergency button is on every guard desk and at the top of this console.</span>
           </label>
           {!ch.smsAlerts && <div className="alert alert-warn"><AlertTriangle /><span className="grow">Emergency SMS is not set up. Visitors without an email on record may not get emergency messages. Ask GateSmartX support to set up an SMS emergency template.</span></div>}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head"><h2>Daily gate report by email</h2></div>
+        <div className="panel-body">
+          <label className="field"><span>Email the report to</span>
+            <textarea className="textarea" rows={2} value={f.dailyReportTo} onChange={(e) => setF({ ...f, dailyReportTo: e.target.value })} placeholder="security.manager@hotel.com" />
+            <span className="hint">Email addresses, separated by commas. Every night just after midnight, yesterday’s material received, parcels in and parcels out go to these people as a PDF, ready to print. Leave empty to stop.</span>
+          </label>
+          {!ch.email
+            ? <div className="alert alert-warn"><AlertTriangle /><span className="grow">Email is off on this server, so the report cannot be sent. Ask GateSmartX support to set up email.</span></div>
+            : s.dailyReportTo && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                <button type="button" className="btn btn-sm" disabled={busy || f.dailyReportTo !== s.dailyReportTo} onClick={emailReport}><Mail />Email yesterday’s report now</button>
+                <span className="hint">{f.dailyReportTo !== s.dailyReportTo ? 'Save the addresses first.' : s.dailyReportSentFor ? `Last sent for ${fmtDate(`${s.dailyReportSentFor}T12:00:00+05:30`)}.` : 'The first one goes out tonight.'}</span>
+              </div>
+            )}
         </div>
       </section>
 
