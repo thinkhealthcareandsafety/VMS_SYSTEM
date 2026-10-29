@@ -16,7 +16,7 @@ import { Empty, Modal, Spinner, useToast } from './ui.jsx';
 // Outward gate passes are not handled here: the hotel's own gate pass system does that.
 const UNITS = ['nos', 'pcs', 'box', 'carton', 'set', 'pair', 'kg', 'g', 'litre', 'ml', 'metre', 'roll', 'bag', 'drum', 'bundle', 'packet'];
 const VIEWS = [['atgate', 'Vendor inside'], ['today', 'Today'], ['short', 'Part taken back'], ['nodocs', 'No invoice or challan'], ['inward', 'All entries']];
-const READ_LABEL = { company: 'supplier', address: 'address', gstin: 'GSTIN', mobile: 'mobile', invoice: 'invoice no.', challan: 'challan no.' };
+const READ_LABEL = { company: 'supplier', address: 'address', gstin: 'GSTIN', invoice: 'invoice no.', challan: 'challan no.', vehicle: 'vehicle no.' };
 const num = (n) => Math.round(n * 1000) / 1000;
 const itemsLine = (m) => m.items.map((i) => `${i.qty} ${i.unit} ${i.name}`).join(', ');
 const supplier = (p) => p?.company || p?.name || '—';
@@ -113,13 +113,23 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
   const [idInfo, setIdInfo] = useState(null);
   const [idType, setIdType] = useState('aadhaar');
   const [cam, setCam] = useState(null);         // 'face' | 'id' | null
-  const [reading, setReading] = useState(null); // null | 'busy' | { found: [...] } | { error }
+  const [reading, setReading] = useState(null); // null | { busy: photos left } | { found: [...], error? }
+  const [suggest, setSuggest] = useState([]);    // goods lines read from the invoice photos, added with a tap
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const readFor = useRef(null);
+  // Every invoice photo is read in turn, on this device. A new form starts a new session, so a read that finishes
+  // after the form was closed or reopened is ignored. Only empty fields are filled: what the guard typed stays.
+  const fRef = useRef(f);
+  fRef.current = f;
+  const session = useRef(0);
+  const queued = useRef(new Set());
+  const chain = useRef(Promise.resolve());
+  const pending = useRef(0);
+  const foundAll = useRef(new Set());
   useEffect(() => {
     if (!open) return;
-    setF(blank()); setDocPhotos([]); setPhotos([]); setReading(null); setErr('');
+    session.current += 1; queued.current = new Set(); foundAll.current = new Set(); pending.current = 0;
+    setF(blank()); setDocPhotos([]); setPhotos([]); setReading(null); setSuggest([]); setErr('');
     setFace(null); setIdCard(null); setIdInfo(null); setIdType('aadhaar'); setCam('face');
     warmUpInvoiceReader();
   }, [open]);
@@ -128,35 +138,60 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
   const setIn = (k, sub, v) => setF((x) => ({ ...x, [k]: { ...x[k], [sub]: v } }));
   const setItem = (i, k, v) => setF((x) => ({ ...x, items: x.items.map((it, j) => (j === i ? { ...it, [k]: v } : it)) }));
 
-  // Reads the invoice photo on this device and fills only the fields the guard has not typed.
-  const read = async (src) => {
-    readFor.current = src;
-    setReading('busy');
-    try {
-      const r = await readInvoice(src);
-      if (readFor.current !== src) return;
-      const found = [];
-      setF((x) => {
-        const n = { ...x, party: { ...x.party }, docs: { ...x.docs } };
-        const fill = (obj, key, val, label) => { if (val && !obj[key]) { obj[key] = val; found.push(label); } };
-        fill(n.party, 'company', r.company, READ_LABEL.company);
-        fill(n.party, 'address', r.address, READ_LABEL.address);
-        fill(n.party, 'gstin', r.gstin, READ_LABEL.gstin);
-        fill(n.party, 'mobile', r.mobile, READ_LABEL.mobile);
-        fill(n.docs, 'invoice', r.invoice, READ_LABEL.invoice);
-        fill(n.docs, 'dc', r.challan, READ_LABEL.challan);
-        return n;
+  const merge = (r) => {
+    const cur = fRef.current;
+    const take = (have, val, label) => (val && !have ? (foundAll.current.add(label), val) : have);
+    const party = { ...cur.party, company: take(cur.party.company, r.company, READ_LABEL.company), address: take(cur.party.address, r.address, READ_LABEL.address), gstin: take(cur.party.gstin, r.gstin, READ_LABEL.gstin) };
+    const docs = { ...cur.docs, invoice: take(cur.docs.invoice, r.invoice, READ_LABEL.invoice), dc: take(cur.docs.dc, r.challan, READ_LABEL.challan) };
+    const vehicle = { ...cur.vehicle, number: take(cur.vehicle.number, r.vehicle, READ_LABEL.vehicle) };
+    // The supplier's phone on the invoice is not the delivery person's mobile, so it is not copied.
+    setF((x) => ({
+      ...x,
+      party: Object.fromEntries(Object.entries(x.party).map(([k, v]) => [k, v || party[k] || ''])),
+      docs: Object.fromEntries(Object.entries(x.docs).map(([k, v]) => [k, v || docs[k] || ''])),
+      vehicle: { ...x.vehicle, number: x.vehicle.number || vehicle.number },
+    }));
+    if (r.items?.length) {
+      setSuggest((list) => {
+        const have = new Set([...cur.items.map((i) => i.name.trim().toLowerCase()), ...list.map((i) => i.name.toLowerCase())]);
+        return [...list, ...r.items.filter((i) => !have.has(i.name.toLowerCase()))].slice(0, 20);
       });
-      setReading({ found });
-    } catch {
-      if (readFor.current === src) setReading({ error: true });
+    }
+  };
+  const readAll = (srcs) => {
+    const s = session.current;
+    const fresh = srcs.filter((x) => !queued.current.has(x));
+    for (const src of fresh) {
+      queued.current.add(src);
+      pending.current += 1;
+      setReading((r) => ({ ...(r?.found ? { found: r.found } : {}), busy: pending.current }));
+      chain.current = chain.current.then(async () => {
+        let failed = false;
+        try {
+          const r = await readInvoice(src);
+          if (session.current === s) merge(r);
+        } catch { failed = true; }
+        if (session.current !== s) return;
+        pending.current -= 1;
+        setReading((r) => {
+          const next = { found: [...foundAll.current], ...((failed || r?.error) ? { error: true } : {}) };
+          return pending.current > 0 ? { ...next, busy: pending.current } : next;
+        });
+      });
     }
   };
   const onDocPhotos = (next) => {
-    const first = !docPhotos.length && next.length;
     setDocPhotos(next);
-    if (first) read(next[0]);
-    if (!next.length) setReading(null);
+    if (!next.length) { queued.current = new Set(); setReading(null); return; }
+    readAll(next);
+  };
+  const addSuggested = (list) => {
+    setF((x) => {
+      const kept = x.items.filter((i) => i.name.trim() || i.code.trim());
+      return { ...x, items: [...kept, ...list.map((i) => ({ code: '', name: i.name, qty: String(i.qty), unit: i.unit }))].slice(0, 50) };
+    });
+    const gone = new Set(list.map((i) => i.name));
+    setSuggest((s) => s.filter((i) => !gone.has(i.name)));
   };
 
   const mobileOk = /^[6-9]\d{9}$/.test(f.party.mobile.replace(/\D/g, '').slice(-10));
@@ -214,12 +249,12 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
           <div className="field">
             <span>Invoice or challan <span className="faint">· printed or handwritten, up to 4 photos</span></span>
             <PhotoPicker photos={docPhotos} onChange={onDocPhotos} max={4} addLabel="Photo of invoice" onError={setErr} />
-            {reading === 'busy' && <div className="read-state"><Loader2 className="spin" />Reading the invoice on this device…</div>}
-            {reading?.found && (reading.found.length
+            {reading?.busy > 0 && <div className="read-state"><Loader2 className="spin" />Reading {reading.busy === 1 ? 'the invoice' : `${reading.busy} invoice photos`} on this device…</div>}
+            {reading && !reading.busy && (reading.found?.length
               ? <div className="read-state ok"><CheckCircle2 />Filled in: {reading.found.join(', ')}. Check them against the paper.</div>
-              : <div className="read-state"><ScanText />Nothing could be read clearly. Type the details below.</div>)}
-            {reading?.error && <div className="read-state"><AlertTriangle />This device could not read the photo. Type the details below.</div>}
-            {docPhotos.length > 0 && reading !== 'busy' && <button type="button" className="btn btn-ghost btn-sm" style={{ justifySelf: 'start' }} onClick={() => read(docPhotos[docPhotos.length - 1])}><ScanText />Read the last photo again</button>}
+              : !reading.error && <div className="read-state"><ScanText />Nothing could be read clearly. Type the details below.</div>)}
+            {reading?.error && !reading.busy && <div className="read-state"><AlertTriangle />A photo could not be read on this device. Type what is missing below.</div>}
+            {docPhotos.length > 0 && !reading?.busy && <button type="button" className="btn btn-ghost btn-sm" style={{ justifySelf: 'start' }} onClick={() => { queued.current = new Set(); readAll(docPhotos); }}><ScanText />Read all photos again</button>}
           </div>
 
           <div className="grid-2">
@@ -232,6 +267,15 @@ function InwardForm({ open, units, onClose, onDone, lanyard }) {
             <label className="field"><span>Challan no. <span className="faint">· optional</span></span><input className="input mono" value={f.docs.dc} onChange={(e) => setIn('docs', 'dc', e.target.value)} maxLength={40} /></label>
           </div>
 
+          {suggest.length > 0 && (
+            <div className="field">
+              <span>Goods read from the invoice <span className="faint">· tap to add, then check the quantity</span></span>
+              <div className="chips">
+                {suggest.map((it) => <button type="button" key={it.name} className="chip" onClick={() => addSuggested([it])}><Plus />{it.name} · {it.qty} {it.unit}</button>)}
+                {suggest.length > 1 && <button type="button" className="chip" onClick={() => addSuggested(suggest)}><Check />Add all {suggest.length}</button>}
+              </div>
+            </div>
+          )}
           <div className="field">
             <span>Goods</span>
             <div className="items-editor">

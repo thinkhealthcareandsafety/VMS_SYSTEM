@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "predev": "node scripts/copy-ocr.mjs && node scripts/copy-faces.mjs",
     "prebuild": "node scripts/copy-ocr.mjs && node scripts/copy-faces.mjs",
-    "test": "node --test src/lib/idMatch.test.js src/lib/invoiceRead.test.js"
+    "test": "node --test src/lib/idMatch.test.js src/lib/invoiceRead.test.js src/lib/tracking.test.js"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

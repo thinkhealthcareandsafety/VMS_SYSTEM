@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Barcode, Camera, X } from 'lucide-react';
+import { Barcode, Camera, Flashlight, X } from 'lucide-react';
 import { shrink } from './Photos.jsx';
+import { pickTracking } from '../lib/tracking.js';
 import { Modal, Spinner } from './ui.jsx';
 
 // Reads the barcode on a courier label and hands back its text (the AWB / tracking number).
@@ -57,6 +58,8 @@ export default function BarcodeScan({ open, onClose, onResult, title = 'Scan the
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const stopRef = useRef(() => {});
+  const trackRef = useRef(null);
+  const [torch, setTorch] = useState(null); // null: no flashlight; false / true: off / on
 
   const found = (text) => {
     if (!text) return false;
@@ -71,12 +74,21 @@ export default function BarcodeScan({ open, onClose, onResult, title = 'Scan the
     let stopped = false;
     let stream = null;
     let timer = null;
-    setError(''); setNote('');
+    setError(''); setNote(''); setTorch(null);
     stopRef.current = () => { stopped = true; clearTimeout(timer); stream?.getTracks().forEach((t) => t.stop()); };
     (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
         if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        // Sharp, close barcodes: keep focusing, zoom in a little where the camera can, offer the flashlight.
+        const track = stream.getVideoTracks()[0];
+        trackRef.current = track;
+        const caps = track?.getCapabilities?.() || {};
+        const adv = [];
+        if (caps.focusMode?.includes('continuous')) adv.push({ focusMode: 'continuous' });
+        if (caps.zoom && caps.zoom.max >= 1.5) adv.push({ zoom: Math.min(2, caps.zoom.max) });
+        if (adv.length) track.applyConstraints({ advanced: adv }).catch(() => {});
+        setTorch(caps.torch ? false : null);
         const v = videoRef.current;
         v.srcObject = stream;
         await v.play();
@@ -87,15 +99,28 @@ export default function BarcodeScan({ open, onClose, onResult, title = 'Scan the
             if (ok.includes('code_128')) native = new window.BarcodeDetector({ formats: FORMATS.filter((f) => ok.includes(f)) });
           } catch { native = null; }
         }
-        const reader = native ? null : await zxing();
+        // ZXing runs too, every few frames on the framed band, for the codes the phone's own reader misses.
+        const reader = await zxing().catch(() => null);
+        let frame = 0;
+        let last = null; // a value must be read twice in a row before it is used: no half-read numbers
+        const accept = (value) => {
+          if (!value) return false;
+          if (value === last) return found(value);
+          last = value;
+          return false;
+        };
         const look = async () => {
           if (stopped) return;
+          frame += 1;
           if (v.videoWidth) {
+            let value = null;
             if (native) {
-              try { const codes = await native.detect(v); if (codes.length && found(codes[0].rawValue)) return; } catch { /* frame not ready */ }
-            } else if (found(readCanvas(reader, v, v.videoWidth, v.videoHeight))) return;
+              try { const codes = await native.detect(v); value = pickTracking(codes.map((c) => c.rawValue)); } catch { /* frame not ready */ }
+            }
+            if (!value && reader && (!native || frame % 3 === 0)) value = pickTracking([readCanvas(reader, v, v.videoWidth, v.videoHeight)]);
+            if (accept(value)) return;
           }
-          timer = setTimeout(look, native ? 120 : 200);
+          timer = setTimeout(look, native ? 100 : 160);
         };
         look();
       } catch (e) {
@@ -115,12 +140,12 @@ export default function BarcodeScan({ open, onClose, onResult, title = 'Scan the
       await img.decode();
       let text = null;
       if ('BarcodeDetector' in window) {
-        try { const codes = await new window.BarcodeDetector({ formats: FORMATS }).detect(img); text = codes[0]?.rawValue || null; } catch { /* try ZXing */ }
+        try { const codes = await new window.BarcodeDetector({ formats: FORMATS }).detect(img); text = pickTracking(codes.map((c) => c.rawValue)); } catch { /* try ZXing */ }
       }
-      if (!text) text = readCanvas(await zxing(), img, img.naturalWidth, img.naturalHeight);
+      if (!text) text = pickTracking([readCanvas(await zxing(), img, img.naturalWidth, img.naturalHeight)]);
       if (!text) { // a very large photo: try it smaller too
         const small = new Image(); small.src = await shrink(file); await small.decode();
-        text = readCanvas(await zxing(), small, small.naturalWidth, small.naturalHeight);
+        text = pickTracking([readCanvas(await zxing(), small, small.naturalWidth, small.naturalHeight)]);
       }
       URL.revokeObjectURL(img.src);
       if (!found(text)) setNote('No barcode found in that photo. Take it closer, flat and in good light, or type the number.');
@@ -133,10 +158,16 @@ export default function BarcodeScan({ open, onClose, onResult, title = 'Scan the
         <strong><Barcode />{title}</strong>
         <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={onClose} aria-label="Close"><X /></button>
       </div>
-      <p className="scanner-hint">Hold the label flat, 10 to 15 cm away, and fill the frame with the barcode. Not reading? Take a photo instead.</p>
+      <p className="scanner-hint">Hold the label flat, 10 to 15 cm away, with the long barcode inside the frame. Dark? Tap the flashlight. Still not reading? Take a photo.</p>
       <div className="scan-stage scan-ready">
         {!error && <video ref={videoRef} playsInline muted className="scan-video" />}
         {!error && <div className="scan-frame barcode-frame" aria-hidden="true" />}
+        {!error && torch !== null && (
+          <button type="button" className={`cam-round scan-torch${torch ? ' is-on' : ''}`} aria-pressed={torch} aria-label={torch ? 'Flashlight off' : 'Flashlight on'}
+            onClick={() => { const next = !torch; trackRef.current?.applyConstraints({ advanced: [{ torch: next }] }).then(() => setTorch(next)).catch(() => setTorch(null)); }}>
+            <Flashlight />
+          </button>
+        )}
         {error && <div className="scan-idle"><Barcode /><span>{error}</span></div>}
       </div>
       {note && <p className="scanner-hint" role="status">{note}</p>}
