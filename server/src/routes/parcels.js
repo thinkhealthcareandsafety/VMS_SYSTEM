@@ -12,7 +12,7 @@ const passes = require('../services/passes');
 const parcels = require('../services/parcels');
 const settings = require('../services/settings');
 const { requireLicense } = require('../services/license');
-const { oneAtATime, siteDay, audit, cleanText, decodeJpeg, normalizeMobile } = require('../services/core');
+const { writeDurable, oneAtATime, siteDay, audit, cleanText, decodeJpeg, normalizeMobile } = require('../services/core');
 
 // Couriers at the gate: parcels coming in for someone, and parcels going out with a courier.
 const router = express.Router();
@@ -27,10 +27,8 @@ async function savePhotos(list, max) {
   for (const ph of (Array.isArray(list) ? list : []).slice(0, max)) {
     const buf = decodeJpeg(ph, MAX_PHOTO);
     if (!buf) return { error: 'A photo could not be read. Take it again.' };
-    const dir = path.resolve(config.uploadDir, 'parcels');
-    await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, `${crypto.randomUUID()}.jpg`);
-    await fs.writeFile(file, buf);
+    const file = path.join(path.resolve(config.uploadDir, 'parcels'), `${crypto.randomUUID()}.jpg`);
+    await writeDurable(file, buf);
     files.push(file);
   }
   return { files };

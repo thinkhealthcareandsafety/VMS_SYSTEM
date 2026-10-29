@@ -1,4 +1,6 @@
 const crypto = require('node:crypto');
+const fsp = require('node:fs/promises');
+const path = require('node:path');
 const config = require('../config');
 const { Counter, Audit } = require('../models');
 const { publish } = require('./events');
@@ -84,6 +86,16 @@ function decodeJpeg(dataUrl, maxBytes) {
   return buf;
 }
 
+// A photo or ID image written all the way to the disk before the visit that points to it is saved: without this the
+// system can hold it in memory for a few seconds, and a power cut then leaves a record with an empty photo.
+async function writeDurable(file, buf, mode = 0o644) {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const fh = await fsp.open(file, 'wx', mode);
+  try { await fh.writeFile(buf); await fh.sync(); } finally { await fh.close(); }
+  // The file's name in its folder, too (Linux; Windows cannot open a folder this way and needs no such step).
+  try { const dir = await fsp.open(path.dirname(file), 'r'); try { await dir.sync(); } finally { await dir.close(); } } catch { /* not supported here */ }
+}
+
 // One password rule for sign-up, reset and change. Long beats clever; no composition rules.
 function passwordProblem(pw) {
   if (typeof pw !== 'string' || pw.length < 10) return 'Use at least 10 characters';
@@ -103,4 +115,4 @@ function oneAtATime(key, work) {
   return run;
 }
 
-module.exports = { nextSeq, lastNumber, oneAtATime, siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };
+module.exports = { writeDurable, nextSeq, lastNumber, oneAtATime, siteDay, nextDailyNumber, nextVisitorRef, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg, passwordProblem };

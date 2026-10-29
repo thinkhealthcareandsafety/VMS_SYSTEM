@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const config = require('../config');
+const { writeDurable } = require('./core');
 
 // Full (unmasked) ID images, encrypted at rest with AES-256-GCM. A file on disk or in a backup is unreadable
 // without the key; only the Super Admin's request decrypts one, in memory, for that response.
@@ -36,10 +37,8 @@ function open(sealed) {
 }
 
 async function store(buf) {
-  const dir = path.resolve(config.uploadDir, 'id-full');
-  await fs.mkdir(dir, { recursive: true });
-  const file = path.join(dir, `${crypto.randomUUID()}.bin`);
-  await fs.writeFile(file, seal(buf), { mode: 0o600 });
+  const file = path.join(path.resolve(config.uploadDir, 'id-full'), `${crypto.randomUUID()}.bin`);
+  await writeDurable(file, seal(buf), 0o600);
   return file;
 }
 

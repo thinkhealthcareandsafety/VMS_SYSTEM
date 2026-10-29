@@ -30,12 +30,24 @@ run() {
     status true "" false
     return
   fi
-  mkdir -p /backup/uploads && cp -ru /uploads/. /backup/uploads/
-  # Photos and ID images deleted under the retention rule leave the copy too. Skipped if the photo folder looks
-  # empty (not mounted), so a mistake can never wipe the copy.
-  if [ -n "$(ls -A /uploads 2>/dev/null)" ]; then
-    (cd /backup/uploads && find . -type f | while IFS= read -r f; do [ -e "/uploads/$f" ] || rm -f "$f"; done)
+  mkdir -p /backup/uploads
+  if ! cp -ru /uploads/. /backup/uploads/; then
+    echo "$(date) backup $day FAILED copying photos" >> /backup/backup.log
+    status false "The photos could not be copied. The backup drive may be full."
+    return
   fi
+  # Only ID images deleted under the retention rule leave the copy (id-masked, id-full). Visitor photos, material and
+  # parcel photos are never removed from it: if any went missing on the PC, the copy is where they are found again.
+  # Skipped if the photo folder looks empty (not mounted), so a mistake can never wipe the copy.
+  if [ -n "$(ls -A /uploads 2>/dev/null)" ]; then
+    for d in id-masked id-full; do
+      [ -d "/backup/uploads/$d" ] || continue
+      (cd "/backup/uploads/$d" && find . -type f | while IFS= read -r f; do [ -e "/uploads/$d/$f" ] || rm -f "$f"; done)
+    done
+  fi
+  # The server's settings, with the key the full ID images are encrypted with: without it a restored PC could
+  # never open them again.
+  if [ -f /config/site.env ]; then cp /config/site.env /backup/server-settings.env.part && chmod 600 /backup/server-settings.env.part && mv /backup/server-settings.env.part /backup/server-settings.env; fi
   find /backup -maxdepth 1 -name 'vms-*.archive.gz' -mtime +366 -delete
   echo "$(date) backup $day done" >> /backup/backup.log
   status true ""

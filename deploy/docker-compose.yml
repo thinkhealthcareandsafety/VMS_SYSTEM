@@ -69,6 +69,7 @@ services:
     entrypoint: ["/bin/bash", "/backup.sh"]
     volumes:
       - ./backup.sh:/backup.sh:ro
+      - ./.env:/config/site.env:ro   # copied onto the backup drive: it holds the ID-image encryption key
       - ${DATA_DIR:-/srv/vms/data}/uploads:/uploads:ro
       - ${BACKUP_DIR:-/mnt/vms-backup}:/backup
     depends_on: [mongo]

@@ -20,7 +20,7 @@ const departure = require('../services/departure');
 const invites = require('../services/invites');
 const { requireLicense } = require('../services/license');
 const { approveByPhone } = require('../services/decision');
-const { oneAtATime, siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
+const { writeDurable, oneAtATime, siteDay, nextVisitorRef, nextDailyNumber, audit, sha256, normalizeMobile, cleanText, tidyName, decodeJpeg } = require('../services/core');
 
 const router = express.Router();
 const NAME_RE = /^[\p{L} .'-]{1,60}$/u;
@@ -136,11 +136,9 @@ function whatsappShare(host, who, link) {
 }
 
 async function saveFile(folder, buf) {
-  const dir = path.resolve(config.uploadDir, folder);
-  await fs.mkdir(dir, { recursive: true });
-  const name = `${crypto.randomUUID()}.jpg`;
-  await fs.writeFile(path.join(dir, name), buf);
-  return path.join(dir, name);
+  const file = path.join(path.resolve(config.uploadDir, folder), `${crypto.randomUUID()}.jpg`);
+  await writeDurable(file, buf);
+  return file;
 }
 
 const activeVisitFor = (mobile) => Visit.findOne({

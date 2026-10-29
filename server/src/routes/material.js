@@ -12,7 +12,7 @@ const settings = require('../services/settings');
 const passes = require('../services/passes');
 const material = require('../services/material');
 const { requireLicense } = require('../services/license');
-const { siteDay, audit, cleanText, decodeJpeg } = require('../services/core');
+const { writeDurable, siteDay, audit, cleanText, decodeJpeg } = require('../services/core');
 
 // Material gate passes and gate entries. Guards and admins work them at the gate; heads approve from WhatsApp,
 // Telegram or the link; an admin can decide in the console when the head cannot be reached.
@@ -29,10 +29,8 @@ async function savePhotos(list, max) {
   for (const p of (Array.isArray(list) ? list : []).slice(0, max)) {
     const buf = decodeJpeg(p, MAX_PHOTO);
     if (!buf) return { error: 'A photo could not be read. Take it again.' };
-    const dir = path.resolve(config.uploadDir, 'material');
-    await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, `${crypto.randomUUID()}.jpg`);
-    await fs.writeFile(file, buf);
+    const file = path.join(path.resolve(config.uploadDir, 'material'), `${crypto.randomUUID()}.jpg`);
+    await writeDurable(file, buf);
     files.push(file);
   }
   return { files };

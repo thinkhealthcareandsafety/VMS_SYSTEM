@@ -87,7 +87,9 @@ async function main() {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     throw new Error('Set JWT_SECRET (32+ random characters) in .env');
   }
-  await mongoose.connect(config.mongoUri);
+  // Every save waits until it is in the database's journal on disk (j: true). Without it a save is confirmed up to
+  // 100 ms before that, and a power cut in that moment loses a visit the guard was told went through.
+  await mongoose.connect(config.mongoUri, { writeConcern: { w: 1, j: true } });
   console.log('MongoDB connected');
   await require('./services/passes').ensureDefaultGate();
   // Swaps the first, non-unique emergency index for the one that allows a single active emergency.
