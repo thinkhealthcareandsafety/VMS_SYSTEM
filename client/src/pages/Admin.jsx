@@ -314,6 +314,9 @@ function Attention({ stats, go }) {
   if (bk && ['failed', 'stale'].includes(bk.state)) {
     items.push({ tone: 'bad', icon: AlertTriangle, to: ['settings'], text: bk.state === 'failed' ? `Last backup failed: ${bk.error}` : `No backup since ${bk.at ? fmtDateTime(bk.at) : 'the system started'}`, hint: 'Check the backup drive is plugged in to the server PC, then call GateSmartX' });
   }
+  if (bk?.state === 'nodrive') {
+    items.push({ tone: 'warn', icon: AlertTriangle, to: ['settings'], text: 'No backup drive: the database is copied on the server PC’s own disk only, and the photos are not copied', hint: 'Plug the backup drive into the server PC and call GateSmartX to switch it on' });
+  }
   if (stats.disk?.low) items.push({ tone: 'bad', icon: AlertTriangle, to: ['settings'], text: `The server PC has only ${stats.disk.freeGb} GB of space left`, hint: 'Call GateSmartX before it fills up: new photos cannot be saved on a full disk' });
   if (stats.idMismatchToday) items.push({ tone: 'bad', icon: ShieldCheck, to: ['history', { idCheck: 'mismatch' }], text: `${plural(stats.idMismatchToday, 'visitor', 'visitors')} today with an ID that does not match the name or gender typed`, hint: 'Look at the card and the photo' });
   // People past their pass are not repeated here: the red bar at the top of every page lists them, with the actions.

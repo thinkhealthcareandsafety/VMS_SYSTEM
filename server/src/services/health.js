@@ -15,6 +15,8 @@ function backup(now = Date.now()) {
   const at = s.at ? new Date(s.at) : null;
   if (!s.ok) return { state: 'failed', at, error: s.error || 'The backup failed' };
   if (!at || now - at.getTime() > STALE_HOURS * 3600e3) return { state: 'stale', at };
+  // Copied, but onto the PC's own disk: lost with it if that disk fails.
+  if (s.drive === false) return { state: 'nodrive', at };
   return { state: 'ok', at };
 }
 

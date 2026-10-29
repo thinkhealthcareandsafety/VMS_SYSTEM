@@ -2201,6 +2201,8 @@ test('the console warns when last night\'s backup failed or is missing, and says
     assert.match(failed.error, /not connected/);
     fs.writeFileSync(file, JSON.stringify({ at: new Date(Date.now() - 40 * 3600e3).toISOString(), ok: true, error: '' }));
     assert.equal((await stats()).backup.state, 'stale');
+    fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), ok: true, error: '', drive: false }));
+    assert.equal((await stats()).backup.state, 'nodrive', 'copied onto the PC\'s own disk: said so, not "ok"');
     assert.equal(typeof (await stats()).disk.freeGb, 'number', 'on the hotel PC the free space is checked');
   } finally { delete process.env.BACKUP_STATUS_FILE; fs.rmSync(file, { force: true }); }
 });
