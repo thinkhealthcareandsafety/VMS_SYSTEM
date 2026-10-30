@@ -106,7 +106,7 @@ const visitSchema = new Schema({
   // Each time the pass was made longer at the gate or in the console: from when, to when, by whom.
   extensions: { type: [{ _id: false, at: Date, from: Date, to: Date, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String, note: String }], default: undefined },
   // Still inside after the pass ended: the guard acknowledges it; an hour later it is escalated. Cleared when extended.
-  overstay: { ackAt: Date, ackBy: { type: Schema.Types.ObjectId, ref: 'User' }, ackByName: String, ackNote: String, escalatedAt: Date },
+  overstay: { ackAt: Date, ackBy: { type: Schema.Types.ObjectId, ref: 'User' }, ackByName: String, ackNote: String, escalatedAt: Date, escalatedAgainAt: Date },
   arrival: { gate: { type: Schema.Types.ObjectId, ref: 'Gate' }, gateName: String, by: { type: Schema.Types.ObjectId, ref: 'User' }, byName: String },
   movements: { type: [movementSchema], default: undefined },
   // Let in as a guest of a group (event, wedding, conference): no host request, no photo or ID by default.

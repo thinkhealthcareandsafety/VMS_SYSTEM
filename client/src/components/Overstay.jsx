@@ -81,8 +81,13 @@ export function ExtendPassDialog({ visit, onClose, onDone }) {
 // A red bar while anyone is past their pass, and a pop-up that opens by itself: on the guard desk until each person
 // is acknowledged (closing it only snoozes it for 2 minutes); on the admin console for each new one and each escalation.
 const SNOOZE_MS = 2 * 60e3;
-const ACK_NOTES = ['Calling the host', 'Going to check', 'Host says they are still in the meeting'];
-const seenKey = (r) => `${r.id}:${r.escalatedAt ? 'e' : 'o'}`;
+const ACK_NOTES = ['Calling the host', 'Going to check', 'Host says they are still in the meeting']; // the last: HOST_CONFIRMS
+// A new overstay, each escalation, and an acknowledgement gone stale (still inside half an hour later) each open it once.
+const seenKey = (r) => `${r.id}:${r.escalatedAgainAt ? 'e2' : r.escalatedAt ? 'e' : 'o'}:${r.ackStale ? `s${r.ack?.at}` : ''}`;
+// Not yet acknowledged, or acknowledged over half an hour ago and still inside: the gate is asked (again).
+const needsGate = (r) => !r.ack || r.ackStale;
+// The host confirmed the meeting goes on: recorded, and the pass is extended rather than left expired.
+const HOST_CONFIRMS = 'Host says they are still in the meeting';
 
 // Kept for the whole browser tab, not per page: moving between console pages must not open the pop-up again for
 // people already shown. A new overstay or an escalation still opens it, with the sound.
@@ -105,11 +110,11 @@ export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
   useEffect(() => { const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]); // a pass can end with no event
 
   const rows = data?.rows || [];
-  const unacked = rows.filter((r) => !r.ack);
+  const unacked = rows.filter(needsGate);
   const escalated = rows.filter((r) => r.escalatedAt);
   useEffect(() => {
     if (!data) return;
-    const due = admin ? rows.filter((r) => !r.ack || r.escalatedAt) : unacked;
+    const due = admin ? rows.filter((r) => needsGate(r) || r.escalatedAt) : unacked;
     const fresh = due.filter((r) => !seen.current.has(seenKey(r)));
     fresh.forEach((r) => seen.current.add(seenKey(r)));
     if (fresh.length) { cue.overstay(); setOpen(true); return; }
@@ -121,7 +126,13 @@ export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
   const after = () => { load(); onChanged?.(); };
   const ack = async (r, note = '') => {
     setBusy(r.id);
-    try { await api(`/api/visits/${r.id}/overstay-ack`, { method: 'POST', body: { note } }); setAcking(null); toast(`Acknowledged: ${r.firstName} ${r.lastName}.`, 'ok'); after(); } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
+    try {
+      await api(`/api/visits/${r.id}/overstay-ack`, { method: 'POST', body: { note } });
+      setAcking(null);
+      after();
+      if (note === HOST_CONFIRMS) { toast('Recorded. Now extend the pass to when the meeting ends.', 'ok'); setExtend({ ...r }); }
+      else toast(`Acknowledged: ${r.firstName} ${r.lastName}. You will be asked again in 30 minutes if they are still inside.`, 'ok');
+    } catch (e) { toast(e.message, 'bad'); } finally { setBusy(null); }
   };
   const checkout = async (r) => {
     if (confirmOut !== r.id) return setConfirmOut(r.id);
@@ -139,7 +150,7 @@ export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
         <Siren />
         <span className="grow">
           <strong>{rows.length === 1 ? '1 person is' : `${rows.length} people are`} still inside after the pass ended</strong>
-          <small>{escalated.length ? `${escalated.length} escalated · ` : ''}{unacked.length ? `${unacked.length} not acknowledged · ` : ''}Tap to see and act</small>
+          <small>{escalated.length ? `${escalated.length} escalated · ` : ''}{unacked.length ? `${unacked.length} to check · ` : ''}Tap to see and act</small>
         </span>
       </button>
       <Modal open={open} onClose={close} className="dialog dialog-wide" label="Pass ended, still inside">
@@ -151,15 +162,19 @@ export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
           {rows.map((r) => {
             const name = `${r.firstName} ${r.lastName}`;
             return (
-              <div key={r.id} className={`overstay-item ${r.escalatedAt ? 'is-escalated' : !r.ack ? 'is-new' : ''}`}>
+              <div key={r.id} className={`overstay-item ${r.escalatedAt ? 'is-escalated' : needsGate(r) ? 'is-new' : ''}`}>
                 <Avatar src={`/api/visits/${r.id}/photo`} name={name} size={52} square />
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="top">{r.dailyNumber != null && <span className="pass-chip">{passLabel(r)}</span>}<strong>{name}</strong></div>
                   <div className="meta">{r.company}{r.host ? ` · to ${r.host.name}, ${r.host.unit}` : ''}{r.lastIn?.gate ? ` · came in at ${r.lastIn.gate}` : ''}</div>
                   <div className="over"><Clock size={14} />Pass ended {fmtUntil(r.validUntil)} · <strong>{fmtDuration(minsOver(r))} over</strong></div>
                   <div className="state">
-                    {r.escalatedAt ? <span className="badge badge-bad">Escalated {fmtTime(r.escalatedAt)}: host and manager told</span> : <span className="badge badge-warn">Escalates in {fmtDuration(minsToEscalate(r))} if still inside</span>}
-                    {r.ack ? <span className="badge badge-ok">Seen by {r.ack.by} {fmtTime(r.ack.at)}{r.ack.note ? ` · ${r.ack.note}` : ''}</span> : <span className="badge badge-bad">Not acknowledged</span>}
+                    {r.escalatedAgainAt ? <span className="badge badge-bad">Escalated again {fmtTime(r.escalatedAgainAt)}: still inside after 3 hours</span>
+                      : r.escalatedAt ? <span className="badge badge-bad">Escalated {fmtTime(r.escalatedAt)}: host and manager told</span>
+                        : <span className="badge badge-warn">Escalates in {fmtDuration(minsToEscalate(r))} if still inside</span>}
+                    {!r.ack ? <span className="badge badge-bad">Not acknowledged</span>
+                      : r.ackStale ? <span className="badge badge-bad">{r.ack.by} said “{r.ack.note || 'Seen'}” at {fmtTime(r.ack.at)}. Still inside: check again</span>
+                        : <span className="badge badge-ok">Seen by {r.ack.by} {fmtTime(r.ack.at)}{r.ack.note ? ` · ${r.ack.note}` : ''}</span>}
                   </div>
                   {acking === r.id && (
                     <div className="chips" style={{ marginTop: 8 }}>
@@ -169,7 +184,7 @@ export function OverstayAlert({ admin = false, liveTick = 0, onChanged }) {
                   )}
                 </div>
                 <div className="overstay-actions">
-                  {!r.ack && acking !== r.id && <button type="button" className="btn btn-sm btn-primary" onClick={() => setAcking(r.id)}><CheckCircle2 />Acknowledge</button>}
+                  {needsGate(r) && acking !== r.id && <button type="button" className="btn btn-sm btn-primary" onClick={() => setAcking(r.id)}><CheckCircle2 />{r.ackStale ? 'Update' : 'Acknowledge'}</button>}
                   {acking === r.id && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAcking(null)}><X />Cancel</button>}
                   <button type="button" className="btn btn-sm" onClick={() => setExtend({ ...r, id: r.id })}><TimerReset />Extend</button>
                   <button type="button" className={`btn btn-sm ${confirmOut === r.id ? 'btn-danger' : ''}`} disabled={busy === r.id} onClick={() => checkout(r)} onBlur={() => setConfirmOut((c) => (c === r.id ? null : c))}>

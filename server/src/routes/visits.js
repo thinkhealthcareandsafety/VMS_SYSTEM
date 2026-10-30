@@ -502,13 +502,15 @@ router.get('/overstays', requireRole('guard', 'admin'), async (req, res) => {
   res.json({ rows: await overstay.list(), escalateAfterMinutes: overstay.ESCALATE_AFTER_MIN });
 });
 
-// The guard has seen it and is on it (calling the host, going to look). Recorded once, with their name.
+// The guard has seen it and is on it (calling the host, going to look), with their name. Once, or again when the
+// last acknowledgement is over half an hour old and the person is still inside (the follow-up).
 router.post('/:id/overstay-ack', requireRole('guard', 'admin'), async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ error: 'Not found' });
   const now = new Date();
   const note = cleanText(req.body?.note, 120);
+  const stale = new Date(now.getTime() - overstay.FOLLOW_UP_MIN * 60e3);
   const v = await Visit.findOneAndUpdate(
-    { _id: req.params.id, ...overstay.query(now), 'overstay.ackAt': { $exists: false } },
+    { _id: req.params.id, ...overstay.query(now), $or: [{ 'overstay.ackAt': { $exists: false } }, { 'overstay.ackAt': { $lt: stale } }] },
     { $set: { 'overstay.ackAt': now, 'overstay.ackBy': req.user.id, 'overstay.ackByName': req.user.fullName, 'overstay.ackNote': note } },
     { new: true },
   ).populate('host').lean();

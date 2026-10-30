@@ -1892,6 +1892,25 @@ test('overstay: listed for the gate, acknowledged by the guard, escalated an hou
     await new Promise((res) => setTimeout(res, 100));
     assert.ok(await Audit.exists({ action: 'visit.overstay_escalated', entityId: id }));
     assert.equal((await call('GET', '/api/admin/stats', null, admin)).body.overstayEscalated, 1);
+
+    // Half an hour after "calling the host" and still inside: the gate is asked again, and can answer again.
+    assert.equal((await listed()).ackStale, false);
+    await Visit.updateOne({ _id: id }, { 'overstay.ackAt': new Date(Date.now() - 31 * 60e3) });
+    assert.equal((await listed()).ackStale, true, 'the follow-up shows');
+    const again = await call('POST', `/api/visits/${id}/overstay-ack`, { note: 'Going to check' }, guard);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.already, undefined, 'a fresh acknowledgement, not "already"');
+    assert.equal((await listed()).ack.note, 'Going to check');
+    assert.equal((await listed()).ackStale, false);
+
+    // Three hours past the pass: told a second time, once.
+    await Visit.updateOne({ _id: id }, { validUntil: new Date(Date.now() - 181 * 60e3) });
+    const before = await Outbox.countDocuments({ visit: id, 'vars.plain': true });
+    await escalate();
+    await escalate();
+    assert.ok((await listed()).escalatedAgainAt);
+    assert.equal(await Outbox.countDocuments({ visit: id, 'vars.plain': true }), before + 2, 'host and manager, once more each');
+    assert.match((await Outbox.findOne({ visit: id, to: '+919811100099' }).sort({ _id: -1 }).lean()).body, /3 hours after the pass ended/);
   } finally { Object.assign(config.whatsapp, saved); }
 
   // Extending: a clear reason when the time is not longer; then the pass runs on and the alert is gone.
