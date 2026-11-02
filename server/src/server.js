@@ -96,6 +96,7 @@ async function main() {
   await require('./models').Emergency.syncIndexes().catch((err) => console.error('[emergency] index sync failed:', err.message));
   await require('./services/gate').backfillPassCodes(); // passes printed before pass codes existed
   worker.start();
+  require('./services/alerts').started();
   telegram.init(); // registers the webhook when a bot token is set
   createApp().listen(config.port, () => console.log(`${config.siteName} API on :${config.port}`));
 }

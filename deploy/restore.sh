@@ -2,6 +2,7 @@
 # Put the database and photos back from the backup drive, after a damaged disk, a new PC or a serious mistake.
 #   sudo bash deploy/restore.sh                      the latest backup
 #   sudo bash deploy/restore.sh 2026-10-28           that night's backup
+#   sudo bash deploy/restore.sh 14                   the copy from 14:00 (the last 24 hours, one per hour)
 # Safe to run: the database as it is now is saved first (before-restore-*.archive.gz on the backup drive), so a restore
 # can itself be undone with:  sudo bash deploy/restore.sh before-restore-<time>
 # Photos are copied back without overwriting any photo already on the PC.
@@ -15,10 +16,11 @@ C="docker compose -f docker-compose.yml"
 
 [ "$(id -u)" = 0 ] || { echo "Run it with sudo: sudo bash deploy/restore.sh"; exit 1; }
 pick=${1:-}
-if [ -z "$pick" ]; then archive=$(ls -1t "$BACKUP_DIR"/vms-*.archive.gz 2>/dev/null | head -1 || true)
+if [ -z "$pick" ]; then archive=$(ls -1t "$BACKUP_DIR"/vms-*.archive.gz "$BACKUP_DIR"/hourly/vms-*.archive.gz 2>/dev/null | head -1 || true)
 elif [ -f "$pick" ]; then archive=$pick
 elif [ -f "$BACKUP_DIR/vms-$pick.archive.gz" ]; then archive="$BACKUP_DIR/vms-$pick.archive.gz"
 elif [ -f "$BACKUP_DIR/$pick.archive.gz" ]; then archive="$BACKUP_DIR/$pick.archive.gz"
+elif [ -f "$BACKUP_DIR/hourly/vms-$pick.archive.gz" ]; then archive="$BACKUP_DIR/hourly/vms-$pick.archive.gz"
 else archive=""; fi
 [ -n "$archive" ] && [ -f "$archive" ] || { echo "No backup found${pick:+ for $pick} in $BACKUP_DIR. Backups there:"; ls -1 "$BACKUP_DIR"/*.archive.gz 2>/dev/null || echo "  (none)"; exit 1; }
 

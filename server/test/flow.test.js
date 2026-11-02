@@ -2416,3 +2416,36 @@ test('expected visitors: a date range and a gate, listed on every gate tablet, t
   assert.equal((await Invite.findById(no.body.id).lean()).status, 'missed');
   await Invite.deleteMany({ mobile: { $in: ['+919700000501', '+919700000502'] } });
 });
+
+test('support alerts: GateSmartX is emailed once when the backup fails, not again the same day', async () => {
+  const config = require('../src/config');
+  const alerts = require('../src/services/alerts');
+  const fs = require('node:fs');
+  const file = path.join(os.tmpdir(), `vms-alert-status-${process.pid}.json`);
+  const saved = { ...config.email };
+  const realFetch = global.fetch;
+  const sent = [];
+  global.fetch = async (url, opts) => {
+    if (String(url).startsWith('https://api.brevo.com/')) { sent.push(JSON.parse(opts.body)); return new Response('{"messageId":"a"}', { status: 201 }); }
+    return realFetch(url, opts);
+  };
+  try {
+    await alerts.check({ force: true });
+    assert.equal(sent.length, 0, 'no support address: nothing sent');
+    Object.assign(config.email, { driver: 'brevo', brevoKey: 'k', from: 'desk@example.com' });
+    config.supportEmail = 'support@gatesmartx.example';
+    process.env.BACKUP_STATUS_FILE = file;
+    fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), ok: false, error: 'The database copy failed' }));
+    await alerts.check({ force: true });
+    await alerts.check({ force: true });
+    const mails = sent.filter((m) => /backup failed/.test(m.subject));
+    assert.equal(mails.length, 1, 'once a day, not on every check');
+    assert.equal(mails[0].to[0].email, 'support@gatesmartx.example');
+  } finally {
+    global.fetch = realFetch;
+    Object.assign(config.email, saved);
+    config.supportEmail = '';
+    delete process.env.BACKUP_STATUS_FILE;
+    fs.rmSync(file, { force: true });
+  }
+});

@@ -5,6 +5,8 @@ module.exports = {
   mongoUri: env.MONGODB_URI || 'mongodb://127.0.0.1:27017/vms',
   appBaseUrl: env.APP_BASE_URL || 'http://localhost:5173',
   siteName: env.SITE_NAME || 'Visitor Management',
+  // GateSmartX support: emailed when this site's server restarts, a backup fails or is missing, or the disk runs low.
+  supportEmail: env.SUPPORT_EMAIL || '',
   timezone: env.SITE_TIMEZONE || 'Asia/Kolkata',
   defaultCountryCode: env.DEFAULT_COUNTRY_CODE || '+91',
   uploadDir: env.UPLOAD_DIR || 'uploads',

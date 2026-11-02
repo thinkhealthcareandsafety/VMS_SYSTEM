@@ -1,5 +1,6 @@
 #!/bin/bash
 # Every night at 02:00 (site time): the whole database as one compressed file, and the photos mirrored across.
+# Every other hour: a copy of the database (hourly/), so at most an hour of entries is ever at risk.
 # On the backup drive: database copies kept one year (366 days), inside the hotel only. Restore: see docs/ONSITE.md.
 # No drive connected (the backup folder is on the same disk as the data): the database alone is still copied, the
 # last 14 days, so a mistake or a damaged database can be undone; the photos are not, so the system disk never fills.
@@ -53,6 +54,20 @@ run() {
   status true ""
 }
 
+# Every hour between the nightly runs: the database alone, one file per hour of the day (vms-14.archive.gz is today's
+# or yesterday's 14:00), so a failed disk loses at most an hour of entries. Photos follow when the drive is connected.
+hourly() {
+  h=$(date +%H)
+  mkdir -p /backup/hourly
+  if mongodump --uri="mongodb://mongo:27017/vms" --gzip --archive="/backup/hourly/vms-$h.archive.gz.part" --quiet; then
+    mv "/backup/hourly/vms-$h.archive.gz.part" "/backup/hourly/vms-$h.archive.gz"
+    on_drive && cp -ru /uploads/. /backup/uploads/ 2>/dev/null
+  else
+    rm -f "/backup/hourly/vms-$h.archive.gz.part"
+    echo "$(date) hourly copy $h FAILED" >> /backup/backup.log
+  fi
+}
+
 [ "${1:-}" = now ] && { run; exit 0; }
 # Missed while the PC was off (no copy in the last 26 hours): made up shortly after start, once the database is up.
 latest=$(ls -1t /backup/vms-*.archive.gz 2>/dev/null | head -1)
@@ -60,7 +75,9 @@ if [ -z "$latest" ] || [ $(( $(date +%s) - $(stat -c %Y "$latest") )) -gt 93600 
   sleep 300
   run
 fi
+# Wakes just after each hour (site time): the full backup at 02:00, the hourly database copy at every other hour.
 while true; do
-  sleep $(( $(date -d 'tomorrow 02:00' +%s) - $(date +%s) ))
-  run
+  next=$(date -d "$(date +'%Y-%m-%d %H:00') + 1 hour" +%s)
+  sleep $(( next - $(date +%s) + 30 ))
+  if [ "$(date +%H)" = 02 ]; then run; else hourly; fi
 done
